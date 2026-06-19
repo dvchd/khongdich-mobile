@@ -1,0 +1,63 @@
+name: khongdich_mobile
+description: "Không Dịch — Mobile reader app for khongdich.com (Android first, MVP)."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # Routing
+  go_router: ^14.2.0
+
+  # Network
+  dio: ^5.5.0
+
+  # Storage (encrypted for JWT, plain for prefs)
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.0
+  path_provider: ^2.1.4
+
+  # UI
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+  google_fonts: ^6.2.1
+  photo_view: ^0.15.0
+
+  # Utils
+  connectivity_plus: ^5.0.2
+  logger: ^2.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+# NOTE: The following packages from `docs/plan-flutter-app.md` Appendix B
+# are intentionally commented out for the MVP scaffold. They will be wired
+# in once the corresponding Phase-2 subsystems land:
+#
+#   drift: ^2.18.0                      # local SQLite ORM (offline reader)
+#   sqlite3_flutter_libs: ^0.5.24       # native sqlite3 bindings
+#   drift_dev: ^2.18.0                  # codegen (dev)
+#   build_runner: ^2.4.11               # codegen runner (dev)
+#   youtube_player_flutter: ^9.0.0      # video content_type player
+#   audio_service: ^0.18.13             # TTS ForegroundService
+#   flutter_tts: ^4.1.0                 # on-device TTS engine
+#   audio_session: ^0.1.20              # audio session config
+#   firebase_core / firebase_messaging / firebase_crashlytics / firebase_analytics
+#   google_sign_in: ^6.2.1
+#   app_links: ^3.5.0
+#   flutter_local_notifications: ^17.2.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - test/fixtures/

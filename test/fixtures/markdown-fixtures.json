@@ -1,0 +1,135 @@
+[
+  {
+    "name": "basic_paragraph",
+    "input": "Đây là một đoạn văn.\n\nĐoạn thứ hai.",
+    "expected": [
+      {"type": "paragraph", "children": [{"type": "text", "text": "Đây là một đoạn văn."}]},
+      {"type": "paragraph", "children": [{"type": "text", "text": "Đoạn thứ hai."}]}
+    ]
+  },
+  {
+    "name": "heading_atx",
+    "input": "# Tiêu đề 1\n\n## Tiêu đề 2\n\n###### Tiêu đề 6",
+    "expected": [
+      {"type": "heading", "level": 1, "children": [{"type": "text", "text": "Tiêu đề 1"}]},
+      {"type": "heading", "level": 2, "children": [{"type": "text", "text": "Tiêu đề 2"}]},
+      {"type": "heading", "level": 6, "children": [{"type": "text", "text": "Tiêu đề 6"}]}
+    ]
+  },
+  {
+    "name": "heading_with_emphasis",
+    "input": "## Chương *một*\n\nNội dung",
+    "expected": [
+      {
+        "type": "heading", "level": 2,
+        "children": [
+          {"type": "text", "text": "Chương "},
+          {"type": "emphasis", "children": [{"type": "text", "text": "một"}]}
+        ]
+      },
+      {"type": "paragraph", "children": [{"type": "text", "text": "Nội dung"}]}
+    ]
+  },
+  {
+    "name": "horizontal_rule",
+    "input": "Đoạn trên\n\n---\n\nĐoạn dưới",
+    "expected": [
+      {"type": "paragraph", "children": [{"type": "text", "text": "Đoạn trên"}]},
+      {"type": "horizontal_rule"},
+      {"type": "paragraph", "children": [{"type": "text", "text": "Đoạn dưới"}]}
+    ]
+  },
+  {
+    "name": "bullet_list",
+    "input": "- Một\n- Hai\n- Ba",
+    "expected": [
+      {
+        "type": "bullet_list",
+        "items": [
+          [{"type": "paragraph", "children": [{"type": "text", "text": "Một"}]}],
+          [{"type": "paragraph", "children": [{"type": "text", "text": "Hai"}]}],
+          [{"type": "paragraph", "children": [{"type": "text", "text": "Ba"}]}]
+        ]
+      }
+    ]
+  },
+  {
+    "name": "ordered_list_start_1",
+    "input": "1. Một\n2. Hai\n3. Ba",
+    "expected": [
+      {
+        "type": "ordered_list", "start": 1,
+        "items": [
+          [{"type": "paragraph", "children": [{"type": "text", "text": "Một"}]}],
+          [{"type": "paragraph", "children": [{"type": "text", "text": "Hai"}]}],
+          [{"type": "paragraph", "children": [{"type": "text", "text": "Ba"}]}]
+        ]
+      }
+    ]
+  },
+  {
+    "name": "blockquote_simple",
+    "input": "> Lời trích dẫn\n> dòng 2",
+    "expected": [
+      {
+        "type": "blockquote",
+        "children": [
+          {"type": "paragraph", "children": [{"type": "text", "text": "Lời trích dẫn"}, {"type": "line_break", "hard": false}, {"type": "text", "text": "dòng 2"}]}
+        ]
+      }
+    ]
+  },
+  {
+    "name": "fenced_code_block",
+    "input": "```rust\nfn main() {\n    println!(\"hi\");\n}\n```",
+    "expected": [
+      {"type": "code_block", "language": "rust", "code": "fn main() {\n    println!(\"hi\");\n}"}
+    ]
+  },
+  {
+    "name": "inline_strong_emphasis",
+    "input": "Đây là **bold** và *italic* và ~~strike~~.",
+    "expected": [
+      {
+        "type": "paragraph",
+        "children": [
+          {"type": "text", "text": "Đây là "},
+          {"type": "strong", "children": [{"type": "text", "text": "bold"}]},
+          {"type": "text", "text": " và "},
+          {"type": "emphasis", "children": [{"type": "text", "text": "italic"}]},
+          {"type": "text", "text": " và "},
+          {"type": "strikethrough", "children": [{"type": "text", "text": "strike"}]},
+          {"type": "text", "text": "."}
+        ]
+      }
+    ]
+  },
+  {
+    "name": "link_inline",
+    "input": "Xem [Google](https://google.com) để biết thêm.",
+    "expected": [
+      {
+        "type": "paragraph",
+        "children": [
+          {"type": "text", "text": "Xem "},
+          {"type": "link", "url": "https://google.com", "children": [{"type": "text", "text": "Google"}]},
+          {"type": "text", "text": " để biết thêm."}
+        ]
+      }
+    ]
+  },
+  {
+    "name": "inline_code",
+    "input": "Gõ `cargo build --release` để build.",
+    "expected": [
+      {
+        "type": "paragraph",
+        "children": [
+          {"type": "text", "text": "Gõ "},
+          {"type": "code", "code": "cargo build --release"},
+          {"type": "text", "text": " để build."}
+        ]
+      }
+    ]
+  }
+]
