@@ -27,15 +27,17 @@ subprojects {
 // the project is evaluated.
 subprojects {
     pluginManager.withPlugin("com.android.library") {
-        extensions.configure<com.android.build.gradle.LibraryExtension>("android") {
-            compileSdk = 36
-            defaultConfig.targetSdk = 36
+        val androidExt = extensions.findByName("android") as? com.android.build.gradle.LibraryExtension
+        androidExt?.apply {
+            compileSdkVersion(36)
+            defaultConfig.targetSdkVersion(36)
         }
     }
     pluginManager.withPlugin("com.android.application") {
-        extensions.configure<com.android.build.gradle.AppExtension>("android") {
-            compileSdk = 36
-            defaultConfig.targetSdk = 36
+        val androidExt = extensions.findByName("android") as? com.android.build.gradle.AppExtension
+        androidExt?.apply {
+            compileSdkVersion(36)
+            defaultConfig.targetSdkVersion(36)
         }
     }
 }
