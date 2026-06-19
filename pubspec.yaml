@@ -42,7 +42,7 @@ dependencies:
   webview_flutter: ^4.8.0
 
   # YouTube player (for video content_type)
-  youtube_player_flutter: ^9.1.1
+  youtube_player_flutter: ^10.0.0
 
   # Audio (on-device TTS) — Phase 2 of plan, wired in this build.
   audio_service: ^0.18.15

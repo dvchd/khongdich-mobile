@@ -5,7 +5,9 @@ import '../../../core/markdown/markdown.dart';
 
 /// Video chapter view: YouTube player + optional markdown caption.
 ///
-/// Plan §4.5 — uses `youtube_player_flutter` (now wired in pubspec).
+/// Plan §4.5 — uses `youtube_player_flutter` v10 (which wraps
+/// `youtube_player_iframe` for web-view-based playback — no native
+/// `flutter_inappwebview` proguard conflict).
 class VideoChapterView extends StatefulWidget {
   const VideoChapterView({
     super.key,
@@ -31,10 +33,11 @@ class _VideoChapterViewState extends State<VideoChapterView> {
   void initState() {
     super.initState();
     if (widget.videoId.isNotEmpty) {
-      _controller = YoutubePlayerController(
-        initialVideoId: widget.videoId,
-        flags: const YoutubePlayerFlags(
-          autoPlay: false,
+      _controller = YoutubePlayerController.fromVideoId(
+        videoId: widget.videoId,
+        params: const YoutubePlayerParams(
+          showControls: true,
+          showFullscreenButton: true,
           mute: false,
           enableCaption: true,
         ),
@@ -44,45 +47,38 @@ class _VideoChapterViewState extends State<VideoChapterView> {
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _controller?.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return YoutubePlayerBuilder(
-      player: YoutubePlayer(
-        controller: _controller!,
-        showVideoProgressIndicator: true,
-        progressIndicatorColor: const Color(0xFFE11D48),
-        progressColors: const ProgressBarColors(
-          playedColor: Color(0xFFE11D48),
-          handleColor: Color(0xFFB91C1C),
-        ),
-      ),
-      builder: (context, player) {
-        return ListView(
-          controller: widget.scrollController,
-          padding: const EdgeInsets.all(16),
-          children: [
-            if (_controller != null) ...[
-              player,
-              const SizedBox(height: 16),
-            ] else
-              const _VideoPlaceholder(
-                message: 'Không nhận dạng được video. Hãy mở trên web.',
-              ),
-            if (widget.captionMarkdown != null &&
-                widget.captionMarkdown!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              MarkdownRenderer(
-                blocks: MarkdownParser().parse(widget.captionMarkdown!),
-                theme: widget.readerTheme,
-              ),
-            ],
-          ],
-        );
-      },
+    return ListView(
+      controller: widget.scrollController,
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (_controller != null) ...[
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: YoutubePlayer(
+              controller: _controller!,
+              aspectRatio: 16 / 9,
+            ),
+          ),
+          const SizedBox(height: 16),
+        ] else
+          const _VideoPlaceholder(
+            message: 'Không nhận dạng được video. Hãy mở trên web.',
+          ),
+        if (widget.captionMarkdown != null &&
+            widget.captionMarkdown!.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          MarkdownRenderer(
+            blocks: MarkdownParser().parse(widget.captionMarkdown!),
+            theme: widget.readerTheme,
+          ),
+        ],
+      ],
     );
   }
 }
