@@ -28,15 +28,17 @@ subprojects {
 // require compileSdk >= 34).
 subprojects {
     pluginManager.withPlugin("com.android.library") {
-        extensions.configure<com.android.build.gradle.LibraryExtension>("android") {
-            compileSdk = 36
-            defaultConfig.targetSdk = 36
+        val ext = extensions.findByName("android") as? com.android.build.gradle.LibraryExtension
+        ext?.apply {
+            compileSdkVersion(36)
+            defaultConfig.targetSdkVersion(36)
         }
     }
     pluginManager.withPlugin("com.android.application") {
-        extensions.configure<com.android.build.gradle.AppExtension>("android") {
-            compileSdk = 36
-            defaultConfig.targetSdk = 36
+        val ext = extensions.findByName("android") as? com.android.build.gradle.AppExtension
+        ext?.apply {
+            compileSdkVersion(36)
+            defaultConfig.targetSdkVersion(36)
         }
     }
 }
