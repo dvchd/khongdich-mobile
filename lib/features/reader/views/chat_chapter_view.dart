@@ -3,7 +3,12 @@ import 'package:flutter/material.dart';
 import '../../../models/chapter_content.dart';
 
 /// Chat chapter view: messaging-style bubbles. Plan §4.5 + §5.4.
-/// Speaker-side is server-supplied (`left` / `right` / `narration`).
+///
+/// Each message's `side` ("left" / "right" / "narration") is derived
+/// from `message_type` + the position of its `characterId` in the
+/// story's participant list — the first participant is "left",
+/// everyone else is "right", and `narration` / `system` messages
+/// span the full width.
 class ChatChapterView extends StatelessWidget {
   const ChatChapterView({
     super.key,
@@ -25,12 +30,13 @@ class ChatChapterView extends StatelessWidget {
       itemCount: messages.length,
       itemBuilder: (_, i) {
         final m = messages[i];
-        if (m.side == 'narration') {
+        final side = m.sideFor(participants);
+        if (side == 'narration') {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
             child: Center(
               child: Text(
-                m.text,
+                m.content,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       fontStyle: FontStyle.italic,
@@ -43,10 +49,9 @@ class ChatChapterView extends StatelessWidget {
             ),
           );
         }
-        final isRight = m.side == 'right';
-        final speaker = m.speakerId == null ? null : byId[m.speakerId];
-        final bubbleColor =
-            _resolveBubbleColor(speaker, isRight, context);
+        final isRight = side == 'right';
+        final speaker = m.characterId == null ? null : byId[m.characterId];
+        final bubbleColor = _resolveBubbleColor(speaker, isRight, context);
         return Align(
           alignment: isRight ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -80,7 +85,7 @@ class ChatChapterView extends StatelessWidget {
                     ),
                   ),
                 Text(
-                  m.text,
+                  m.content,
                   style: TextStyle(
                     color: isRight
                         ? Colors.white

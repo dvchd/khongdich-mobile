@@ -23,14 +23,12 @@ import 'widgets/reader_settings_sheet.dart';
 class ChapterReaderScreen extends ConsumerStatefulWidget {
   const ChapterReaderScreen({
     super.key,
-    required this.storySlug,
+    required this.storyId,
     required this.chapterNumber,
-    this.chapterId,
   });
 
-  final String storySlug;
+  final String storyId;
   final int chapterNumber;
-  final String? chapterId;
 
   @override
   ConsumerState<ChapterReaderScreen> createState() =>
@@ -39,21 +37,19 @@ class ChapterReaderScreen extends ConsumerStatefulWidget {
 
 class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   late final ChapterRef _ref = ChapterRef(
-    storySlug: widget.storySlug,
+    storyId: widget.storyId,
     chapterNumber: widget.chapterNumber,
-    chapterId: widget.chapterId,
   );
 
   @override
   void initState() {
     super.initState();
     // Mark the chapter as the user's current reading position on
-    // mount — the backend's `PUT /api/v1/reading-progress/{story_id}`
-    // endpoint accepts { chapter, scroll_ratio, anchor }.
+    // mount — backend `PUT /api/v1/mobile/reading-progress/{story_id}`.
     Future.microtask(() {
       ref
           .read(readingProgressServiceProvider)
-          .markChapterOpened(widget.storySlug, widget.chapterNumber);
+          .markChapterOpened(widget.storyId, widget.chapterNumber);
     });
   }
 
@@ -71,13 +67,15 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
         data: (c) => _ReaderBody(
           chapter: c,
           settings: settings,
-          storySlug: widget.storySlug,
+          storyId: widget.storyId,
           onPrev: c.prevChapter == null
               ? null
-              : () => context.go('/chapter/${widget.storySlug}/${c.prevChapter}'),
+              : () => context.go(
+                  '/chapter/${widget.storyId}:${c.prevChapter}'),
           onNext: c.nextChapter == null
               ? null
-              : () => context.go('/chapter/${widget.storySlug}/${c.nextChapter}'),
+              : () => context.go(
+                  '/chapter/${widget.storyId}:${c.nextChapter}'),
           onOpenSettings: () => _openSettings(context),
         ),
       ),
@@ -97,7 +95,7 @@ class _ReaderBody extends ConsumerStatefulWidget {
   const _ReaderBody({
     required this.chapter,
     required this.settings,
-    required this.storySlug,
+    required this.storyId,
     this.onPrev,
     this.onNext,
     this.onOpenSettings,
@@ -105,7 +103,7 @@ class _ReaderBody extends ConsumerStatefulWidget {
 
   final ChapterContent chapter;
   final ReaderSettings settings;
-  final String storySlug;
+  final String storyId;
   final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final VoidCallback? onOpenSettings;
@@ -139,7 +137,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
     if (ratio > 0.95 && !_progressSaved) {
       _progressSaved = true;
       ref.read(readingProgressServiceProvider).markChapterRead(
-            widget.storySlug,
+            widget.storyId,
             widget.chapter.chapterNumber,
             scrollRatio: ratio.clamp(0.0, 1.0),
           );
@@ -194,8 +192,6 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
   }
 
   Widget _scrollWrapper(Widget child) {
-    // Manga and chat have their own internal ListView. Wrap text+video
-    // in our ScrollController so we can track reading progress.
     if (widget.chapter is TextChapterContent ||
         widget.chapter is VideoChapterContent) {
       return PrimaryScrollController(

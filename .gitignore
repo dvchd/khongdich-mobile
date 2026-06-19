@@ -46,3 +46,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase config — CI decodes the real google-services.json from a
+# secret. The placeholder file is committed for local dev so the
+# google-services Gradle plugin doesn't fail; CI overwrites it.
+/android/app/google-services.json
+!/android/app/google-services.placeholder.json

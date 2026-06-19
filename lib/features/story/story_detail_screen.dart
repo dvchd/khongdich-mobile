@@ -7,9 +7,9 @@ import '../../repositories/story_repository.dart';
 
 /// Story detail screen. Plan §5.3.
 ///
-/// Hits the SSR `/truyen/{slug}` page via [HtmlStoryDataSource] and shows
-/// cover, synopsis, categories/tags, chapter list. The chapter list is
-/// loaded lazily from `/hx/chapter-list/{story_id}`.
+/// Hits:
+///   - `GET /api/v1/mobile/stories/{slug}` → StoryDetailPayload
+///   - `GET /api/v1/mobile/stories/{id}/chapters` → paginated chapter list
 class StoryDetailScreen extends ConsumerWidget {
   const StoryDetailScreen({super.key, required this.storySlug});
 
@@ -17,26 +17,28 @@ class StoryDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final storyAsync = ref.watch(_storyProvider(storySlug));
+    final detailAsync = ref.watch(_storyDetailProvider(storySlug));
     return Scaffold(
-      body: storyAsync.when(
+      body: detailAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorBody(message: '$e', onRetry: () =>
-            ref.invalidate(_storyProvider(storySlug))),
-        data: (detail) => _StoryDetailBody(detail: detail, slug: storySlug),
+        error: (e, _) => _ErrorBody(
+          message: '$e',
+          onRetry: () => ref.invalidate(_storyDetailProvider(storySlug)),
+        ),
+        data: (detail) => _StoryDetailBody(detail: detail),
       ),
     );
   }
 }
 
 class _StoryDetailBody extends ConsumerWidget {
-  const _StoryDetailBody({required this.detail, required this.slug});
-  final StoryDetail detail;
-  final String slug;
+  const _StoryDetailBody({required this.detail});
+  final StoryDetailPayload detail;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final story = detail.story;
+    final chaptersAsync = ref.watch(_chapterListProvider(story.id));
     return CustomScrollView(
       slivers: [
         SliverAppBar(
@@ -75,7 +77,12 @@ class _StoryDetailBody extends ConsumerWidget {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
-                    if (story.status != null) _StatusChip(status: story.status!),
+                    if (story.status != null)
+                      _StatusChip(status: story.status!),
+                    if (detail.bookmark != null) ...[
+                      const SizedBox(width: 6),
+                      _BookmarkChip(listType: detail.bookmark!),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -85,7 +92,9 @@ class _StoryDetailBody extends ConsumerWidget {
                     runSpacing: 6,
                     children: [
                       for (final cat in story.categories)
-                        Chip(label: Text(cat), visualDensity: VisualDensity.compact),
+                        Chip(
+                            label: Text(cat),
+                            visualDensity: VisualDensity.compact),
                     ],
                   ),
                 if (story.tags.isNotEmpty) ...[
@@ -109,12 +118,31 @@ class _StoryDetailBody extends ConsumerWidget {
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: detail.chapters.isEmpty
-                      ? null
-                      : () => context.push('/chapter/$slug/${detail.chapters.first.chapterNumber}'),
-                  icon: const Icon(Icons.menu_book),
-                  label: const Text('Bắt đầu đọc'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: detail.firstChapter == null
+                            ? null
+                            : () => context.push(
+                                '/chapter/${story.id}:${detail.firstChapter}'),
+                        icon: const Icon(Icons.menu_book),
+                        label: const Text('Bắt đầu đọc'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.outlined(
+                      icon: Icon(detail.bookmark == null
+                          ? Icons.bookmark_border
+                          : Icons.bookmark),
+                      onPressed: () async {
+                        await ref
+                            .read(storyRepositoryProvider)
+                            .toggleBookmark(story.id);
+                        ref.invalidate(_storyDetailProvider(story.slug));
+                      },
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -131,52 +159,64 @@ class _StoryDetailBody extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const Spacer(),
-                if (detail.chapters.isNotEmpty)
-                  Text(
-                    '${detail.chapters.length} chương',
+                chaptersAsync.maybeWhen(
+                  data: (page) => Text(
+                    '${page.total} chương',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  orElse: () => const SizedBox.shrink(),
+                ),
               ],
             ),
           ),
         ),
-        detail.chapters.isEmpty
-            ? const SliverFillRemaining(
-                hasScrollBody: false,
-                child: Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Text('Chưa có chương nào hoặc không tải được.'),
+        chaptersAsync.when(
+          loading: () => const SliverFillRemaining(
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (e, _) => SlFillRemaining(
+            child: Center(child: Text('Không tải được chương: $e')),
+          ),
+          data: (page) => page.chapters.isEmpty
+              ? const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Text('Chưa có chương nào.'),
+                    ),
+                  ),
+                )
+              : SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, i) {
+                      final c = page.chapters[i];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor:
+                              AppTheme.primary.withValues(alpha: 0.12),
+                          child: Text(
+                            '${c.chapterNumber}',
+                            style: const TextStyle(color: AppTheme.primary),
+                          ),
+                        ),
+                        title: Text(
+                          c.title.isEmpty
+                              ? 'Chương ${c.chapterNumber}'
+                              : c.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(_contentTypeLabel(story.contentTypes.first)),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () =>
+                            context.push('/chapter/${story.id}:${c.chapterNumber}'),
+                      );
+                    },
+                    childCount: page.chapters.length,
                   ),
                 ),
-              )
-            : SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, i) {
-                    final c = detail.chapters[i];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor:
-                            AppTheme.primary.withValues(alpha: 0.12),
-                        child: Text(
-                          '${c.chapterNumber}',
-                          style: const TextStyle(color: AppTheme.primary),
-                        ),
-                      ),
-                      title: Text(
-                        c.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(_contentTypeLabel(c.contentType)),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () =>
-                          context.push('/chapter/$slug/${c.chapterNumber}'),
-                    );
-                  },
-                  childCount: detail.chapters.length,
-                ),
-              ),
+        ),
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
       ],
     );
@@ -217,6 +257,34 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
+class _BookmarkChip extends StatelessWidget {
+  const _BookmarkChip({required this.listType});
+  final String listType;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (listType) {
+      'reading' => 'Đang đọc',
+      'completed' => 'Đã đọc xong',
+      'plan_to_read' => 'Sẽ đọc',
+      'favorite' => 'Yêu thích',
+      _ => listType,
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+            color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
 class _ErrorBody extends StatelessWidget {
   const _ErrorBody({required this.message, required this.onRetry});
   final String message;
@@ -248,8 +316,18 @@ class _ErrorBody extends StatelessWidget {
   }
 }
 
-final _storyProvider =
-    FutureProvider.autoDispose.family<StoryDetail, String>((ref, slug) async {
+// Short alias for the SliverFillRemaining type — keeps the call sites
+// readable without losing the sliver contract.
+typedef SlFillRemaining = SliverFillRemaining;
+
+final _storyDetailProvider = FutureProvider.autoDispose
+    .family<StoryDetailPayload, String>((ref, slug) async {
   final repo = ref.watch(storyRepositoryProvider);
   return repo.fetchStoryDetail(slug);
+});
+
+final _chapterListProvider = FutureProvider.autoDispose
+    .family<PaginatedChapters, String>((ref, storyId) async {
+  final repo = ref.watch(storyRepositoryProvider);
+  return repo.fetchChapterList(storyId, perPage: 100);
 });

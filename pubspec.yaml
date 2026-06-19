@@ -1,7 +1,7 @@
 name: khongdich_mobile
 description: "Không Dịch — Mobile reader app for khongdich.com (Android first)."
 publish_to: 'none'
-version: 0.2.0+2
+version: 0.3.0+3
 
 environment:
   sdk: ^3.12.2
@@ -17,13 +17,8 @@ dependencies:
   # Routing
   go_router: ^14.2.0
 
-  # Network
+  # Network (no cookies — Bearer JWT only)
   dio: ^5.5.0
-  dio_cookie_manager: ^3.1.1
-  cookie_jar: ^4.0.8
-
-  # HTML parsing (for SSR scraping — backend JSON API not yet complete)
-  html: ^0.15.4
 
   # Local DB
   drift: ^2.18.0
@@ -39,12 +34,11 @@ dependencies:
   shimmer: ^3.0.0
   google_fonts: ^6.2.1
   photo_view: ^0.15.0
-  webview_flutter: ^4.8.0
 
   # YouTube player (for video content_type)
   youtube_player_flutter: ^10.0.0
 
-  # Audio (on-device TTS) — Phase 2 of plan, wired in this build.
+  # Audio (on-device TTS)
   audio_service: ^0.18.15
   flutter_tts: ^4.1.0
   audio_session: ^0.1.21
@@ -52,8 +46,14 @@ dependencies:
   # Local notifications (for download completion + fallback when FCM absent)
   flutter_local_notifications: ^17.2.2
 
+  # Auth — Google Sign-In → exchange idToken for server JWT
+  google_sign_in: ^6.2.1
+
+  # Push notifications
+  firebase_core: ^3.4.0
+  firebase_messaging: ^15.1.0
+
   # Utils
-  # connectivity_plus: ^5.0.2  # commented out — pulls old compileSdk, breaks AAR check
   logger: ^2.4.0
   url_launcher: ^6.3.0
   path: ^1.9.0
@@ -65,16 +65,9 @@ dev_dependencies:
   build_runner: ^2.4.11
   flutter_lints: ^6.0.0
 
-# NOTE: The following packages from `docs/plan-flutter-app.md` Appendix B
-# are intentionally NOT yet wired (require native setup outside the
-# scope of this scaffold):
-#
-#   firebase_core / firebase_messaging / firebase_crashlytics / firebase_analytics
-#   google_sign_in (waiting for backend /api/v1/auth/token)
-#   app_links
-#
-# They will be added once a Firebase project + the backend Bearer-JWT
-# endpoint land. See README.md "Wiring the Phase-2 subsystems".
+# NOTE: apple_sign_in / app_links / firebase_crashlytics / firebase_analytics
+# are intentionally not yet wired (iOS Phase 3 + observability rollout).
+# See README.md "Wiring the Phase-2 subsystems".
 
 flutter:
   uses-material-design: true

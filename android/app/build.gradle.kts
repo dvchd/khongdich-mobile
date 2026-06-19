@@ -1,10 +1,14 @@
 import java.util.Base64
-import java.util.Properties
 
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // Google Services plugin — reads `android/app/google-services.json`
+    // (decoded from a CI secret) and injects the Firebase config into
+    // the build. The plugin is a no-op when the file is absent, so
+    // local `flutter run` still works without Firebase setup.
+    id("com.google.gms.google-services")
 }
 
 // Decode a base64-encoded keystore (passed via env in CI) into a temp file.
@@ -44,6 +48,32 @@ android {
         versionName = flutter.versionName
         // Required by flutter_local_notifications for desugar support.
         multiDexEnabled = true
+    }
+
+    // ─── Product flavors ────────────────────────────────────────────
+    // The CI/CD pipeline builds two flavors:
+    //   - demo → talks to https://demo.khongdich.com (QA testing)
+    //   - prod  → talks to https://khongdich.com       (public)
+    // The flavor is set via `flutter build apk --flavor=demo|prod`.
+    // The `applicationIdSuffix` lets both flavors coexist on a single
+    // device so QA can install demo + prod side-by-side.
+    //
+    // The actual backend URL is selected at runtime via the
+    // `--dart-define=APP_ENV=demo|prod` flag (see lib/core/network/api_client.dart).
+    flavorDimensions += "environment"
+    productFlavors {
+        create("demo") {
+            dimension = "environment"
+            applicationIdSuffix = ".demo"
+            versionNameSuffix = "-demo"
+            // Match a distinct resValue so the launcher label says
+            // "Không Dịch (Demo)" on the demo build.
+            resValue("string", "app_name", "Không Dịch (Demo)")
+        }
+        create("prod") {
+            dimension = "environment"
+            resValue("string", "app_name", "Không Dịch")
+        }
     }
 
     signingConfigs {

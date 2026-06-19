@@ -50,14 +50,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             StoryDetailScreen(storySlug: state.pathParameters['slug']!),
       ),
       GoRoute(
-        path: '/chapter/:slug/:num',
+        // `/chapter/{storyId}:{chapterNumber}` — colon separator keeps
+        // both params in a single path segment so we don't conflict with
+        // the `/story/:slug` route.
+        path: '/chapter/:ref',
         name: 'chapter_reader',
         builder: (context, state) {
-          final slug = state.pathParameters['slug']!;
-          final num = int.parse(state.pathParameters['num']!);
+          final raw = state.pathParameters['ref']!;
+          final parts = raw.split(':');
+          if (parts.length != 2) {
+            return Scaffold(
+              body: Center(
+                child: Text('Route không hợp lệ: $raw (dạng /chapter/{storyId}:{chapterNumber})'),
+              ),
+            );
+          }
           return ChapterReaderScreen(
-            storySlug: slug,
-            chapterNumber: num,
+            storyId: parts[0],
+            chapterNumber: int.tryParse(parts[1]) ?? 1,
           );
         },
       ),

@@ -1,68 +1,129 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:html/parser.dart' as html_parser;
 
 import '../core/network/api_client.dart';
 import '../models/chapter_content.dart';
 import '../models/story.dart';
-import 'chapter_reader_data_source.dart';
-import 'html_story_data_source.dart';
 
-// Re-export DTOs that callers consume via this repository.
-export 'html_story_data_source.dart'
-    show
-        HomePage,
-        StoryDetail,
-        ContinueReadingItem,
-        NewChapterEntry;
-
-/// Unified read/write client for the Không Dịch backend.
+/// Unified read/write client for the Không Dịch backend's mobile JSON
+/// API (mounted at `/api/v1/mobile/*`).
+///
+/// Every call here goes through the Bearer-JWT-aware [ApiClient].
 class StoryRepository {
-  StoryRepository(this._api, this._html, this._chapterReader);
+  StoryRepository(this._api);
 
   final ApiClient _api;
-  final HtmlStoryDataSource _html;
-  final ChapterReaderDataSource _chapterReader;
   Dio get _dio => _api.dio;
 
-  // ---- Reads via HTML scraping ----
+  // ─── Stories ────────────────────────────────────────────────────
 
-  Future<HomePage> fetchHome() => _html.fetchHome();
-
-  Future<StoryDetail> fetchStoryDetail(String slugOrId) =>
-      _html.fetchStoryDetail(slugOrId);
-
-  Future<List<ChapterSummary>> fetchChapterList(String storyId) =>
-      _html.fetchChapterList(storyId);
-
-  Future<List<StorySummary>> fetchExplore({
+  /// List stories with filter / sort / pagination.
+  /// Hits `GET /api/v1/mobile/stories`.
+  Future<PaginatedStories> listStories({
+    String sort = 'fresh',
     String? category,
+    String? contentType,
+    String? status,
     int page = 1,
-  }) =>
-      _html.fetchExplore(category: category, page: page);
+    int perPage = 20,
+    String? seed,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/stories',
+      queryParameters: {
+        'sort': sort,
+        if (category != null) 'category': category,
+        if (contentType != null) 'content_type': contentType,
+        if (status != null) 'status': status,
+        'page': page,
+        'per_page': perPage,
+        if (seed != null) 'seed': seed,
+      },
+    );
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedStories(
+      stories: [
+        for (final s in (data['stories'] as List? ?? const []))
+          StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? page,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
+    );
+  }
 
-  Future<List<StorySummary>> fetchRankings({
-    String category = 'all',
-    String period = 'daily',
-  }) =>
-      _html.fetchRankings(category: category, period: period);
+  /// Story detail by id or slug.
+  /// Hits `GET /api/v1/mobile/stories/{id_or_slug}`.
+  Future<StoryDetailPayload> fetchStoryDetail(String idOrSlug) async {
+    final r = await _dio.get('/api/v1/mobile/stories/$idOrSlug');
+    final data = r.data as Map<String, dynamic>;
+    final storyJson = data['story'] as Map<String, dynamic>;
+    final story = StorySummary.fromStoryJson(storyJson).copyWith(
+      author: (data['author_display_name'] as String?) ??
+          (data['author_username'] as String?) ??
+          'Không rõ',
+      categories: [
+        for (final c in (data['categories'] as List? ?? const []))
+          ((c as Map<String, dynamic>)['name'] as String?) ?? '',
+      ].where((s) => s.isNotEmpty).toList(),
+      tags: [
+        for (final t in (data['tags'] as List? ?? const []))
+          ((t as Map<String, dynamic>)['name'] as String?) ?? '',
+      ].where((s) => s.isNotEmpty).toList(),
+      synopsis: storyJson['synopsis'] as String?,
+    );
+    return StoryDetailPayload(
+      story: story,
+      authorUsername: data['author_username'] as String? ?? '',
+      authorDisplayName: data['author_display_name'] as String? ?? '',
+      authorAvatar: data['author_avatar'] as String?,
+      firstChapter: (data['first_chapter'] as num?)?.toInt(),
+      bookmark: data['bookmark'] as String?,
+    );
+  }
 
-  Future<List<ContinueReadingItem>> fetchContinueReading() =>
-      _html.fetchContinueReading();
+  /// Paginated chapter list for a story.
+  /// Hits `GET /api/v1/mobile/stories/{id}/chapters`.
+  Future<PaginatedChapters> fetchChapterList(
+    String storyId, {
+    int page = 1,
+    int perPage = 50,
+    bool desc = false,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/stories/$storyId/chapters',
+      queryParameters: {
+        'page': page,
+        'per_page': perPage,
+        if (desc) 'sort': 'desc',
+      },
+    );
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedChapters(
+      chapters: [
+        for (final c in (data['chapters'] as List? ?? const []))
+          ChapterSummary.fromJson(c as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? page,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
+    );
+  }
 
-  Future<ChapterContent> fetchChapter({
-    required String storySlug,
-    required int chapterNumber,
-    String? chapterId,
-  }) =>
-      _chapterReader.fetchChapter(
-        storySlug: storySlug,
-        chapterNumber: chapterNumber,
-        chapterId: chapterId,
-      );
+  /// Chapter content (discriminated union by content_type).
+  /// Hits `GET /api/v1/mobile/chapters/{id}`.
+  Future<ChapterContent> fetchChapter(String chapterId) async {
+    final r = await _dio.get('/api/v1/mobile/chapters/$chapterId');
+    return ChapterContent.fromJson(r.data as Map<String, dynamic>);
+  }
 
-  // ---- Reads via existing JSON endpoints ----
+  // ─── Search ─────────────────────────────────────────────────────
 
+  /// Search stories + posts.
+  /// Hits the existing `GET /api/v1/search?q=&limit=` endpoint (still
+  /// works for unauthenticated clients; CSRF doesn't apply to GET).
   Future<SearchResult> search(String q, {int limit = 20}) async {
     final r = await _dio.get(
       '/api/v1/search',
@@ -71,48 +132,55 @@ class StoryRepository {
     final data = r.data as Map<String, dynamic>;
     return SearchResult(
       stories: [
-        for (final e in (data['stories'] as List? ?? const []))
-          _storyCardFromJson(e as Map<String, dynamic>),
+        for (final s in (data['stories'] as List? ?? const []))
+          StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
       ],
       posts: [
-        for (final e in (data['posts'] as List? ?? const []))
-          PostCard.fromJson(e as Map<String, dynamic>),
+        for (final p in (data['posts'] as List? ?? const []))
+          PostCard.fromJson(p as Map<String, dynamic>),
       ],
     );
   }
 
-  StorySummary _storyCardFromJson(Map<String, dynamic> json) {
-    return StorySummary(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      slug: json['slug'] as String,
-      coverUrl: json['cover_url'] as String?,
-      author: (json['author_display_name'] as String?) ??
-          (json['author_username'] as String?) ??
-          'Không rõ',
-      categories: const [],
-      tags: const [],
-      contentTypes: [json['content_type'] as String? ?? 'text'],
-      synopsis: json['synopsis'] as String?,
-      chapterCount: (json['chapter_count'] as num?)?.toInt(),
-      status: json['status'] as String?,
+  // ─── Bookmarks ──────────────────────────────────────────────────
+
+  /// List bookmarks by `list_type` (or all if null).
+  /// Hits `GET /api/v1/mobile/bookmarks`.
+  Future<PaginatedBookmarks> listBookmarks({
+    String? listType,
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/bookmarks',
+      queryParameters: {
+        if (listType != null) 'list_type': listType,
+        'page': page,
+        'per_page': perPage,
+      },
+    );
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedBookmarks(
+      bookmarks: [
+        for (final b in (data['bookmarks'] as List? ?? const []))
+          BookmarkItem.fromJson(b as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? page,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
     );
   }
 
-  // ---- Writes via existing JSON endpoints ----
-
+  /// Toggle a bookmark on/off.
+  /// Hits `POST /api/v1/mobile/bookmarks/{story_id}`.
   Future<BookmarkToggleResult> toggleBookmark(
     String storyId, {
     String listType = 'reading',
   }) async {
-    await _api.ensureCsrfCookie();
     final r = await _dio.post(
-      '/api/v1/bookmarks/$storyId',
-      data: 'list_type=$listType',
-      options: Options(
-        contentType: Headers.formUrlEncodedContentType,
-        headers: {'Origin': _api.baseUrl},
-      ),
+      '/api/v1/mobile/bookmarks/$storyId',
+      data: {'list_type': listType},
     );
     final data = r.data as Map<String, dynamic>;
     return BookmarkToggleResult(
@@ -122,58 +190,157 @@ class StoryRepository {
     );
   }
 
+  // ─── Reading progress ───────────────────────────────────────────
+
+  /// Continue-reading list (last 50 items).
+  /// Hits `GET /api/v1/mobile/reading-progress`.
+  Future<List<ContinueReadingItem>> fetchContinueReading() async {
+    final r = await _dio.get('/api/v1/mobile/reading-progress');
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final item in (data['items'] as List? ?? const []))
+        ContinueReadingItem.fromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  /// Save reading progress for one story.
+  /// Hits `PUT /api/v1/mobile/reading-progress/{story_id}`.
   Future<int> saveReadingProgress({
     required String storyId,
     required int chapter,
     double scrollRatio = 0,
     String anchor = '',
   }) async {
-    await _api.ensureCsrfCookie();
     final r = await _dio.put(
-      '/api/v1/reading-progress/$storyId',
+      '/api/v1/mobile/reading-progress/$storyId',
       data: {
         'chapter': chapter,
         'scroll_ratio': scrollRatio,
         'anchor': anchor,
       },
-      options: Options(headers: {'Origin': _api.baseUrl}),
     );
     final data = r.data as Map<String, dynamic>;
     return (data['streak'] as num?)?.toInt() ?? 0;
   }
 
-  Future<NotificationListPage> listNotifications() async {
-    final r = await _dio.get<String>(
-      '/hx/notifications',
-      options: Options(
-        responseType: ResponseType.json,
-        headers: {'Accept': 'text/html'},
-      ),
+  // ─── Notifications ──────────────────────────────────────────────
+
+  /// Paginated notifications list.
+  /// Hits `GET /api/v1/mobile/notifications`.
+  Future<PaginatedNotifications> listNotifications({
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/notifications',
+      queryParameters: {'page': page, 'per_page': perPage},
     );
-    return NotificationScraper.parse(r.data ?? '');
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedNotifications(
+      notifications: [
+        for (final n in (data['notifications'] as List? ?? const []))
+          NotificationItem.fromJson(n as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      unread: (data['unread'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? page,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
+    );
   }
 
   Future<void> markNotificationRead(String id) async {
-    await _api.ensureCsrfCookie();
-    await _dio.put(
-      '/api/v1/notifications/$id/read',
-      options: Options(headers: {'Origin': _api.baseUrl}),
-    );
+    // Existing endpoint — works with Bearer JWT too since it goes
+    // through the same AuthUser extractor.
+    await _dio.put('/api/v1/notifications/$id/read');
   }
 
   Future<void> markAllNotificationsRead() async {
-    await _api.ensureCsrfCookie();
-    await _dio.put(
-      '/api/v1/notifications/read-all',
-      options: Options(headers: {'Origin': _api.baseUrl}),
-    );
+    await _dio.put('/api/v1/notifications/read-all');
   }
 
   Future<void> deleteNotification(String id) async {
-    await _api.ensureCsrfCookie();
-    await _dio.delete(
-      '/api/v1/notifications/$id',
-      options: Options(headers: {'Origin': _api.baseUrl}),
+    await _dio.delete('/api/v1/notifications/$id');
+  }
+
+  // ─── Auth ───────────────────────────────────────────────────────
+
+  /// Exchange a Google id_token for a server-issued JWT.
+  /// Hits `POST /api/v1/mobile/auth/token`.
+  Future<AuthTokenResponse> exchangeGoogleIdToken(String idToken) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/auth/token',
+      data: {'id_token': idToken, 'platform': 'android'},
+    );
+    final data = r.data as Map<String, dynamic>;
+    final token = data['token'] as String;
+    await _api.writeJwt(token);
+    return AuthTokenResponse(
+      token: token,
+      user: CurrentUser.fromJson(data['user'] as Map<String, dynamic>),
+      expiresAt: DateTime.tryParse(data['expires_at'] as String? ?? '') ??
+          DateTime.now().add(const Duration(hours: 24)),
+    );
+  }
+
+  /// Fetch the current user (verifies the JWT is still valid).
+  /// Hits `GET /api/v1/mobile/auth/me`.
+  Future<CurrentUser> fetchMe() async {
+    final r = await _dio.get('/api/v1/mobile/auth/me');
+    final data = r.data as Map<String, dynamic>;
+    return CurrentUser.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
+  // ─── Sync ───────────────────────────────────────────────────────
+
+  /// Batch sync — push local progress + bookmarks, pull server state.
+  /// Hits `POST /api/v1/mobile/sync`.
+  Future<SyncResponse> sync({
+    List<SyncProgressItem> progress = const [],
+    List<SyncBookmarkItem> bookmarks = const [],
+  }) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/sync',
+      data: {
+        'reading_progress': [
+          for (final p in progress)
+            {
+              'story_id': p.storyId,
+              'chapter': p.chapter,
+              if (p.scrollRatio != null) 'scroll_ratio': p.scrollRatio,
+              if (p.anchor != null) 'anchor': p.anchor,
+            },
+        ],
+        'bookmarks': [
+          for (final b in bookmarks)
+            {'story_id': b.storyId, 'list_type': b.listType},
+        ],
+      },
+    );
+    final data = r.data as Map<String, dynamic>;
+    return SyncResponse(
+      readingProgress: [
+        for (final item in (data['reading_progress'] as List? ?? const []))
+          ContinueReadingItem.fromJson(item as Map<String, dynamic>),
+      ],
+      bookmarks: [
+        for (final b in (data['bookmarks'] as List? ?? const []))
+          BookmarkItem.fromJson(b as Map<String, dynamic>),
+      ],
+      unreadCount: (data['unread_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  // ─── Push ───────────────────────────────────────────────────────
+
+  /// Register an FCM token with the server (currently a no-op on the
+  /// backend — the token is logged but not persisted until the
+  /// `push_devices` migration + FCM crate ship).
+  /// Hits `POST /api/v1/mobile/push/register`.
+  Future<void> registerPushToken(String token, {String platform = 'android'}) async {
+    await _dio.post(
+      '/api/v1/mobile/push/register',
+      data: {'token': token, 'platform': platform},
     );
   }
 }
@@ -183,14 +350,57 @@ final storyRepositoryProvider = Provider<StoryRepository>((ref) {
         data: (c) => c,
         orElse: () => throw StateError('ApiClient not ready'),
       );
-  return StoryRepository(
-    api,
-    HtmlStoryDataSource(api),
-    ChapterReaderDataSource(api),
-  );
+  return StoryRepository(api);
 });
 
-// ---- Result DTOs ----
+// ─── DTOs ──────────────────────────────────────────────────────────
+
+class PaginatedStories {
+  const PaginatedStories({
+    required this.stories,
+    required this.total,
+    required this.page,
+    required this.perPage,
+    required this.totalPages,
+  });
+  final List<StorySummary> stories;
+  final int total;
+  final int page;
+  final int perPage;
+  final int totalPages;
+}
+
+class PaginatedChapters {
+  const PaginatedChapters({
+    required this.chapters,
+    required this.total,
+    required this.page,
+    required this.perPage,
+    required this.totalPages,
+  });
+  final List<ChapterSummary> chapters;
+  final int total;
+  final int page;
+  final int perPage;
+  final int totalPages;
+}
+
+class StoryDetailPayload {
+  const StoryDetailPayload({
+    required this.story,
+    required this.authorUsername,
+    required this.authorDisplayName,
+    required this.authorAvatar,
+    required this.firstChapter,
+    required this.bookmark,
+  });
+  final StorySummary story;
+  final String authorUsername;
+  final String authorDisplayName;
+  final String? authorAvatar;
+  final int? firstChapter;
+  final String? bookmark;
+}
 
 class SearchResult {
   const SearchResult({required this.stories, required this.posts});
@@ -208,7 +418,6 @@ class PostCard {
     this.excerpt,
     this.publishedAt,
   });
-
   final String id;
   final String title;
   final String slug;
@@ -217,17 +426,69 @@ class PostCard {
   final String? excerpt;
   final DateTime? publishedAt;
 
-  factory PostCard.fromJson(Map<String, dynamic> json) {
-    return PostCard(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      slug: json['slug'] as String,
-      postType: json['post_type'] as String? ?? 'article',
-      coverUrl: json['cover_url'] as String?,
-      excerpt: json['excerpt'] as String?,
-      publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
-    );
-  }
+  factory PostCard.fromJson(Map<String, dynamic> json) => PostCard(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        slug: json['slug'] as String,
+        postType: json['post_type'] as String? ?? 'article',
+        coverUrl: json['cover_url'] as String?,
+        excerpt: json['excerpt'] as String?,
+        publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
+      );
+}
+
+class PaginatedBookmarks {
+  const PaginatedBookmarks({
+    required this.bookmarks,
+    required this.total,
+    required this.page,
+    required this.perPage,
+    required this.totalPages,
+  });
+  final List<BookmarkItem> bookmarks;
+  final int total;
+  final int page;
+  final int perPage;
+  final int totalPages;
+}
+
+class BookmarkItem {
+  const BookmarkItem({
+    required this.storyId,
+    required this.title,
+    required this.slug,
+    required this.coverUrl,
+    required this.author,
+    required this.listType,
+    required this.contentType,
+    required this.chapterCount,
+    required this.bookmarkedAt,
+  });
+  final String storyId;
+  final String title;
+  final String slug;
+  final String? coverUrl;
+  final String author;
+  final String listType;
+  final String contentType;
+  final int? chapterCount;
+  final DateTime bookmarkedAt;
+
+  factory BookmarkItem.fromJson(Map<String, dynamic> json) => BookmarkItem(
+        storyId: json['id'] as String,
+        title: json['title'] as String,
+        slug: json['slug'] as String,
+        coverUrl: json['cover_url'] as String?,
+        author: (json['author_display_name'] as String?) ??
+            (json['author_username'] as String?) ??
+            'Không rõ',
+        listType: json['bookmark_list_type'] as String? ?? 'reading',
+        contentType: json['content_type'] as String? ?? 'text',
+        chapterCount: (json['chapter_count'] as num?)?.toInt(),
+        bookmarkedAt:
+            DateTime.tryParse(json['bookmark_created_at'] as String? ?? '') ??
+                DateTime.now(),
+      );
 }
 
 class BookmarkToggleResult {
@@ -241,13 +502,58 @@ class BookmarkToggleResult {
   final int bookmarkCount;
 }
 
-class NotificationListPage {
-  const NotificationListPage({
-    required this.items,
-    required this.unreadCount,
+class ContinueReadingItem {
+  const ContinueReadingItem({
+    required this.storyId,
+    required this.storyTitle,
+    required this.storySlug,
+    required this.coverUrl,
+    required this.contentType,
+    required this.lastChapter,
+    required this.totalChapters,
+    required this.chapterLabel,
+    required this.updatedAt,
   });
-  final List<NotificationItem> items;
-  final int unreadCount;
+  final String storyId;
+  final String storyTitle;
+  final String storySlug;
+  final String? coverUrl;
+  final String contentType;
+  final int lastChapter;
+  final int totalChapters;
+  final String chapterLabel;
+  final DateTime updatedAt;
+
+  factory ContinueReadingItem.fromJson(Map<String, dynamic> json) =>
+      ContinueReadingItem(
+        storyId: json['story_id'] as String,
+        storyTitle: json['story_title'] as String,
+        storySlug: json['story_slug'] as String,
+        coverUrl: json['cover_url'] as String?,
+        contentType: json['content_type'] as String? ?? 'text',
+        lastChapter: (json['last_chapter'] as num?)?.toInt() ?? 1,
+        totalChapters: (json['total_chapters'] as num?)?.toInt() ?? 1,
+        chapterLabel: json['chapter_label'] as String? ?? '',
+        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ??
+            DateTime.now(),
+      );
+}
+
+class PaginatedNotifications {
+  const PaginatedNotifications({
+    required this.notifications,
+    required this.total,
+    required this.unread,
+    required this.page,
+    required this.perPage,
+    required this.totalPages,
+  });
+  final List<NotificationItem> notifications;
+  final int total;
+  final int unread;
+  final int page;
+  final int perPage;
+  final int totalPages;
 }
 
 class NotificationItem {
@@ -260,7 +566,6 @@ class NotificationItem {
     this.isRead = false,
     this.createdAt,
   });
-
   final String id;
   final String type;
   final String title;
@@ -268,43 +573,92 @@ class NotificationItem {
   final String? link;
   final bool isRead;
   final DateTime? createdAt;
+
+  factory NotificationItem.fromJson(Map<String, dynamic> json) =>
+      NotificationItem(
+        id: json['id'] as String,
+        type: json['notification_type'] as String? ?? '',
+        title: json['title'] as String? ?? '',
+        body: json['body'] as String? ?? '',
+        link: json['link'] as String?,
+        isRead: json['is_read'] as bool? ?? false,
+        createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
+      );
 }
 
-/// Parses the `/hx/notifications` HTML fragment into [NotificationListPage].
-class NotificationScraper {
-  NotificationScraper._();
+class AuthTokenResponse {
+  const AuthTokenResponse({
+    required this.token,
+    required this.user,
+    required this.expiresAt,
+  });
+  final String token;
+  final CurrentUser user;
+  final DateTime expiresAt;
+}
 
-  static NotificationListPage parse(String html) {
-    final doc = html_parser.parse(html);
-    final items = <NotificationItem>[];
-    for (final el
-        in doc.querySelectorAll('.notification-item, [data-notification-id]')) {
-      final id = el.attributes['data-notification-id'] ?? '';
-      final type = el.attributes['data-type'] ?? '';
-      final title =
-          el.querySelector('.title, .notification-title')?.text.trim() ?? '';
-      final body =
-          el.querySelector('.body, .notification-body')?.text.trim() ?? '';
-      final link = el.querySelector('a')?.attributes['href'];
-      final isRead = el.classes.contains('read') ||
-          el.attributes['data-read'] == 'true';
-      final createdAt =
-          DateTime.tryParse(el.attributes['data-created-at'] ?? '');
-      items.add(NotificationItem(
-        id: id,
-        type: type,
-        title: title,
-        body: body,
-        link: link,
-        isRead: isRead,
-        createdAt: createdAt,
-      ));
-    }
-    final unreadText =
-        doc.querySelector('.unread-count, [data-unread-count]')?.text ?? '0';
-    final unread = int.tryParse(
-            RegExp(r'(\d+)').firstMatch(unreadText)?.group(1) ?? '0') ??
-        0;
-    return NotificationListPage(items: items, unreadCount: unread);
-  }
+class CurrentUser {
+  const CurrentUser({
+    required this.id,
+    required this.username,
+    required this.displayName,
+    required this.email,
+    required this.role,
+    this.avatarUrl,
+    this.readingStreak = 0,
+    this.unreadNotificationCount = 0,
+  });
+  final String id;
+  final String username;
+  final String displayName;
+  final String email;
+  final String role;
+  final String? avatarUrl;
+  final int readingStreak;
+  final int unreadNotificationCount;
+
+  factory CurrentUser.fromJson(Map<String, dynamic> json) => CurrentUser(
+        id: json['id'] as String,
+        username: json['username'] as String? ?? '',
+        displayName: json['display_name'] as String? ?? '',
+        email: json['email'] as String? ?? '',
+        role: json['role'] as String? ?? 'reader',
+        avatarUrl: json['avatar_url'] as String?,
+        readingStreak: (json['reading_streak'] as num?)?.toInt() ?? 0,
+        unreadNotificationCount:
+            (json['unread_notification_count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class SyncResponse {
+  const SyncResponse({
+    required this.readingProgress,
+    required this.bookmarks,
+    required this.unreadCount,
+  });
+  final List<ContinueReadingItem> readingProgress;
+  final List<BookmarkItem> bookmarks;
+  final int unreadCount;
+}
+
+class SyncProgressItem {
+  const SyncProgressItem({
+    required this.storyId,
+    required this.chapter,
+    this.scrollRatio,
+    this.anchor,
+  });
+  final String storyId;
+  final int chapter;
+  final double? scrollRatio;
+  final String? anchor;
+}
+
+class SyncBookmarkItem {
+  const SyncBookmarkItem({
+    required this.storyId,
+    required this.listType,
+  });
+  final String storyId;
+  final String listType;
 }

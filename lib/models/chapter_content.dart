@@ -2,10 +2,10 @@ import 'package:flutter/foundation.dart';
 
 /// Discriminated union for chapter content.
 ///
-/// Per `docs/plan-flutter-app.md` §4.3 / §12.2 — the backend returns a
-/// different JSON shape per `content_type`. We model that as a sealed
-/// Dart class so the reader can `switch` exhaustively over the four
-/// variants (text / manga / chat / video).
+/// Mirrors `src/api/mobile.rs::ChapterContentResponse`. Each variant
+/// corresponds to one backend `content_type` (`text` / `manga` / `chat`
+/// / `video`). The mobile reader `switch`-es over this to pick the
+/// right view widget.
 @immutable
 sealed class ChapterContent {
   const ChapterContent({
@@ -38,9 +38,11 @@ sealed class ChapterContent {
   final int? nextChapter;
   final DateTime updatedAt;
 
+  /// Construct the right variant from a `ChapterContentResponse` JSON
+  /// payload (backend `src/api/mobile.rs::get_chapter`).
   factory ChapterContent.fromJson(Map<String, dynamic> json) {
-    final type = json['content_type'] as String;
     final common = _CommonFields.fromJson(json);
+    final type = json['content_type'] as String;
     return switch (type) {
       'text' => TextChapterContent._fromJson(common, json),
       'manga' => MangaChapterContent._fromJson(common, json),
@@ -49,8 +51,6 @@ sealed class ChapterContent {
       _ => throw ArgumentError.value(type, 'content_type', 'Unknown'),
     };
   }
-
-  Map<String, dynamic> toJson();
 }
 
 class _CommonFields {
@@ -92,7 +92,7 @@ class _CommonFields {
         chapterNumber: (json['chapter_number'] as num).toInt(),
         title: json['title'] as String,
         contentType: json['content_type'] as String,
-        contentVersion: (json['content_version'] as num).toInt(),
+        contentVersion: (json['content_version'] as num? ?? 1).toInt(),
         wordCount: (json['word_count'] as num? ?? 0).toInt(),
         isPublished: json['is_published'] as bool? ?? true,
         prevChapter: (json['prev_chapter'] as num?)?.toInt(),
@@ -105,6 +105,8 @@ class _CommonFields {
 
 class TextChapterContent extends ChapterContent {
   final String contentMarkdown;
+  final String contentFormat;
+  final String? authorNote;
 
   const TextChapterContent({
     required super.id,
@@ -120,6 +122,8 @@ class TextChapterContent extends ChapterContent {
     required super.nextChapter,
     required super.updatedAt,
     required this.contentMarkdown,
+    required this.contentFormat,
+    this.authorNote,
   }) : super(contentType: 'text');
 
   factory TextChapterContent._fromJson(
@@ -140,38 +144,30 @@ class TextChapterContent extends ChapterContent {
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
         contentMarkdown: json['content_markdown'] as String? ?? '',
+        contentFormat: json['content_format'] as String? ?? 'markdown',
+        authorNote: json['author_note'] as String?,
       );
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'content_type': 'text',
-        'id': id,
-        'story_id': storyId,
-        'story_title': storyTitle,
-        'story_slug': storySlug,
-        'chapter_number': chapterNumber,
-        'title': title,
-        'content_version': contentVersion,
-        'word_count': wordCount,
-        'is_published': isPublished,
-        'prev_chapter': prevChapter,
-        'next_chapter': nextChapter,
-        'updated_at': updatedAt.toIso8601String(),
-        'content_markdown': contentMarkdown,
-      };
 }
 
 class MangaPage {
-  const MangaPage({required this.url, this.width, this.height});
+  const MangaPage({required this.url, this.altText, this.caption});
   final String url;
-  final int? width;
-  final int? height;
+  final String? altText;
+  final String? caption;
 
   factory MangaPage.fromJson(Map<String, dynamic> json) => MangaPage(
-        url: json['url'] as String,
-        width: (json['width'] as num?)?.toInt(),
-        height: (json['height'] as num?)?.toInt(),
+        url: json['image_url'] as String,
+        altText: (json['alt_text'] as String?)?.takeIfNonEmpty,
+        caption: (json['caption'] as String?)?.takeIfNonEmpty,
       );
+}
+
+extension on String? {
+  String? get takeIfNonEmpty {
+    final v = this;
+    if (v == null || v.isEmpty) return null;
+    return v;
+  }
 }
 
 class MangaChapterContent extends ChapterContent {
@@ -215,62 +211,65 @@ class MangaChapterContent extends ChapterContent {
             MangaPage.fromJson(p as Map<String, dynamic>),
         ],
       );
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'content_type': 'manga',
-        'id': id,
-        'story_id': storyId,
-        'story_title': storyTitle,
-        'story_slug': storySlug,
-        'chapter_number': chapterNumber,
-        'title': title,
-        'content_version': contentVersion,
-        'word_count': wordCount,
-        'is_published': isPublished,
-        'prev_chapter': prevChapter,
-        'next_chapter': nextChapter,
-        'updated_at': updatedAt.toIso8601String(),
-        'images': [for (final p in images) {'url': p.url, 'width': p.width, 'height': p.height}],
-      };
 }
 
 class ChatParticipant {
   const ChatParticipant({
     required this.id,
     required this.name,
-    this.avatar,
+    this.avatarUrl,
     this.color,
   });
   final String id;
   final String name;
-  final String? avatar;
+  final String? avatarUrl;
   final String? color;
 
   factory ChatParticipant.fromJson(Map<String, dynamic> json) =>
       ChatParticipant(
         id: json['id'] as String,
         name: json['name'] as String,
-        avatar: json['avatar'] as String?,
-        color: json['color'] as String?,
+        avatarUrl: json['avatar_url'] as String?,
+        color: (json['color'] as String?)?.takeIfNonEmpty,
       );
 }
 
 class ChatMessage {
   const ChatMessage({
-    required this.speakerId,
-    required this.text,
-    required this.side,
+    required this.id,
+    required this.characterId,
+    required this.content,
+    required this.messageType,
+    this.imageUrl,
   });
-  final String? speakerId;
-  final String text;
-  final String side; // 'left' | 'right' | 'narration'
+  final String id;
+  final String? characterId;
+  final String content;
+  final String messageType; // 'dialogue' | 'action' | 'narration' | 'system'
+  final String? imageUrl;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
-        speakerId: json['speaker_id'] as String?,
-        text: json['text'] as String,
-        side: json['side'] as String? ?? 'left',
+        id: json['id'] as String,
+        characterId: json['character_id'] as String?,
+        content: json['content'] as String,
+        messageType: json['message_type'] as String? ?? 'dialogue',
+        imageUrl: json['image_url'] as String?,
       );
+
+  /// Render-side: "left" / "right" / "narration" — matches the
+  /// ChatChapterView widget contract. Backend doesn't compute this,
+  /// so we derive it from `message_type` + `character_id`. The first
+  /// participant in the story's character list is treated as the
+  /// "left" speaker; everyone else is "right". `narration` and
+  /// `system` messages span the full width.
+  String sideFor(List<ChatParticipant> participants) {
+    if (messageType == 'narration' || messageType == 'system') {
+      return 'narration';
+    }
+    if (characterId == null || participants.isEmpty) return 'left';
+    final firstId = participants.first.id;
+    return characterId == firstId ? 'left' : 'right';
+  }
 }
 
 class ChatChapterContent extends ChapterContent {
@@ -320,50 +319,22 @@ class ChatChapterContent extends ChapterContent {
             ChatMessage.fromJson(m as Map<String, dynamic>),
         ],
       );
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'content_type': 'chat',
-        'id': id,
-        'story_id': storyId,
-        'story_title': storyTitle,
-        'story_slug': storySlug,
-        'chapter_number': chapterNumber,
-        'title': title,
-        'content_version': contentVersion,
-        'word_count': wordCount,
-        'is_published': isPublished,
-        'prev_chapter': prevChapter,
-        'next_chapter': nextChapter,
-        'updated_at': updatedAt.toIso8601String(),
-        'participants': [
-          for (final p in participants)
-            {'id': p.id, 'name': p.name, 'avatar': p.avatar, 'color': p.color},
-        ],
-        'messages': [
-          for (final m in messages)
-            {'speaker_id': m.speakerId, 'text': m.text, 'side': m.side},
-        ],
-      };
 }
 
 class VideoInfo {
   const VideoInfo({
     required this.provider,
     required this.videoId,
-    this.startSeconds = 0,
-    this.endSeconds,
+    this.caption,
   });
-  final String provider; // 'youtube' (only one supported per plan §12.2)
+  final String provider; // 'youtube' | 'vimeo' | 'other'
   final String videoId;
-  final int startSeconds;
-  final int? endSeconds;
+  final String? caption;
 
   factory VideoInfo.fromJson(Map<String, dynamic> json) => VideoInfo(
         provider: json['provider'] as String? ?? 'youtube',
-        videoId: json['video_id'] as String,
-        startSeconds: (json['start_seconds'] as num? ?? 0).toInt(),
-        endSeconds: (json['end_seconds'] as num?)?.toInt(),
+        videoId: json['video_id'] as String? ?? '',
+        caption: (json['caption'] as String?)?.takeIfNonEmpty,
       );
 }
 
@@ -405,31 +376,9 @@ class VideoChapterContent extends ChapterContent {
         prevChapter: c.prevChapter,
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
-        video: VideoInfo.fromJson(json['video'] as Map<String, dynamic>),
-        captionMarkdown: json['caption_markdown'] as String?,
+        video: json['video'] != null
+            ? VideoInfo.fromJson(json['video'] as Map<String, dynamic>)
+            : const VideoInfo(provider: 'youtube', videoId: ''),
+        captionMarkdown: json['content_markdown'] as String?,
       );
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'content_type': 'video',
-        'id': id,
-        'story_id': storyId,
-        'story_title': storyTitle,
-        'story_slug': storySlug,
-        'chapter_number': chapterNumber,
-        'title': title,
-        'content_version': contentVersion,
-        'word_count': wordCount,
-        'is_published': isPublished,
-        'prev_chapter': prevChapter,
-        'next_chapter': nextChapter,
-        'updated_at': updatedAt.toIso8601String(),
-        'video': {
-          'provider': video.provider,
-          'video_id': video.videoId,
-          'start_seconds': video.startSeconds,
-          'end_seconds': video.endSeconds,
-        },
-        if (captionMarkdown != null) 'caption_markdown': captionMarkdown,
-      };
 }

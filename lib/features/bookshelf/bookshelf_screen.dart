@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/database/app_database.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
@@ -11,10 +10,8 @@ import '../home/widgets/story_card.dart';
 /// Bookshelf — 4 list types (reading / completed / plan_to_read / favorite).
 /// Plan §5.6.
 ///
-/// For MVP: bookmarks live locally in Drift (`local_bookmarks`). When the
-/// user is authenticated we additionally cache the server's bookmark
-/// snapshot via `POST /api/v1/bookmarks/{story_id}` (toggle) and
-/// `GET /hx/studio-bookmarks` (list — HTML fragment).
+/// Hits `GET /api/v1/mobile/bookmarks?list_type=…` for each tab. Tapping
+/// a row deep-links to the story detail page.
 class BookshelfScreen extends ConsumerStatefulWidget {
   const BookshelfScreen({super.key});
 
@@ -42,9 +39,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(bookshelfProvider);
     final currentListType = _tabs[_tab].$1;
-    final items = state.valueOrNull
-            ?.where((b) => b.listType == currentListType)
-            .toList() ??
+    final items = state.valueOrNull?.where((b) => b.listType == currentListType).toList() ??
         const [];
     return Scaffold(
       appBar: AppBar(title: const Text('Tủ truyện')),
@@ -93,17 +88,18 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                         final b = items[i];
                         final story = StorySummary(
                           id: b.storyId,
-                          title: b.storyId,
-                          slug: b.storyId,
-                          coverUrl: null,
-                          author: '',
+                          title: b.title,
+                          slug: b.slug,
+                          coverUrl: b.coverUrl,
+                          author: b.author,
                           categories: const [],
                           tags: const [],
-                          contentTypes: const ['text'],
+                          contentTypes: [b.contentType],
+                          chapterCount: b.chapterCount,
                         );
                         return StoryCard(
                           story: story,
-                          onTap: () => context.push('/story/${b.storyId}'),
+                          onTap: () => context.push('/story/${b.slug}'),
                         );
                       },
                     ),
@@ -141,51 +137,28 @@ class _EmptyBookshelf extends StatelessWidget {
   }
 }
 
-// ---- Bookshelf state ----
+// ─── State ───────────────────────────────────────────────────────
 
-final bookshelfProvider =
-    StateNotifierProvider<BookshelfNotifier, AsyncValue<List<LocalBookmark>>>(
-  (ref) => BookshelfNotifier(ref),
-);
+final bookshelfProvider = StateNotifierProvider<BookshelfNotifier,
+    AsyncValue<List<BookmarkItem>>>((ref) {
+  return BookshelfNotifier(ref);
+});
 
 class BookshelfNotifier
-    extends StateNotifier<AsyncValue<List<LocalBookmark>>> {
+    extends StateNotifier<AsyncValue<List<BookmarkItem>>> {
   BookshelfNotifier(this._ref) : super(const AsyncValue.loading());
   final Ref _ref;
 
   Future<void> refresh() async {
-    final db = _ref.read(appDatabaseProvider);
     try {
-      final bookmarks = await db.getBookmarks();
-      state = AsyncValue.data(bookmarks);
+      final repo = _ref.read(storyRepositoryProvider);
+      final page = await repo.listBookmarks(perPage: 100);
+      state = AsyncValue.data(page.bookmarks);
     } catch (e, s) {
       AppLogger.warning('BookshelfNotifier.refresh failed', e, s);
       state = AsyncValue.error(e, s);
     }
   }
-
-  Future<void> toggle(String storyId, String listType) async {
-    final db = _ref.read(appDatabaseProvider);
-    final existing = (await db.getBookmarks())
-        .where((b) => b.storyId == storyId)
-        .toList();
-    if (existing.any((b) => b.listType == listType)) {
-      await db.deleteBookmark(storyId);
-      try {
-        final repo = _ref.read(storyRepositoryProvider);
-        await repo.toggleBookmark(storyId, listType: listType);
-      } catch (_) {/* offline — local is source of truth */}
-    } else {
-      await db.upsertBookmark(LocalBookmarksCompanion.insert(
-        storyId: storyId,
-        listType: listType,
-        updatedAt: DateTime.now().toIso8601String(),
-      ));
-      try {
-        final repo = _ref.read(storyRepositoryProvider);
-        await repo.toggleBookmark(storyId, listType: listType);
-      } catch (_) {/* offline */}
-    }
-    await refresh();
-  }
 }
+
+// (no trailing helpers)

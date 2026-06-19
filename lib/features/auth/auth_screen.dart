@@ -1,33 +1,28 @@
-import 'dart:io' show Cookie;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
-import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
+import '../../repositories/story_repository.dart';
 
 /// Auth screen. Plan §5.1 + §10.1.
 ///
-/// The backend (as of 2026-06) authenticates via Google OAuth and stores
-/// the JWT in a `kd_auth` httpOnly cookie — there is **no `POST
-/// /api/v1/auth/token` endpoint yet** (plan §12.1, MISSING). To unblock
-/// the mobile app we use a hybrid WebView flow:
+/// Flow:
+///   1. User taps "Đăng nhập với Google" → `google_sign_in` opens the
+///      native Android account picker.
+///   2. We grab the `idToken` from the result.
+///   3. POST it to `/api/v1/mobile/auth/token` — backend verifies the
+///      id_token via Google's tokeninfo endpoint, finds-or-creates the
+///      user, and returns a server-issued JWT.
+///   4. ApiClient writes the JWT to `flutter_secure_storage`. Every
+///      subsequent Dio call auto-attaches `Authorization: Bearer <jwt>`.
 ///
-///   1. User taps "Đăng nhập" → opens an in-app WebView on
-///      `https://khongdich.com/dang-nhap`.
-///   2. User completes the Google OAuth round-trip inside the WebView.
-///   3. On each page navigation, we copy the `kd_auth` / `kd_csrf`
-///      cookies from the WebView's CookieManager into the [ApiClient]'s
-///      shared PersistCookieJar.
-///   4. When the user lands back on `/` (home), we close the WebView and
-///      navigate the app to `/home`.
-///
-/// When the backend ships the Bearer-JWT endpoint, swap this for
-/// `google_sign_in` → `POST /api/v1/auth/token` → store JWT in
-/// `flutter_secure_storage` → set `Authorization: Bearer` header.
+/// When the user signs out, we clear the JWT from secure storage and
+/// also call `google_sign_in.signOut()` so the next login attempt
+/// shows the account picker again (instead of silently re-using the
+/// last account).
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
 
@@ -38,82 +33,36 @@ class AuthScreen extends ConsumerStatefulWidget {
 class _AuthScreenState extends ConsumerState<AuthScreen> {
   bool _busy = false;
 
-  Future<void> _openWebViewLogin() async {
-    final api = ref.read(apiClientProvider).maybeWhen(
-          data: (c) => c,
-          orElse: () => null,
-        );
-    if (api == null) {
-      _toast('ApiClient chưa sẵn sàng — thử lại.');
-      return;
-    }
-
+  Future<void> _signInWithGoogle() async {
     setState(() => _busy = true);
-    final baseUri = Uri.parse(api.baseUrl);
-    final cookieManager = WebViewCookieManager();
+    try {
+      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile', 'openid']);
+      final account = await googleSignIn.signIn();
+      if (account == null) {
+        // User cancelled the picker.
+        return;
+      }
+      final auth = await account.authentication;
+      final idToken = auth.idToken;
+      if (idToken == null) {
+        _toast('Không lấy được idToken từ Google. Thử lại.');
+        return;
+      }
 
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.white)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (url) async {
-            AppLogger.info('WebView page finished: $url');
-            // Pull every cookie the WebView holds for the backend host
-            // and mirror kd_auth / kd_csrf into our shared cookie jar.
-            try {
-              final cookies = await cookieManager.getCookies(domain: baseUri);
-              for (final c in cookies) {
-                if (c.name == 'kd_auth' || c.name == 'kd_csrf') {
-                  await api.cookieJar.saveFromResponse(
-                    baseUri,
-                    [
-                      Cookie(c.name, c.value)
-                        ..domain = baseUri.host
-                        ..path = '/',
-                    ],
-                  );
-                }
-              }
-            } catch (e, s) {
-              AppLogger.warning('cookie sync failed', e, s);
-            }
-            // If we're back on the home page (or any non-login page) AND
-            // we now have kd_auth, the OAuth round-trip is done.
-            if (url == api.baseUrl ||
-                url == '${api.baseUrl}/' ||
-                (url.startsWith(api.baseUrl) &&
-                    !url.contains('/dang-nhap') &&
-                    !url.contains('/auth/google'))) {
-              if (await api.isAuthenticated()) {
-                if (mounted) {
-                  Navigator.of(context).maybePop();
-                  _toast('Đăng nhập thành công.');
-                  context.go('/home');
-                }
-              }
-            }
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse('${api.baseUrl}/dang-nhap'));
-
-    if (!mounted) return;
-    await Navigator.of(context).push<Widget>(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          appBar: AppBar(
-            title: const Text('Đăng nhập'),
-            leading: IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-          body: WebViewWidget(controller: controller),
-        ),
-      ),
-    );
-    if (mounted) setState(() => _busy = false);
+      final repo = ref.read(storyRepositoryProvider);
+      final resp = await repo.exchangeGoogleIdToken(idToken);
+      AppLogger.info('Logged in as ${resp.user.username} '
+          '(jwt expires ${resp.expiresAt.toIso8601String()})');
+      if (mounted) {
+        _toast('Đăng nhập thành công. Xin chào ${resp.user.displayName}!');
+        context.go('/home');
+      }
+    } catch (e, s) {
+      AppLogger.error('Google Sign-In failed', e, s);
+      if (mounted) _toast('Đăng nhập thất bại: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _toast(String msg) {
@@ -130,8 +79,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 24),
-            Icon(Icons.menu_book,
-                size: 72, color: AppTheme.primary.withValues(alpha: 0.8)),
+            Image.asset(
+              'assets/icons/ic_launcher_splash.png',
+              width: 96,
+              height: 96,
+              errorBuilder: (_, _, _) => Icon(
+                Icons.menu_book,
+                size: 96,
+                color: AppTheme.primary.withValues(alpha: 0.8),
+              ),
+            ),
             const SizedBox(height: 16),
             Text(
               'Không Dịch',
@@ -146,7 +103,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             ),
             const SizedBox(height: 32),
             FilledButton.icon(
-              onPressed: _busy ? null : _openWebViewLogin,
+              onPressed: _busy ? null : _signInWithGoogle,
               icon: _busy
                   ? const SizedBox(
                       width: 18,
@@ -164,8 +121,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             ),
             const Spacer(),
             Text(
-              'Luồng đăng nhập dùng WebView để nhận cookie từ web.\n'
-              'Khi backend có `POST /api/v1/auth/token`, sẽ chuyển sang google_sign_in.',
+              'Đăng nhập qua google_sign_in → POST /api/v1/mobile/auth/token.\n'
+              'Server xác minh id_token với Google, cấp JWT riêng cho app.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall,
             ),

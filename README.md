@@ -3,10 +3,36 @@
 Mobile reader app for [khongdich.com](https://khongdich.com). Android-first
 MVP, built from `docs/plan-flutter-app.md` (v4) in the backend repo.
 
-## Status (v0.2.0)
+## Status (v0.3.0)
 
 **Build:** `flutter analyze` → 0 issues · `flutter test` → 27/27 passing ·
-GitHub Actions builds APK + AAB and publishes them to GitHub Releases.
+GitHub Actions builds **demo + prod** APKs in parallel and publishes them
+to GitHub Releases.
+
+### Architecture (v0.3 — Bearer JWT + JSON API)
+
+The backend now ships a full mobile JSON API at `/api/v1/mobile/*` with
+Bearer-JWT auth (see backend `src/api/mobile.rs`). The mobile app has been
+rewritten to use it directly — **no more WebView, no more cookie jar, no
+more HTML scraping**.
+
+- **Auth**: `google_sign_in` on the device → exchange id_token via
+  `POST /api/v1/mobile/auth/token` → server-issued JWT stored in
+  `flutter_secure_storage` → sent on every request via
+  `Authorization: Bearer <jwt>`.
+- **Reads**: every list/detail/content fetch goes through a typed JSON
+  endpoint (`/api/v1/mobile/stories`, `/api/v1/mobile/chapters/{id}`, …).
+- **Writes**: bookmark toggle, reading-progress save, sync, push-token
+  register — all JSON.
+- **Environment switcher**: the app ships in two flavors:
+  - **demo** → `https://demo.khongdich.com` (QA testing)
+  - **prod** → `https://khongdich.com` (public)
+  
+  The flavor is baked in at build time via `--dart-define=APP_ENV=demo|prod`
+  + `--flavor=demo|prod`. Each flavor has a distinct `applicationIdSuffix`
+  so both can coexist on a single device. Users can also switch at runtime
+  via Settings → Môi trường (persists to secure storage, requires app
+  restart).
 
 ### What's wired
 
@@ -15,71 +41,41 @@ GitHub Actions builds APK + AAB and publishes them to GitHub Releases.
 | Project layout (Appendix A) | §22 | ✅ |
 | Material 3 theme + design tokens | §14.1 | ✅ |
 | Routing (go_router, 4-tab shell + nested routes) | §14.3 | ✅ |
-| Dio + CookieJar (cookie-based auth) | §10 | ✅ |
-| WebView Google OAuth → cookie sync | §5.1 | ✅ hybrid (no Bearer yet) |
-| CSRF handling (`Origin` header bypass) | backend `csrf.rs` | ✅ |
+| Dio + Bearer JWT + secure storage | §10 | ✅ |
+| Google Sign-In → JWT exchange | §5.1 | ✅ |
 | Sealed `ChapterContent` model (text/manga/chat/video) | §4.3, §12.2 | ✅ |
-| **Custom Dart markdown parser** (CommonMark core + strikethrough) | §13.1, §13.2 | ✅ |
-| **MarkdownRenderer** → native widget tree | §4.4 | ✅ |
-| TTS markdown preprocessor (pure Dart) | §9.4 | ✅ |
-| **Shared markdown fixtures** (11 cases, mirrored to backend) | §13.5 | ✅ |
+| Custom Dart markdown parser + renderer | §13 | ✅ |
+| Shared markdown fixtures (11 cases) | §13.5 | ✅ |
 | Polymorphic chapter reader (text/manga/chat/video) | §14.4 | ✅ |
-| YouTube player (`youtube_player_flutter`) | §4.5 | ✅ |
+| YouTube player (`youtube_player_flutter` v10) | §4.5 | ✅ |
 | Manga viewer (`photo_view` + `cached_network_image`) | §4.5 | ✅ |
-| Chat bubbles | §4.5 | ✅ |
+| Chat bubbles with per-participant color | §4.5 | ✅ |
 | Reader settings sheet (font, line height, theme, sepia) | §5.4 | ✅ |
 | Reading progress sync (local Drift + server PUT) | §8.4 | ✅ |
 | Home / Search / Bookshelf / Profile / Settings / Auth screens | §5, §14.3 | ✅ |
-| Story detail screen (HTML scrape — no JSON yet) | §5.3 | ✅ |
-| Notifications screen (HTML scrape — no JSON yet) | §6.2 | ✅ |
+| Story detail (JSON `/api/v1/mobile/stories/{id_or_slug}`) | §5.3 | ✅ |
+| Notifications (JSON `/api/v1/mobile/notifications`) | §6.2 | ✅ |
 | Download manager + queue UI | §5.5, §8 | ✅ |
 | On-device TTS via `audio_service` + `flutter_tts` | §9 | ✅ |
 | Drift on-disk SQLite store | §8.2 | ✅ |
-| GitHub Actions CI/CD → APK + AAB → Releases | §17 | ✅ |
+| Batch sync (`POST /api/v1/mobile/sync`) | §12.4 | ✅ |
+| FCM push (`firebase_messaging` + `/api/v1/mobile/push/register`) | §15 | ✅ |
+| Android launcher icons (generated from web OG image) | §14.1 | ✅ |
+| Multi-env flavor build (demo / prod) | §17 | ✅ |
+| GitHub Actions CI/CD → APK → Releases | §17 | ✅ |
 
 ### What's deferred
 
-- `google_sign_in` + `POST /api/v1/auth/token` (waiting on backend)
-- FCM push notifications (waiting on backend `POST /api/v1/push/register`)
 - iOS port (Phase 3)
-- Drift schema migration story (currently v1, no migrations needed yet)
-
-## Architecture
-
-The backend's JSON API is **incomplete** — only `/api/v1/search`,
-`/api/v1/bookmarks`, `/api/v1/reading-progress`, `/api/v1/notifications`
-(stream + read/delete), `/api/v1/csrf-token` exist. The story list,
-story detail, chapter list, and chapter content endpoints from plan §12
-are **not yet implemented** in the backend.
-
-To unblock the mobile app we use a **hybrid strategy**:
-
-1. **Reads** of story lists / story detail / chapter content go through
-   `HtmlStoryDataSource` + `ChapterReaderDataSource`, which scrape the
-   SSR HTML pages (`/`, `/truyen/{slug}`, `/truyen/{slug}/chuong/{num}`).
-   The HTML is parsed by the `html` Dart package and rebuilt into the
-   same DTOs the future JSON endpoints will return.
-2. **Writes** (bookmark toggle, reading-progress save, search) use the
-   existing JSON endpoints via Dio.
-3. **Auth** uses a WebView-based Google OAuth flow: the WebView opens
-   `/dang-nhap`, the user completes OAuth, and we copy the resulting
-   `kd_auth` cookie from the WebView's CookieManager into our shared
-   `PersistCookieJar`. When the backend ships `POST /api/v1/auth/token`,
-   swap to `google_sign_in` + Bearer JWT.
-4. **CSRF** is handled by setting `Origin: <baseUrl>` on every mutating
-   call. The backend's CSRF middleware passes requests whose `Origin`
-   host matches the `Host` header (same-origin fallback).
-
-When the backend JSON endpoints land, swapping each `HtmlStoryDataSource`
-method for a one-line `dio.get('/api/v1/stories')` is a mechanical
-change — the return types already match the planned JSON shapes.
+- `firebase_crashlytics` / `firebase_analytics` (observability rollout)
+- Drift schema migration story (currently v1)
 
 ## Project layout
 
 ```
 lib/
-├── main.dart
-├── app.dart
+├── main.dart                            # bootstraps Firebase + Riverpod
+├── app.dart                             # MaterialApp.router
 ├── core/
 │   ├── database/app_database.dart       # Drift schema (7 tables)
 │   ├── markdown/
@@ -87,18 +83,18 @@ lib/
 │   │   ├── parser.dart                   # custom CommonMark parser
 │   │   ├── renderer.dart                 # AST → Flutter widget tree
 │   │   └── preprocessor_tts.dart         # md → TTS-friendly chunks
-│   ├── network/api_client.dart           # Dio + CookieJar + CSRF
+│   ├── network/api_client.dart           # Dio + Bearer JWT + env switcher
 │   ├── observability/app_logger.dart
 │   ├── router/app_router.dart
 │   ├── shell/main_shell.dart             # bottom-nav shell
 │   └── theme/app_theme.dart
 ├── features/
-│   ├── auth/auth_screen.dart             # WebView OAuth flow
+│   ├── auth/auth_screen.dart             # google_sign_in → /mobile/auth/token
 │   ├── bookshelf/bookshelf_screen.dart
 │   ├── downloads/downloads_screen.dart
 │   ├── home/{home_screen.dart, widgets/}
 │   ├── notifications/notifications_screen.dart
-│   ├── profile/profile_screen.dart
+│   ├── profile/profile_screen.dart       # uses /mobile/auth/me
 │   ├── reader/
 │   │   ├── chapter_reader_screen.dart
 │   │   ├── chapter_provider.dart
@@ -107,22 +103,25 @@ lib/
 │   │   ├── views/{text,manga,chat,video}_chapter_view.dart
 │   │   └── widgets/{reader_chrome,reader_settings_sheet}.dart
 │   ├── search/search_screen.dart
-│   ├── settings/settings_screen.dart
+│   ├── settings/settings_screen.dart     # env switcher lives here
 │   ├── story/story_detail_screen.dart
-│   └── tts/
-│       ├── tts_audio_handler.dart        # audio_service + flutter_tts
-│       └── tts_mini_player.dart
+│   └── tts/{tts_audio_handler,tts_mini_player}.dart
 ├── models/{chapter_content,story}.dart
-├── repositories/
-│   ├── story_repository.dart             # unified read/write client
-│   ├── html_story_data_source.dart       # SSR HTML scraping
-│   └── chapter_reader_data_source.dart   # chapter HTML scraping
+├── repositories/story_repository.dart    # unified JSON client
 └── services/download_manager.dart        # offline download queue
 
-test/
-├── fixtures/markdown-fixtures.json
-├── markdown/{fixtures,parser_edge_cases}_test.dart
-└── widget_test.dart
+android/
+└── app/
+    ├── google-services.placeholder.json   # CI overwrites with real config
+    ├── build.gradle.kts                   # demo + prod flavors, signing
+    └── src/main/res/
+        ├── mipmap-*/ic_launcher*.png       # generated from web OG image
+        ├── mipmap-anydpi-v26/ic_launcher*.xml  # adaptive icons
+        ├── drawable/ic_launcher_splash.png # splash logo
+        ├── drawable/launch_background.xml   # splash background
+        └── values/ic_launcher_colors.xml    # adaptive icon bg color
+
+scripts/generate_mobile_icons.py           # regenerates launcher icons
 ```
 
 ## Running locally
@@ -132,13 +131,12 @@ flutter pub get
 dart run build_runner build --delete-conflicting-outputs   # Drift codegen
 flutter analyze       # 0 issues
 flutter test          # 27 tests, all pass
-flutter run           # Android device / emulator required
-```
 
-To point at a dev backend:
+# Build demo flavor (talks to demo.khongdich.com)
+flutter run --flavor=demo --dart-define=APP_ENV=demo
 
-```bash
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3000
+# Build prod flavor (talks to khongdich.com)
+flutter run --flavor=prod --dart-define=APP_ENV=prod
 ```
 
 ## CI/CD
@@ -147,26 +145,34 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3000
 
 1. **Analyze + Test** job — every push and PR. Runs `flutter analyze`
    and `flutter test`. Fails the build on any issue.
-2. **Build Android** job — only on `main` pushes and `v*` tags. Runs
-   `flutter build apk --release` + `flutter build appbundle --release`
-   and uploads artifacts.
+2. **Build Android (demo + prod)** matrix job — only on `main` pushes
+   and `v*` tags. Builds two APKs in parallel:
+   - `khongdich-demo-<sha>.apk` → talks to `demo.khongdich.com`
+   - `khongdich-prod-<sha>.apk` → talks to `khongdich.com`
 3. **Publish to GitHub Releases**:
-   - On `v*` tags: creates a proper release with the APK + AAB attached.
-   - On `main` pushes: creates/updates a `dev-<sha>` prerelease tagged
-     "Dev build", so users can always grab the latest APK from the
-     Releases page.
+   - On `v*` tags: creates a proper release with both APKs attached.
+   - On `main` pushes: creates/updates `dev-<flavor>-<sha>` prereleases
+     tagged "Dev build", so QA can always grab the latest APKs.
 
-### Signing
+### Secrets
 
-The release build is signed if these repo secrets are set:
+For full release signing + Firebase push notifications, set these repo
+secrets:
 
-- `KHONGDICH_KEYSTORE_BASE64` — base64-encoded `.jks` keystore
-- `KHONGDICH_KEYSTORE_PASSWORD` — keystore password
-- `KHONGDICH_KEY_ALIAS` — key alias
-- `KHONGDICH_KEY_PASSWORD` — key password
+| Secret | Purpose |
+|---|---|
+| `KHONGDICH_KEYSTORE_BASE64` | Base64-encoded `.jks` keystore for release signing |
+| `KHONGDICH_KEYSTORE_PASSWORD` | Keystore password |
+| `KHONGDICH_KEY_ALIAS` | Key alias inside the keystore |
+| `KHONGDICH_KEY_PASSWORD` | Key password |
+| `FIREBASE_CONFIG_DEMO_BASE64` | Base64 of `google-services.json` for the demo Firebase project |
+| `FIREBASE_CONFIG_PROD_BASE64` | Base64 of `google-services.json` for the prod Firebase project |
 
-If the secrets are absent, the build falls back to the debug signing
-config — useful for dev builds. To create a keystore:
+If absent, the build falls back to debug signing + a placeholder
+`google-services.json` (push notifications will be disabled, but the
+APK still installs and runs).
+
+To create a keystore:
 
 ```bash
 keytool -genkey -v -keystore khongdich-release.jks \
@@ -175,17 +181,20 @@ keytool -genkey -v -keystore khongdich-release.jks \
 base64 -w 0 khongdich-release.jks  # paste into GitHub secret
 ```
 
-## Markdown fixture sync
+## Launcher icons
 
-The shared fixtures live in `test/fixtures/markdown-fixtures.json`. The
-backend mirror is `docs/markdown-fixtures.json` in the `khongdich` repo
-(plan §13.7 — Option 1: manual copy). When the Rust renderer changes:
+The Android launcher icons (`mipmap-*/ic_launcher*.png`, adaptive
+foreground, splash) are generated from the backend's existing web
+`static/icons/og-default.png` (2598×2598 PNG). The generator script
+lives at `scripts/generate_mobile_icons.py` and can be re-run any time
+the web logo changes:
 
-1. Update `docs/markdown-fixtures.json` in the backend repo.
-2. Run backend tests to verify.
-3. Copy the file here.
-4. Run `flutter test test/markdown/fixtures_test.dart` — must pass.
-5. Commit both repos together.
+```bash
+python3 scripts/generate_mobile_icons.py
+```
+
+It also produces a 512×512 `download/play-store-icon-512.png` for the
+Play Store listing.
 
 ## License
 

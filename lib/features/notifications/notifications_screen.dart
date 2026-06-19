@@ -53,13 +53,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             onRetry: () =>
                 ref.read(notificationsProvider.notifier).refresh(),
           ),
-          data: (page) => page.items.isEmpty
+          data: (page) => page.notifications.isEmpty
               ? const _EmptyState()
               : ListView.separated(
-                  itemCount: page.items.length,
+                  itemCount: page.notifications.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, i) {
-                    final item = page.items[i];
+                    final item = page.notifications[i];
                     return _NotificationTile(
                       item: item,
                       onTap: () {
@@ -220,12 +220,12 @@ class _ErrorState extends StatelessWidget {
 // ---- Notifications state ----
 
 final notificationsProvider = StateNotifierProvider<NotificationsNotifier,
-    AsyncValue<NotificationListPage>>((ref) {
+    AsyncValue<PaginatedNotifications>>((ref) {
   return NotificationsNotifier(ref);
 });
 
 class NotificationsNotifier
-    extends StateNotifier<AsyncValue<NotificationListPage>> {
+    extends StateNotifier<AsyncValue<PaginatedNotifications>> {
   NotificationsNotifier(this._ref) : super(const AsyncValue.loading());
   final Ref _ref;
 
@@ -235,8 +235,14 @@ class NotificationsNotifier
           orElse: () => null,
         );
     if (api == null || !await api.isAuthenticated()) {
-      state = const AsyncValue.data(
-          NotificationListPage(items: [], unreadCount: 0));
+      state = const AsyncValue.data(PaginatedNotifications(
+        notifications: [],
+        total: 0,
+        unread: 0,
+        page: 1,
+        perPage: 20,
+        totalPages: 0,
+      ));
       return;
     }
     state = const AsyncValue.loading();

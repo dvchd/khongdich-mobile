@@ -17,3 +17,8 @@ linter:
     unnecessary_underscores: false
     prefer_interpolation_to_compose_strings: false
     unnecessary_string_interpolations: false
+    # use_null_aware_elements is a Dart 3.7+ lint that demands `?expr`
+    # syntax inside collection literals for nullable spread. The current
+    # `if (cond) key: value` pattern is more readable for query-param
+    # maps where the value is non-null but conditionally included.
+    use_null_aware_elements: false

@@ -13,11 +13,22 @@ class KhongdichApp extends ConsumerWidget {
     final router = ref.watch(appRouterProvider);
     final themeMode = ref.watch(themeModeProvider);
 
-    // Pre-warm the ApiClient (creates cookie jar, sets up Dio). It's
-    // okay if this FutureProvider is still loading on first paint —
-    // every consumer that needs an ApiClient uses ref.watch +
-    // .maybeWhen to gracefully handle the loading state.
-    ref.watch(apiClientProvider);
+    // Pre-warm the ApiClient (loads JWT + base URL). It's okay if this
+    // FutureProvider is still loading on first paint — every consumer
+    // that needs an ApiClient uses ref.watch + .maybeWhen to gracefully
+    // handle the loading state.
+    final apiAsync = ref.watch(apiClientProvider);
+    // Sync the runtime AppEnv provider so the Settings screen can
+    // display the active environment as soon as the ApiClient is ready.
+    if (apiAsync.hasValue) {
+      final api = apiAsync.value!;
+      // Only update if the value actually changed to avoid loops.
+      Future.microtask(() {
+        if (ref.read(appEnvProvider) != api.env) {
+          ref.read(appEnvProvider.notifier).state = api.env;
+        }
+      });
+    }
 
     return MaterialApp.router(
       title: 'Không Dịch',

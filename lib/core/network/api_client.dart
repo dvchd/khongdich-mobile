@@ -1,17 +1,39 @@
-import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
-import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../observability/app_logger.dart';
 
+/// Which backend the app should talk to.
+///
+/// The CI/CD pipeline builds two flavors:
+///   - **demo**  → talks to `https://demo.khongdich.com` (internal test)
+///   - **prod** → talks to `https://khongdich.com`         (public)
+///
+/// The flavor is baked into the binary at build time via the
+/// `--dart-define=APP_ENV=demo|prod` flag (see `.github/workflows/ci.yml`).
+/// End-users can also override at runtime via the env switcher in
+/// Settings → Môi trường (useful for QA to swap between demo/prod
+/// without reinstalling).
+enum AppEnv { demo, prod }
+
+extension AppEnvX on AppEnv {
+  String get label => switch (this) {
+        AppEnv.demo => 'Demo (demo.khongdich.com)',
+        AppEnv.prod => 'Production (khongdich.com)',
+      };
+
+  String get baseUrl => switch (this) {
+        AppEnv.demo => 'https://demo.khongdich.com',
+        AppEnv.prod => 'https://khongdich.com',
+      };
+}
+
 /// Error returned by the Không Dịch backend.
 ///
-/// The Rust backend (see `src/errors.rs`) always returns JSON in the form
+/// `src/errors.rs::AppError::IntoResponse` always returns JSON in the form
 /// `{"error": "<Vietnamese message>"}` for non-2xx responses when the
-/// client sends `Accept: application/json`. We surface that message
-/// verbatim to the UI so users see the same text they'd see on the web.
+/// client sends `Accept: application/json` (which we always do).
 class ApiException implements Exception {
   const ApiException(this.status, this.message);
   final int status;
@@ -24,82 +46,76 @@ class ApiException implements Exception {
 /// Singleton HTTP client for the Không Dịch backend.
 ///
 /// ## Auth model
-/// The backend (as of 2026-06) authenticates via a **`kd_auth` httpOnly
-/// cookie** set by the Google OAuth web flow. There is no Bearer-token
-/// extractor yet (see `docs/plan-flutter-app.md` §12.1 — `POST
-/// /api/v1/auth/token` is not yet implemented). Until it lands, the
-/// mobile app uses a **hybrid WebView login** flow:
-///
-///   1. The user taps "Đăng nhập" → an in-app WebView opens
-///      `https://khongdich.com/dang-nhap`.
-///   2. After the Google OAuth round-trip, the backend sets `kd_auth`
-///      (and `kd_csrf`) cookies on the `khongdich.com` domain.
-///   3. The `WebViewCookieManager` writes those cookies into the
-///      [CookieJar] used by this [ApiClient].
-///   4. Subsequent Dio requests carry the cookies automatically.
-///
-/// When the backend ships `POST /api/v1/auth/token`, swap step 1–3 for a
-/// single `google_sign_in` → exchange call and store the resulting JWT
-/// in [SecureStorage] + `Authorization: Bearer` header.
+/// The backend (as of 2026-06-19) ships `POST /api/v1/mobile/auth/token`
+/// which exchanges a Google `id_token` for a server-issued JWT. The JWT
+/// is stored in [FlutterSecureStorage] and sent on every request via
+/// `Authorization: Bearer <jwt>`. The backend's `AuthUser` / `MaybeUser`
+/// extractors check this header first, falling back to the `kd_auth`
+/// cookie for web clients.
 ///
 /// ## CSRF
-/// The backend applies a CSRF guard to every POST/PUT/DELETE on
-/// `/api/v1/*` (see `src/middleware/csrf.rs`). The guard passes when:
-///   - The `X-CSRF-Token` header matches the `kd_csrf` cookie value, OR
-///   - The `Origin` header host matches the `Host` header.
-///
-/// Mobile cannot do double-submit cookies reliably, so we set
-/// `Origin: <baseUrl>` on every mutating call. That satisfies the
-/// same-origin fallback in the CSRF middleware without requiring the
-/// `kd_csrf` cookie value to be re-read on every request.
+/// All mobile routes are mounted at `/api/v1/mobile/*` and bypass the
+/// CSRF guard (see `src/main.rs`). The mobile client does not need to
+/// send any CSRF token.
 class ApiClient {
-  ApiClient._(this._dio, this._jar, this.baseUrl);
+  ApiClient._(this._dio, this._storage, this.env);
 
   final Dio _dio;
-  final CookieJar _jar;
-  final String baseUrl;
+  final FlutterSecureStorage _storage;
+  final AppEnv env;
 
   Dio get dio => _dio;
-  CookieJar get cookieJar => _jar;
+  String get baseUrl => env.baseUrl;
 
-  /// Build the singleton. The baseUrl is resolved from the
-  /// `API_BASE_URL` dart-define (default `https://khongdich.com`).
+  static const _kJwt = 'jwt';
+  static const _kEnv = 'app_env';
+
+  /// Build the singleton. The base URL is resolved from:
+  ///   1. `--dart-define=APP_ENV` (set at build time by CI/CD), then
+  ///   2. `flutter_secure_storage` (runtime override from Settings), then
+  ///   3. `AppEnv.prod` as the default.
   static Future<ApiClient> create() async {
-    final baseUrl = const String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: 'https://khongdich.com',
+    const storage = FlutterSecureStorage();
+    final savedEnvName = await storage.read(key: _kEnv);
+    final compileTimeEnv = const String.fromEnvironment(
+      'APP_ENV',
+      defaultValue: 'prod',
     );
-
-    final dir = await getApplicationDocumentsDirectory();
-    final jar = PersistCookieJar(
-      storage: FileStorage('${dir.path}/.cookies/'),
-      ignoreExpires: false,
+    final env = AppEnv.values.firstWhere(
+      (e) => e.name == (savedEnvName ?? compileTimeEnv),
+      orElse: () => AppEnv.prod,
     );
 
     final dio = Dio(
       BaseOptions(
-        baseUrl: baseUrl,
+        baseUrl: env.baseUrl,
         connectTimeout: const Duration(seconds: 15),
         receiveTimeout: const Duration(seconds: 30),
         sendTimeout: const Duration(seconds: 15),
         headers: {
-          'Accept': 'application/json, text/html; q=0.9, */*; q=0.5',
-          // Pass `Origin` so the CSRF middleware's same-origin fallback
-          // is satisfied for every POST/PUT/DELETE we send.
-          'Origin': baseUrl,
-          'User-Agent':
-              'KhongDichMobile/0.1 (Android; +https://khongdich.com)',
+          'Accept': 'application/json',
+          'User-Agent': 'KhongDichMobile/0.3 (+https://khongdich.com)',
         },
         responseType: ResponseType.json,
         validateStatus: (s) => s != null && s >= 200 && s < 300,
       ),
     );
-    dio.interceptors.add(CookieManager(jar));
 
-    // Convert backend JSON errors into [ApiException] so callers can
-    // surface the Vietnamese message directly.
+    // Inject / refresh the JWT on every request.
     dio.interceptors.add(
       InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          // All mobile API routes live under /api/v1/mobile/* — no need
+          // to attach the token to other paths.
+          if (options.path.startsWith('/api/v1/mobile/') ||
+              options.path.contains('/api/v1/mobile/')) {
+            final token = await storage.read(key: _kJwt);
+            if (token != null) {
+              options.headers['Authorization'] = 'Bearer $token';
+            }
+          }
+          handler.next(options);
+        },
         onError: (e, handler) {
           final resp = e.response;
           if (resp != null) {
@@ -125,7 +141,7 @@ class ApiClient {
       ),
     );
 
-    return ApiClient._(dio, jar, baseUrl);
+    return ApiClient._(dio, storage, env);
   }
 
   static String _defaultMessageFor(int? status) {
@@ -147,45 +163,39 @@ class ApiClient {
     }
   }
 
-  /// Fetch a CSRF token. Required before the first mutating request if
-  /// the cookie jar doesn't already have `kd_csrf`. The backend sets the
-  /// cookie on this response too, so one call is enough to bootstrap.
-  Future<String?> ensureCsrfCookie() async {
-    try {
-      final r = await _dio.get('/api/v1/csrf-token');
-      return (r.data as Map?)?['csrf_token'] as String?;
-    } catch (e, s) {
-      AppLogger.warning('ensureCsrfCookie failed', e, s);
-      return null;
-    }
-  }
+  /// Read the stored JWT (if any).
+  Future<String?> readJwt() => _storage.read(key: _kJwt);
 
-  /// Are we authenticated (i.e. does the cookie jar hold `kd_auth`)?
-  Future<bool> isAuthenticated() async {
-    final uri = Uri.parse(baseUrl);
-    final cookies = await _jar.loadForRequest(uri);
-    return cookies.any((c) => c.name == 'kd_auth');
-  }
+  /// Persist a JWT issued by `POST /api/v1/mobile/auth/token`.
+  Future<void> writeJwt(String jwt) => _storage.write(key: _kJwt, value: jwt);
 
-  /// Wipe auth cookies — used by the "logout" action. Until
-  /// `/api/v1/auth/token` lands, this is the only way to log out from
-  /// the mobile side.
-  Future<void> clearAuth() async {
-    final uri = Uri.parse(baseUrl);
-    // The cookie_jar API only offers `delete(uri)` (deletes all cookies
-    // for that URI) and `deleteAll()`. We use `delete(uri)` to wipe
-    // auth cookies — the cookie jar will re-fetch CSRF on the next
-    // mutating call.
-    try {
-      await _jar.delete(uri);
-    } catch (e, s) {
-      AppLogger.warning('clearAuth: delete failed', e, s);
-    }
+  /// Wipe the stored JWT — used by "Đăng xuất" + on 401 from the server.
+  Future<void> clearJwt() => _storage.delete(key: _kJwt);
+
+  /// Are we authenticated (i.e. is there a JWT in secure storage)?
+  Future<bool> isAuthenticated() async => (await readJwt()) != null;
+
+  /// Switch the active environment at runtime. Persists to secure storage
+  /// so the choice survives across app launches. The caller is expected
+  /// to trigger an app restart (or a full Riverpod container reset)
+  /// after this returns so the new baseUrl takes effect.
+  Future<void> setEnv(AppEnv newEnv) async {
+    await _storage.write(key: _kEnv, value: newEnv.name);
+    AppLogger.info('AppEnv switched to ${newEnv.name}');
   }
 }
 
+/// Provider for the singleton [ApiClient].
 final apiClientProvider = FutureProvider<ApiClient>((ref) async {
   final client = await ApiClient.create();
   ref.onDispose(client._dio.close);
   return client;
+});
+
+/// Currently active environment — exposed as a separate provider so the
+/// Settings screen can `ref.watch` it without re-creating the ApiClient.
+final appEnvProvider = StateProvider<AppEnv>((ref) {
+  // The FutureProvider below will overwrite this on boot, but we need a
+  // sensible default for the first frame.
+  return AppEnv.prod;
 });

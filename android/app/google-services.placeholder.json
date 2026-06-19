@@ -1,0 +1,45 @@
+{
+  "_comment": "Placeholder google-services.json. CI overwrites this with the real config decoded from FIREBASE_CONFIG_DEMO_BASE64 or FIREBASE_CONFIG_PROD_BASE64 secrets. Local builds work fine without Firebase configured — the google-services Gradle plugin tolerates this minimal file.",
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "khongdich-mobile-placeholder",
+    "storage_bucket": "khongdich-mobile-placeholder.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "com.khongdich.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        { "current_key": "AIzaSyPlaceholder0000000000000000000000000000" }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000001",
+        "android_client_info": {
+          "package_name": "com.khongdich.app.demo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        { "current_key": "AIzaSyPlaceholder0000000000000000000000000000" }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

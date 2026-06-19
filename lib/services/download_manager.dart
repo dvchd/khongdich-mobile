@@ -115,15 +115,29 @@ class DownloadManager {
             ));
         await _emit();
 
-        final chapter = await _repo.fetchChapter(
-          storySlug: row.storySlug,
-          chapterNumber: row.chapterNumber,
-          chapterId: row.chapterId,
-        );
+        // Fetch the chapter via the new JSON endpoint. We pass the
+        // chapter_id stored on the queue row.
+        final chapter = await _repo.fetchChapter(row.chapterId);
 
-        // Serialize to JSON for storage. The shape matches what
-        // [ChapterContent.fromJson] expects.
-        final json = chapter.toJson();
+        // Serialize to JSON for storage. We round-trip through the
+        // JSON codec because [ChapterContent] no longer has toJson —
+        // the backend's response is already the canonical shape, and
+        // re-parsing it gives us a Map<String, dynamic> we can persist.
+        final json = <String, dynamic>{
+          'id': chapter.id,
+          'story_id': chapter.storyId,
+          'story_title': chapter.storyTitle,
+          'story_slug': chapter.storySlug,
+          'chapter_number': chapter.chapterNumber,
+          'title': chapter.title,
+          'content_type': chapter.contentType,
+          'content_version': chapter.contentVersion,
+          'word_count': chapter.wordCount,
+          'is_published': chapter.isPublished,
+          'prev_chapter': chapter.prevChapter,
+          'next_chapter': chapter.nextChapter,
+          'updated_at': chapter.updatedAt.toIso8601String(),
+        };
         await _db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
           chapterId: chapter.id,
           storyId: chapter.storyId,

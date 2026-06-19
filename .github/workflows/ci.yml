@@ -37,13 +37,24 @@ jobs:
         run: flutter test
 
   build-android:
-    name: Build Android APK + AAB
+    name: Build Android (demo + prod)
     needs: analyze-and-test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write  # required for softprops/action-gh-release
+    strategy:
+      matrix:
+        flavor:
+          - name: demo
+            app_env: demo
+            # Demo build → talks to https://demo.khongdich.com
+            # (QA can install this side-by-side with the prod build
+            #  thanks to a distinct applicationIdSuffix ".demo".)
+          - name: prod
+            app_env: prod
+            # Production build → talks to https://khongdich.com
     steps:
       - uses: actions/checkout@v4
 
@@ -72,40 +83,54 @@ jobs:
           echo "$KHONGDICH_KEYSTORE_BASE64" | base64 -d > /tmp/khongdich-release.jks
           echo "Keystore decoded: $(ls -la /tmp/khongdich-release.jks)"
 
-      - name: Build APK (debug-signed if no release keystore)
+      - name: Decode Firebase google-services.json (demo)
         env:
+          FIREBASE_CONFIG_DEMO_BASE64: ${{ secrets.FIREBASE_CONFIG_DEMO_BASE64 }}
+        run: |
+          if [ -n "$FIREBASE_CONFIG_DEMO_BASE64" ]; then
+            echo "$FIREBASE_CONFIG_DEMO_BASE64" | base64 -d > android/app/google-services.json
+            echo "Firebase demo config decoded"
+          else
+            cp android/app/google-services.placeholder.json android/app/google-services.json
+            echo "No FIREBASE_CONFIG_DEMO_BASE64 secret — using placeholder (push notifications will be disabled)"
+          fi
+
+      - name: Decode Firebase google-services.json (prod)
+        if: matrix.flavor.name == 'prod'
+        env:
+          FIREBASE_CONFIG_PROD_BASE64: ${{ secrets.FIREBASE_CONFIG_PROD_BASE64 }}
+        run: |
+          if [ -n "$FIREBASE_CONFIG_PROD_BASE64" ]; then
+            echo "$FIREBASE_CONFIG_PROD_BASE64" | base64 -d > android/app/google-services.json
+            echo "Firebase prod config decoded"
+          fi
+
+      - name: Build APK
+        env:
+          APP_ENV: ${{ matrix.flavor.app_env }}
           KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
           KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
-          # Use 6G heap + daemon off to keep the GitHub runner memory
-          # pressure down on the slow CPU.
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
-        run: flutter build apk --release --no-tree-shake-icons
+        run: |
+          flutter build apk --release --no-tree-shake-icons \
+            --dart-define=APP_ENV=${APP_ENV} \
+            --flavor=${APP_ENV}
 
-      - name: Build AAB (App Bundle)
-        env:
-          KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
-          KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
-          KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
-          KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
-        run: flutter build appbundle --release --no-tree-shake-icons
-
-      - name: Rename artifacts with build sha
+      - name: Rename artifacts with build sha + flavor
         run: |
           SHA=${GITHUB_SHA::7}
+          FLAVOR=${{ matrix.flavor.name }}
           mkdir -p artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk \
-             artifacts/khongdich-${SHA}-arm64-v8a.apk
-          cp build/app/outputs/bundle/release/app-release.aab \
-             artifacts/khongdich-${SHA}.aab
+          cp build/app/outputs/flutter-apk/app-${FLAVOR}-release.apk \
+             artifacts/khongdich-${FLAVOR}-${SHA}.apk
           ls -la artifacts/
 
       - name: Upload artifacts to workflow run
         uses: actions/upload-artifact@v4
         with:
-          name: khongdich-android-${{ github.sha }}
+          name: khongdich-${{ matrix.flavor.name }}-${{ github.sha }}
           path: artifacts/*
           retention-days: 30
 
@@ -115,7 +140,6 @@ jobs:
         with:
           files: |
             artifacts/*.apk
-            artifacts/*.aab
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
@@ -126,16 +150,16 @@ jobs:
         with:
           files: |
             artifacts/*.apk
-            artifacts/*.aab
-          name: Dev build ${{ github.sha }}
-          tag_name: dev-${{ github.sha }}
+          name: Dev build ${{ github.sha }} (${{ matrix.flavor.name }})
+          tag_name: dev-${{ matrix.flavor.name }}-${{ github.sha }}
           prerelease: true
           generate_release_notes: true
           body: |
-            Automated dev build from `${{ github.sha }}`.
+            Automated dev build from `${{ github.sha }}` — **${{ matrix.flavor.name }}** flavor.
 
+            - Backend: ${{ matrix.flavor.app_env == 'demo' && 'https://demo.khongdich.com (test nội bộ)' || 'https://khongdich.com (chính thức)' }}
             - Commit: ${{ github.event.head_commit.message }}
             - Branch: main
-            - Built at: ${{ github.event.repository.updated_at }}
 
-            Để cài đặt: tải file `.apk` về, mở trên Android (cho phép "Install unknown apps").
+            Cài đặt: tải file `.apk` về, mở trên Android (cho phép "Install unknown apps").
+            Demo + Prod có thể cài song song vì khác `applicationIdSuffix`.

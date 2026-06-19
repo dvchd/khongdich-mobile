@@ -1,21 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/network/api_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../reader/reader_settings_provider.dart';
 
-/// Settings screen — plan §5.7. Includes theme mode + reader typography
-/// + cache management + offline storage cap.
+/// Settings screen — plan §5.7. Includes:
+///   - Reader typography (font, size, line height, theme)
+///   - Backend environment switcher (demo / production)
+///   - Account
+///   - Cache management
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final reader = ref.watch(readerSettingsProvider);
+    final env = ref.watch(appEnvProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Cài đặt')),
       body: ListView(
         children: [
+          _Section('Môi trường'),
+          ListTile(
+            leading: const Icon(Icons.dns_outlined),
+            title: const Text('Backend'),
+            subtitle: Text(env.label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showEnvSwitcher(context, ref),
+          ),
+          const Divider(),
           _Section('Hiển thị'),
           ListTile(
             leading: const Icon(Icons.text_fields),
@@ -88,7 +102,7 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Đăng nhập với Google'),
-            subtitle: const Text('Sẽ mở màn đăng nhập'),
+            subtitle: const Text('Mở màn đăng nhập'),
             onTap: () => Navigator.of(context).pushNamed('auth'),
           ),
           const Divider(),
@@ -110,7 +124,7 @@ class SettingsScreen extends ConsumerWidget {
           const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('Không Dịch Mobile'),
-            subtitle: Text('v0.2.0 — MVP scaffold\n'
+            subtitle: Text('v0.3.0 — Bearer JWT + JSON API\n'
                 'Tài liệu kế hoạch: docs/plan-flutter-app.md (repo backend)'),
           ),
         ],
@@ -128,6 +142,42 @@ class SettingsScreen extends ConsumerWidget {
   void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
+    );
+  }
+
+  void _showEnvSwitcher(BuildContext context, WidgetRef ref) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Chọn môi trường'),
+        content: const Text(
+          'Demo: demo.khongdich.com (test nội bộ)\n'
+          'Production: khongdich.com (chính thức)\n\n'
+          'Sau khi đổi, KHỞI ĐỘNG LẠI app để áp dụng.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Huỷ'),
+          ),
+          for (final e in AppEnv.values)
+            FilledButton(
+              onPressed: () async {
+                final api = ref.read(apiClientProvider).maybeWhen(
+                      data: (c) => c,
+                      orElse: () => null,
+                    );
+                if (api != null) await api.setEnv(e);
+                ref.read(appEnvProvider.notifier).state = e;
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                  _toast(context, 'Đã đổi sang ${e.label}. Khởi động lại app.');
+                }
+              },
+              child: Text(e.name.toUpperCase()),
+            ),
+        ],
+      ),
     );
   }
 

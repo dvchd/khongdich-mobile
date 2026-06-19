@@ -10,10 +10,9 @@ import 'widgets/story_section.dart';
 
 /// Home / discovery feed. Plan §5.2.
 ///
-/// Hits the SSR `/` page via [HtmlStoryDataSource] (the backend has no
-/// JSON home feed yet) and renders sections for hot / fresh / picks /
-/// new chapters / continue-reading. Each section degrades to a graceful
-/// empty state when the server doesn't return data.
+/// Hits `GET /api/v1/mobile/stories?sort=hot|fresh|picks|completed` for
+/// each section. Authenticated users also see a "Đọc tiếp" strip from
+/// `GET /api/v1/mobile/reading-progress`.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -58,7 +57,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
 class _HomeContent extends StatelessWidget {
   const _HomeContent({required this.home});
-  final HomePage home;
+  final HomeFeed home;
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +72,8 @@ class _HomeContent extends StatelessWidget {
               for (final c in home.continueReading)
                 StoryCard(
                   story: _summaryFromContinue(c),
-                  onTap: () => context.push('/chapter/${c.storySlug}/${c.lastChapter}'),
+                  onTap: () =>
+                      context.push('/chapter/${c.storyId}:${c.lastChapter}'),
                   badge: c.chapterLabel,
                 ),
             ],
@@ -111,23 +111,9 @@ class _HomeContent extends StatelessWidget {
                 ),
             ],
           ),
-        if (home.newChapters.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
-            child: Text('Chương mới', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          ),
-          for (final c in home.newChapters)
-            ListTile(
-              leading: const Icon(Icons.new_releases_outlined, color: AppTheme.primary),
-              title: Text(c.chapterTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(c.storyTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onTap: () => context.push('/chapter/${c.storySlug}/${c.chapterNumber}'),
-            ),
-        ],
         if (home.hot.isEmpty &&
             home.fresh.isEmpty &&
             home.picks.isEmpty &&
-            home.newChapters.isEmpty &&
             home.continueReading.isEmpty)
           const _EmptyState(),
         const SizedBox(height: 24),
@@ -291,13 +277,28 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-// ---- State ----
+// ─── State ───────────────────────────────────────────────────────
 
-final homeProvider = StateNotifierProvider<HomeNotifier, AsyncValue<HomePage>>(
-  (ref) => HomeNotifier(ref),
-);
+/// Aggregated home feed — one section per "sort" the backend supports.
+class HomeFeed {
+  const HomeFeed({
+    required this.hot,
+    required this.fresh,
+    required this.picks,
+    required this.continueReading,
+  });
+  final List<StorySummary> hot;
+  final List<StorySummary> fresh;
+  final List<StorySummary> picks;
+  final List<ContinueReadingItem> continueReading;
+}
 
-class HomeNotifier extends StateNotifier<AsyncValue<HomePage>> {
+final homeProvider =
+    StateNotifierProvider<HomeNotifier, AsyncValue<HomeFeed>>((ref) {
+  return HomeNotifier(ref);
+});
+
+class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
   HomeNotifier(this._ref) : super(const AsyncValue.loading());
   final Ref _ref;
 
@@ -305,8 +306,21 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomePage>> {
     state = const AsyncValue.loading();
     try {
       final repo = _ref.read(storyRepositoryProvider);
-      final home = await repo.fetchHome();
-      state = AsyncValue.data(home);
+      // Fan out the section fetches in parallel.
+      final results = await Future.wait([
+        repo.listStories(sort: 'hot', perPage: 20),
+        repo.listStories(sort: 'fresh', perPage: 20),
+        repo.listStories(sort: 'picks', perPage: 20),
+        // continueReading returns an empty list when the user is not
+        // authenticated — that's fine, we just skip the strip.
+        repo.fetchContinueReading(),
+      ]);
+      state = AsyncValue.data(HomeFeed(
+        hot: (results[0] as PaginatedStories).stories,
+        fresh: (results[1] as PaginatedStories).stories,
+        picks: (results[2] as PaginatedStories).stories,
+        continueReading: results[3] as List<ContinueReadingItem>,
+      ));
     } catch (e, s) {
       state = AsyncValue.error(e, s);
     }
