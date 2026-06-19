@@ -60,19 +60,20 @@ android {
     //
     // The actual backend URL is selected at runtime via the
     // `--dart-define=APP_ENV=demo|prod` flag (see lib/core/network/api_client.dart).
+    //
+    // Each flavor has its own `src/<flavor>/res/values/strings.xml`
+    // with the app_name override ("Không Dịch (Demo)" vs "Không Dịch").
+    // We avoid `resValue(...)` because AGP 9 gates custom resource
+    // values in flavors behind an experimental flag.
     flavorDimensions += "environment"
     productFlavors {
         create("demo") {
             dimension = "environment"
             applicationIdSuffix = ".demo"
             versionNameSuffix = "-demo"
-            // Match a distinct resValue so the launcher label says
-            // "Không Dịch (Demo)" on the demo build.
-            resValue("string", "app_name", "Không Dịch (Demo)")
         }
         create("prod") {
             dimension = "environment"
-            resValue("string", "app_name", "Không Dịch")
         }
     }
 
