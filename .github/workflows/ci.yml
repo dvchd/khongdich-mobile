@@ -18,6 +18,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.32.5'
           cache: true
 
       - name: Flutter version
@@ -40,7 +41,7 @@ jobs:
     needs: analyze-and-test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write  # required for softprops/action-gh-release
     steps:
@@ -54,6 +55,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.32.5'
           cache: true
 
       - name: Pub get
@@ -76,6 +78,9 @@ jobs:
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
           KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
+          # Use 6G heap + daemon off to keep the GitHub runner memory
+          # pressure down on the slow CPU.
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Build AAB (App Bundle)
@@ -84,6 +89,7 @@ jobs:
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
           KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
         run: flutter build appbundle --release --no-tree-shake-icons
 
       - name: Rename artifacts with build sha
