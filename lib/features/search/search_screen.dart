@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../home/widgets/story_card.dart';
 
-/// Search screen — plan §6.3 lists full-text + autocomplete as Phase 2.
-/// MVP: simple `q` query that hits `GET /api/v1/search?q=`.
+/// Search screen. Plan §6.3 lists full-text + autocomplete as Phase 2.
+/// MVP: simple `q` query that hits `GET /api/v1/search?q=&limit=` —
+/// the only JSON search endpoint currently exposed by the backend.
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
 
@@ -17,46 +17,28 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
-  List<StorySummary> _results = const [];
-  bool _loading = false;
-  String? _error;
+  final _focus = FocusNode();
 
   @override
   void dispose() {
     _controller.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
   Future<void> _runSearch(String q) async {
     final query = q.trim();
     if (query.isEmpty) {
-      setState(() {
-        _results = const [];
-        _error = null;
-      });
+      ref.read(searchProvider.notifier).clear();
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final repo = ref.read(storyRepositoryProvider);
-      final results = await repo.search(query);
-      setState(() {
-        _results = results;
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _loading = false;
-        _error = '$e';
-      });
-    }
+    _focus.unfocus();
+    await ref.read(searchProvider.notifier).run(query);
   }
 
   @override
   Widget build(BuildContext context) {
+    final state = ref.watch(searchProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Padding(
@@ -65,6 +47,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           children: [
             TextField(
               controller: _controller,
+              focusNode: _focus,
               textInputAction: TextInputAction.search,
               onSubmitted: _runSearch,
               decoration: InputDecoration(
@@ -75,7 +58,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         icon: const Icon(Icons.clear),
                         onPressed: () {
                           _controller.clear();
-                          _runSearch('');
+                          ref.read(searchProvider.notifier).clear();
                         },
                       )
                     : null,
@@ -84,28 +67,38 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? _ErrorBox(message: _error!)
-                      : _results.isEmpty
-                          ? const _EmptyState()
-                          : GridView.builder(
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 12,
-                                crossAxisSpacing: 12,
-                                childAspectRatio: 0.62,
-                              ),
-                              itemCount: _results.length,
-                              itemBuilder: (_, i) => StoryCard(
-                                story: _results[i],
-                                onTap: () => context.push(
-                                  '/story/${_results[i].id}',
-                                ),
-                              ),
-                            ),
+              child: switch (state) {
+                SearchIdle() => const _EmptyState(
+                    icon: Icons.search_off,
+                    message: 'Nhập từ khoá rồi nhấn tìm.',
+                  ),
+                SearchLoading() =>
+                  const Center(child: CircularProgressIndicator()),
+                SearchError(:final message) => _EmptyState(
+                    icon: Icons.cloud_off,
+                    message: 'Tìm kiếm thất bại: $message',
+                  ),
+                SearchSuccess(:final result) => result.stories.isEmpty
+                    ? const _EmptyState(
+                        icon: Icons.inbox_outlined,
+                        message: 'Không có kết quả phù hợp.',
+                      )
+                    : GridView.builder(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.62,
+                        ),
+                        itemCount: result.stories.length,
+                        itemBuilder: (_, i) => StoryCard(
+                          story: result.stories[i],
+                          onTap: () =>
+                              context.push('/story/${result.stories[i].slug}'),
+                        ),
+                      ),
+              },
             ),
           ],
         ),
@@ -115,7 +108,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.icon, required this.message});
+  final IconData icon;
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -123,43 +118,59 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.search_off, size: 64,
+          Icon(icon, size: 64,
               color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
           const SizedBox(height: 8),
-          Text(
-            'Nhập từ khoá rồi nhấn tìm.',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
+          Text(message, style: Theme.of(context).textTheme.bodyMedium),
         ],
       ),
     );
   }
 }
 
-class _ErrorBox extends StatelessWidget {
-  const _ErrorBox({required this.message});
-  final String message;
+// ---- Search state ----
 
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off, size: 48),
-            const SizedBox(height: 8),
-            const Text('Tìm kiếm thất bại'),
-            const SizedBox(height: 4),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
+sealed class SearchState {
+  const SearchState();
+}
+
+class SearchIdle extends SearchState {
+  const SearchIdle();
+}
+
+class SearchLoading extends SearchState {
+  const SearchLoading();
+}
+
+class SearchSuccess extends SearchState {
+  const SearchSuccess(this.result);
+  final SearchResult result;
+}
+
+class SearchError extends SearchState {
+  const SearchError(this.message);
+  final String message;
+}
+
+final searchProvider =
+    StateNotifierProvider<SearchNotifier, SearchState>((ref) {
+  return SearchNotifier(ref);
+});
+
+class SearchNotifier extends StateNotifier<SearchState> {
+  SearchNotifier(this._ref) : super(const SearchIdle());
+  final Ref _ref;
+
+  Future<void> run(String q) async {
+    state = const SearchLoading();
+    try {
+      final repo = _ref.read(storyRepositoryProvider);
+      final result = await repo.search(q);
+      state = SearchSuccess(result);
+    } catch (e) {
+      state = SearchError('$e');
+    }
   }
+
+  void clear() => state = const SearchIdle();
 }

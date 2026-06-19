@@ -3,11 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
 jobs:
   analyze-and-test:
+    name: Analyze + Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,11 +26,110 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
+      - name: Generate Drift codegen
+        run: dart run build_runner build --delete-conflicting-outputs
+
       - name: Analyze
         run: flutter analyze
 
       - name: Test
-        run: flutter test --coverage
+        run: flutter test
 
-      # TODO Phase 2: add `flutter build appbundle` once Firebase / signing
-      # config is wired. Per plan §17 — CI runs on Ubuntu runner (cheap).
+  build-android:
+    name: Build Android APK + AAB
+    needs: analyze-and-test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write  # required for softprops/action-gh-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Generate Drift codegen
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Decode release keystore
+        if: env.KHONGDICH_KEYSTORE_BASE64 != ''
+        env:
+          KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KHONGDICH_KEYSTORE_BASE64" | base64 -d > /tmp/khongdich-release.jks
+          echo "Keystore decoded: $(ls -la /tmp/khongdich-release.jks)"
+
+      - name: Build APK (debug-signed if no release keystore)
+        env:
+          KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
+          KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
+          KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
+          KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Build AAB (App Bundle)
+        env:
+          KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
+          KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
+          KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
+          KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
+        run: flutter build appbundle --release --no-tree-shake-icons
+
+      - name: Rename artifacts with build sha
+        run: |
+          SHA=${GITHUB_SHA::7}
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             artifacts/khongdich-${SHA}-arm64-v8a.apk
+          cp build/app/outputs/bundle/release/app-release.aab \
+             artifacts/khongdich-${SHA}.aab
+          ls -la artifacts/
+
+      - name: Upload artifacts to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: khongdich-android-${{ github.sha }}
+          path: artifacts/*
+          retention-days: 30
+
+      - name: Publish to GitHub Releases (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.apk
+            artifacts/*.aab
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
+
+      - name: Publish to GitHub Releases (latest-main prerelease)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.apk
+            artifacts/*.aab
+          name: Dev build ${{ github.sha }}
+          tag_name: dev-${{ github.sha }}
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            Automated dev build from `${{ github.sha }}`.
+
+            - Commit: ${{ github.event.head_commit.message }}
+            - Branch: main
+            - Built at: ${{ github.event.repository.updated_at }}
+
+            Để cài đặt: tải file `.apk` về, mở trên Android (cho phép "Install unknown apps").

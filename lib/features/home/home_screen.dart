@@ -6,12 +6,14 @@ import '../../core/theme/app_theme.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import 'widgets/story_card.dart';
+import 'widgets/story_section.dart';
 
 /// Home / discovery feed. Plan §5.2.
 ///
-/// For the MVP build we wire the live `GET /api/v1/stories` endpoint. If
-/// the backend has not shipped that route yet, the screen degrades
-/// gracefully to an empty state with a retry CTA — no crashes.
+/// Hits the SSR `/` page via [HtmlStoryDataSource] (the backend has no
+/// JSON home feed yet) and renders sections for hot / fresh / picks /
+/// new chapters / continue-reading. Each section degrades to a graceful
+/// empty state when the server doesn't return data.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -23,65 +25,126 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Kick off the first fetch on mount.
-    Future.microtask(
-      () => ref.read(homeStoriesProvider.notifier).refresh(),
-    );
+    Future.microtask(() => ref.read(homeProvider.notifier).refresh());
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(homeStoriesProvider);
+    final state = ref.watch(homeProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Không Dịch')),
+      appBar: AppBar(
+        title: const Text('Không Dịch'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => context.push('/notifications'),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
-        onRefresh: () => ref.read(homeStoriesProvider.notifier).refresh(),
+        onRefresh: () => ref.read(homeProvider.notifier).refresh(),
         child: state.when(
-          loading: () => const _LoadingGrid(),
+          loading: () => const _LoadingList(),
           error: (e, _) => _ErrorState(
             message: '$e',
-            onRetry: () => ref.read(homeStoriesProvider.notifier).refresh(),
+            onRetry: () => ref.read(homeProvider.notifier).refresh(),
           ),
-          data: (stories) => stories.isEmpty
-              ? const _EmptyState()
-              : CustomScrollView(
-                  slivers: [
-                    const SliverToBoxAdapter(child: _HeroBanner()),
-                    SliverPadding(
-                      padding: const EdgeInsets.all(16),
-                      sliver: SliverToBoxAdapter(
-                        child: Text(
-                          'Đang hot',
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                      ),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      sliver: SliverGrid(
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.62,
-                        ),
-                        delegate: SliverChildBuilderDelegate(
-                          (context, i) => StoryCard(
-                            story: stories[i],
-                            onTap: () => context.push(
-                              '/story/${stories[i].id}',
-                            ),
-                          ),
-                          childCount: stories.length,
-                        ),
-                      ),
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                  ],
-                ),
+          data: (home) => _HomeContent(home: home),
         ),
       ),
+    );
+  }
+}
+
+class _HomeContent extends StatelessWidget {
+  const _HomeContent({required this.home});
+  final HomePage home;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        const _HeroBanner(),
+        if (home.continueReading.isNotEmpty)
+          StorySection(
+            title: 'Đọc tiếp',
+            height: 180,
+            items: [
+              for (final c in home.continueReading)
+                StoryCard(
+                  story: _summaryFromContinue(c),
+                  onTap: () => context.push('/chapter/${c.storySlug}/${c.lastChapter}'),
+                  badge: c.chapterLabel,
+                ),
+            ],
+          ),
+        if (home.hot.isNotEmpty)
+          StorySection(
+            title: 'Đang hot',
+            items: [
+              for (final s in home.hot)
+                StoryCard(
+                  story: s,
+                  onTap: () => context.push('/story/${s.slug}'),
+                ),
+            ],
+          ),
+        if (home.fresh.isNotEmpty)
+          StorySection(
+            title: 'Truyện mới',
+            items: [
+              for (final s in home.fresh)
+                StoryCard(
+                  story: s,
+                  onTap: () => context.push('/story/${s.slug}'),
+                ),
+            ],
+          ),
+        if (home.picks.isNotEmpty)
+          StorySection(
+            title: 'Tuyển chọn',
+            items: [
+              for (final s in home.picks)
+                StoryCard(
+                  story: s,
+                  onTap: () => context.push('/story/${s.slug}'),
+                ),
+            ],
+          ),
+        if (home.newChapters.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+            child: Text('Chương mới', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          ),
+          for (final c in home.newChapters)
+            ListTile(
+              leading: const Icon(Icons.new_releases_outlined, color: AppTheme.primary),
+              title: Text(c.chapterTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(c.storyTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () => context.push('/chapter/${c.storySlug}/${c.chapterNumber}'),
+            ),
+        ],
+        if (home.hot.isEmpty &&
+            home.fresh.isEmpty &&
+            home.picks.isEmpty &&
+            home.newChapters.isEmpty &&
+            home.continueReading.isEmpty)
+          const _EmptyState(),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  StorySummary _summaryFromContinue(ContinueReadingItem c) {
+    return StorySummary(
+      id: c.storyId,
+      title: c.storyTitle,
+      slug: c.storySlug,
+      coverUrl: c.coverUrl,
+      author: '',
+      categories: const [],
+      tags: const [],
+      contentTypes: [c.contentType],
     );
   }
 }
@@ -109,12 +172,12 @@ class _HeroBanner extends StatelessWidget {
             'Đọc truyện — Không Dịch',
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: Colors.white,
+                  fontSize: 22,
                 ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Tự đọc truyện text, manga, chat & video YouTube. '
-            'Offline sẵn sàng, TTS 100% on-device.',
+            'Truyện text, manga, chat & video. Offline sẵn sàng, TTS 100% on-device.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.white.withValues(alpha: 0.9),
                 ),
@@ -125,26 +188,48 @@ class _HeroBanner extends StatelessWidget {
   }
 }
 
-class _LoadingGrid extends StatelessWidget {
-  const _LoadingGrid();
+class _LoadingList extends StatelessWidget {
+  const _LoadingList();
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 0.62,
-      ),
-      itemCount: 6,
-      itemBuilder: (_, __) => Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-      ),
+    return ListView(
+      children: List.filled(6, 0).map((_) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 60,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 16,
+                      width: double.infinity,
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      height: 12,
+                      width: 120,
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }
@@ -154,15 +239,23 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: const [
-        SizedBox(height: 120),
-        Icon(Icons.inbox_outlined, size: 64),
-        SizedBox(height: 12),
-        Center(
-          child: Text('Chưa có truyện nào. Kéo xuống để thử lại.'),
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.all(40),
+      child: Column(
+        children: [
+          Icon(Icons.inbox_outlined, size: 64, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+          const SizedBox(height: 12),
+          Text(
+            'Không có nội dung để hiển thị.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Kéo xuống để thử lại.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -198,24 +291,22 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-/// Notifier powering the home feed.
-final homeStoriesProvider =
-    StateNotifierProvider<HomeStoriesNotifier, AsyncValue<List<StorySummary>>>(
-  (ref) => HomeStoriesNotifier(ref),
+// ---- State ----
+
+final homeProvider = StateNotifierProvider<HomeNotifier, AsyncValue<HomePage>>(
+  (ref) => HomeNotifier(ref),
 );
 
-class HomeStoriesNotifier
-    extends StateNotifier<AsyncValue<List<StorySummary>>> {
-  HomeStoriesNotifier(this._ref) : super(const AsyncValue.loading());
-
+class HomeNotifier extends StateNotifier<AsyncValue<HomePage>> {
+  HomeNotifier(this._ref) : super(const AsyncValue.loading());
   final Ref _ref;
 
   Future<void> refresh() async {
     state = const AsyncValue.loading();
     try {
       final repo = _ref.read(storyRepositoryProvider);
-      final stories = await repo.listStories(sort: 'hot', perPage: 20);
-      state = AsyncValue.data(stories);
+      final home = await repo.fetchHome();
+      state = AsyncValue.data(home);
     } catch (e, s) {
       state = AsyncValue.error(e, s);
     }

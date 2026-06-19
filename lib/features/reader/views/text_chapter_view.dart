@@ -12,15 +12,18 @@ class TextChapterView extends StatelessWidget {
     super.key,
     required this.markdown,
     required this.theme,
+    this.scrollController,
   });
 
   final String markdown;
   final ReaderTheme theme;
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context) {
     final blocks = MarkdownParser().parse(markdown);
     return SingleChildScrollView(
+      controller: scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: MarkdownRenderer(blocks: blocks, theme: theme),
     );

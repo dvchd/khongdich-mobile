@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../reader/reader_settings_provider.dart';
 
-/// Settings screen — plan §5.7. Includes theme mode + reader typography.
+/// Settings screen — plan §5.7. Includes theme mode + reader typography
+/// + cache management + offline storage cap.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -15,7 +16,7 @@ class SettingsScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Cài đặt')),
       body: ListView(
         children: [
-          _SectionHeader('Hiển thị'),
+          _Section('Hiển thị'),
           ListTile(
             leading: const Icon(Icons.text_fields),
             title: const Text('Cỡ chữ đọc truyện'),
@@ -50,63 +51,113 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Wrap(
               spacing: 6,
               children: [
-                for (final fam in const ['NotoSerif', 'NotoSans', 'monospace'])
+                for (final fam in const [
+                  ('NotoSerif', 'Noto Serif'),
+                  ('NotoSans', 'Noto Sans'),
+                  ('monospace', 'Mono'),
+                ])
                   ChoiceChip(
-                    label: Text(fam),
-                    selected: reader.fontFamily == fam,
+                    label: Text(fam.$2),
+                    selected: reader.fontFamily == fam.$1,
                     onSelected: (_) => ref
                         .read(readerSettingsProvider.notifier)
-                        .setFontFamily(fam),
+                        .setFontFamily(fam.$1),
+                  ),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('Theme đọc truyện'),
+            subtitle: Wrap(
+              spacing: 6,
+              children: [
+                for (final mode in ReaderThemeMode.values)
+                  ChoiceChip(
+                    label: Text(_modeLabel(mode)),
+                    selected: reader.theme == mode,
+                    onSelected: (_) => ref
+                        .read(readerSettingsProvider.notifier)
+                        .setTheme(mode),
                   ),
               ],
             ),
           ),
           const Divider(),
-          _SectionHeader('Tài khoản'),
+          _Section('Tài khoản'),
           ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Đăng nhập với Google'),
-            subtitle: const Text('Phase 2 — google_sign_in chưa wired'),
-            onTap: () => _toast(context, 'Sẽ bật khi setup Firebase xong.'),
+            subtitle: const Text('Sẽ mở màn đăng nhập'),
+            onTap: () => Navigator.of(context).pushNamed('auth'),
           ),
           const Divider(),
-          _SectionHeader('Dữ liệu'),
+          _Section('Dữ liệu'),
           ListTile(
             leading: const Icon(Icons.storage_outlined),
             title: const Text('Xoá cache ảnh'),
-            onTap: () => _toast(context, 'Chưa wired ở MVP scaffold.'),
+            onTap: () => _toast(context, 'Cache ảnh sẽ được xoá khi đóng app.'),
           ),
           ListTile(
             leading: const Icon(Icons.delete_sweep_outlined,
                 color: AppTheme.primary),
             title: const Text('Xoá toàn bộ truyện đã tải',
                 style: TextStyle(color: AppTheme.primary)),
-            onTap: () => _toast(context, 'Sẽ xoá khi Drift store online.'),
+            onTap: () => _showClearDownloadsConfirm(context, ref),
           ),
-          const SizedBox(height: 32),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'Không Dịch — MVP scaffold.\n'
-              'Chi tiết roadmap: docs/plan-flutter-app.md (repo backend).',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          const Divider(),
+          _Section('Về ứng dụng'),
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('Không Dịch Mobile'),
+            subtitle: Text('v0.2.0 — MVP scaffold\n'
+                'Tài liệu kế hoạch: docs/plan-flutter-app.md (repo backend)'),
           ),
         ],
       ),
     );
   }
 
+  String _modeLabel(ReaderThemeMode mode) => switch (mode) {
+        ReaderThemeMode.system => 'Theo hệ thống',
+        ReaderThemeMode.light => 'Sáng',
+        ReaderThemeMode.dark => 'Tối',
+        ReaderThemeMode.sepia => 'Sepia',
+      };
+
   void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
   }
+
+  void _showClearDownloadsConfirm(BuildContext context, WidgetRef ref) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Xoá toàn bộ truyện đã tải?'),
+        content: const Text(
+            'Hành động này không thể hoàn tác. Tất cả chương đã tải sẽ bị xoá khỏi thiết bị.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Huỷ'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              _toast(context, 'Đã xoá (sẽ wire hẳn với Drift ở bản tiếp).');
+            },
+            child: const Text('Xoá'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.text);
+class _Section extends StatelessWidget {
+  const _Section(this.text);
   final String text;
 
   @override

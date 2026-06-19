@@ -33,11 +33,11 @@ class ReaderChrome extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.bookmark_border),
-            onPressed: () => _showToast(context, 'Bookmark — coming soon'),
+            onPressed: () => _toast(context, 'Bookmark — nhấn giữ để thêm vào tủ'),
           ),
           IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: onOpenSettings ?? () => _showToast(context, 'Reader settings — coming soon'),
+            icon: const Icon(Icons.text_fields),
+            onPressed: onOpenSettings,
           ),
         ],
       ),
@@ -69,7 +69,7 @@ class ReaderChrome extends StatelessWidget {
     );
   }
 
-  void _showToast(BuildContext context, String message) {
+  void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 1)),
     );

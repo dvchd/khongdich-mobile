@@ -1,7 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Reader display preferences (plan §5.4). Persisted to Drift `app_settings`
-/// in a later milestone; for the MVP build they live in memory.
+/// Reader display preferences (plan §5.4). Persisted to
+/// `shared_preferences` so they survive across sessions.
 class ReaderSettings {
   const ReaderSettings({
     this.fontSize = 18,
@@ -27,6 +28,23 @@ class ReaderSettings {
         fontFamily: fontFamily ?? this.fontFamily,
         theme: theme ?? this.theme,
       );
+
+  Map<String, dynamic> toJson() => {
+        'fontSize': fontSize,
+        'lineHeight': lineHeight,
+        'fontFamily': fontFamily,
+        'theme': theme.name,
+      };
+
+  factory ReaderSettings.fromJson(Map<String, dynamic> json) => ReaderSettings(
+        fontSize: (json['fontSize'] as num?)?.toDouble() ?? 18,
+        lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.6,
+        fontFamily: json['fontFamily'] as String? ?? 'NotoSerif',
+        theme: ReaderThemeMode.values.firstWhere(
+          (m) => m.name == (json['theme'] as String?),
+          orElse: () => ReaderThemeMode.system,
+        ),
+      );
 }
 
 enum ReaderThemeMode { system, light, dark, sepia }
@@ -37,10 +55,48 @@ final readerSettingsProvider =
 );
 
 class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
-  ReaderSettingsNotifier() : super(const ReaderSettings());
+  ReaderSettingsNotifier() : super(const ReaderSettings()) {
+    _load();
+  }
 
-  void setFontSize(double v) => state = state.copyWith(fontSize: v);
-  void setLineHeight(double v) => state = state.copyWith(lineHeight: v);
-  void setFontFamily(String v) => state = state.copyWith(fontFamily: v);
-  void setTheme(ReaderThemeMode v) => state = state.copyWith(theme: v);
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final fontSize = prefs.getDouble('reader.fontSize');
+    final lineHeight = prefs.getDouble('reader.lineHeight');
+    final fontFamily = prefs.getString('reader.fontFamily');
+    final themeName = prefs.getString('reader.theme');
+    state = ReaderSettings(
+      fontSize: fontSize ?? state.fontSize,
+      lineHeight: lineHeight ?? state.lineHeight,
+      fontFamily: fontFamily ?? state.fontFamily,
+      theme: ReaderThemeMode.values.firstWhere(
+        (m) => m.name == themeName,
+        orElse: () => ReaderThemeMode.system,
+      ),
+    );
+  }
+
+  Future<void> setFontSize(double v) async {
+    state = state.copyWith(fontSize: v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('reader.fontSize', v);
+  }
+
+  Future<void> setLineHeight(double v) async {
+    state = state.copyWith(lineHeight: v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('reader.lineHeight', v);
+  }
+
+  Future<void> setFontFamily(String v) async {
+    state = state.copyWith(fontFamily: v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('reader.fontFamily', v);
+  }
+
+  Future<void> setTheme(ReaderThemeMode v) async {
+    state = state.copyWith(theme: v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('reader.theme', v.name);
+  }
 }

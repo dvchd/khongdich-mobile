@@ -9,15 +9,18 @@ class ChatChapterView extends StatelessWidget {
     super.key,
     required this.participants,
     required this.messages,
+    this.scrollController,
   });
 
   final List<ChatParticipant> participants;
   final List<ChatMessage> messages;
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context) {
     final byId = {for (final p in participants) p.id: p};
     return ListView.builder(
+      controller: scrollController,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
       itemCount: messages.length,
       itemBuilder: (_, i) {
@@ -31,7 +34,10 @@ class ChatChapterView extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       fontStyle: FontStyle.italic,
-                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.6),
                     ),
               ),
             ),
@@ -39,7 +45,8 @@ class ChatChapterView extends StatelessWidget {
         }
         final isRight = m.side == 'right';
         final speaker = m.speakerId == null ? null : byId[m.speakerId];
-        final bubbleColor = _resolveBubbleColor(speaker, isRight, context);
+        final bubbleColor =
+            _resolveBubbleColor(speaker, isRight, context);
         return Align(
           alignment: isRight ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -94,7 +101,8 @@ class ChatChapterView extends StatelessWidget {
     BuildContext context,
   ) {
     if (isRight) {
-      return _parseColor(speaker?.color) ?? Theme.of(context).colorScheme.primary;
+      return _parseColor(speaker?.color) ??
+          Theme.of(context).colorScheme.primary;
     }
     return Theme.of(context).colorScheme.surfaceContainerHighest;
   }

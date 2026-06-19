@@ -1,7 +1,7 @@
 name: khongdich_mobile
-description: "Không Dịch — Mobile reader app for khongdich.com (Android first, MVP)."
+description: "Không Dịch — Mobile reader app for khongdich.com (Android first)."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.12.2
@@ -19,8 +19,17 @@ dependencies:
 
   # Network
   dio: ^5.5.0
+  dio_cookie_manager: ^3.1.1
+  cookie_jar: ^4.0.8
 
-  # Storage (encrypted for JWT, plain for prefs)
+  # HTML parsing (for SSR scraping — backend JSON API not yet complete)
+  html: ^0.15.4
+
+  # Local DB
+  drift: ^2.18.0
+  sqlite3_flutter_libs: ^0.5.24
+
+  # Storage
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.3.0
   path_provider: ^2.1.4
@@ -30,34 +39,45 @@ dependencies:
   shimmer: ^3.0.0
   google_fonts: ^6.2.1
   photo_view: ^0.15.0
+  webview_flutter: ^4.8.0
+
+  # YouTube player (for video content_type)
+  youtube_player_flutter: ^9.1.1
+
+  # Audio (on-device TTS) — Phase 2 of plan, wired in this build.
+  audio_service: ^0.18.15
+  flutter_tts: ^4.1.0
+  audio_session: ^0.1.21
+
+  # Local notifications (for download completion + fallback when FCM absent)
+  flutter_local_notifications: ^17.2.2
 
   # Utils
   connectivity_plus: ^5.0.2
   logger: ^2.4.0
+  url_launcher: ^6.3.0
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  drift_dev: ^2.18.0
+  build_runner: ^2.4.11
   flutter_lints: ^6.0.0
 
 # NOTE: The following packages from `docs/plan-flutter-app.md` Appendix B
-# are intentionally commented out for the MVP scaffold. They will be wired
-# in once the corresponding Phase-2 subsystems land:
+# are intentionally NOT yet wired (require native setup outside the
+# scope of this scaffold):
 #
-#   drift: ^2.18.0                      # local SQLite ORM (offline reader)
-#   sqlite3_flutter_libs: ^0.5.24       # native sqlite3 bindings
-#   drift_dev: ^2.18.0                  # codegen (dev)
-#   build_runner: ^2.4.11               # codegen runner (dev)
-#   youtube_player_flutter: ^9.0.0      # video content_type player
-#   audio_service: ^0.18.13             # TTS ForegroundService
-#   flutter_tts: ^4.1.0                 # on-device TTS engine
-#   audio_session: ^0.1.20              # audio session config
 #   firebase_core / firebase_messaging / firebase_crashlytics / firebase_analytics
-#   google_sign_in: ^6.2.1
-#   app_links: ^3.5.0
-#   flutter_local_notifications: ^17.2.0
+#   google_sign_in (waiting for backend /api/v1/auth/token)
+#   app_links
+#
+# They will be added once a Firebase project + the backend Bearer-JWT
+# endpoint land. See README.md "Wiring the Phase-2 subsystems".
 
 flutter:
   uses-material-design: true
   assets:
     - test/fixtures/
+    - assets/icons/

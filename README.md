@@ -1,136 +1,179 @@
 # Không Dịch — Mobile (Flutter)
 
 Mobile reader app for [khongdich.com](https://khongdich.com). Android-first
-MVP scaffold, built from `docs/plan-flutter-app.md` (v4) in the backend
-repo.
+MVP, built from `docs/plan-flutter-app.md` (v4) in the backend repo.
 
-## Status
+## Status (v0.2.0)
 
-This is the **MVP scaffold** — the architectural backbone of Phase 1.
-Everything listed in the plan's Appendix A project structure is in place
-and the project passes `flutter analyze` (0 issues) and `flutter test`
-(22/22).
+**Build:** `flutter analyze` → 0 issues · `flutter test` → 27/27 passing ·
+GitHub Actions builds APK + AAB and publishes them to GitHub Releases.
+
+### What's wired
 
 | Area | Plan ref | Status |
 |---|---|---|
 | Project layout (Appendix A) | §22 | ✅ |
 | Material 3 theme + design tokens | §14.1 | ✅ |
-| Routing (go_router, 4-tab shell) | §14.3 | ✅ |
-| Dio API client + JWT interceptor | §10.2 | ✅ |
+| Routing (go_router, 4-tab shell + nested routes) | §14.3 | ✅ |
+| Dio + CookieJar (cookie-based auth) | §10 | ✅ |
+| WebView Google OAuth → cookie sync | §5.1 | ✅ hybrid (no Bearer yet) |
+| CSRF handling (`Origin` header bypass) | backend `csrf.rs` | ✅ |
 | Sealed `ChapterContent` model (text/manga/chat/video) | §4.3, §12.2 | ✅ |
-| Story / chapter repositories | §10.3 | ✅ |
 | **Custom Dart markdown parser** (CommonMark core + strikethrough) | §13.1, §13.2 | ✅ |
 | **MarkdownRenderer** → native widget tree | §4.4 | ✅ |
 | TTS markdown preprocessor (pure Dart) | §9.4 | ✅ |
 | **Shared markdown fixtures** (11 cases, mirrored to backend) | §13.5 | ✅ |
 | Polymorphic chapter reader (text/manga/chat/video) | §14.4 | ✅ |
+| YouTube player (`youtube_player_flutter`) | §4.5 | ✅ |
+| Manga viewer (`photo_view` + `cached_network_image`) | §4.5 | ✅ |
+| Chat bubbles | §4.5 | ✅ |
+| Reader settings sheet (font, line height, theme, sepia) | §5.4 | ✅ |
+| Reading progress sync (local Drift + server PUT) | §8.4 | ✅ |
 | Home / Search / Bookshelf / Profile / Settings / Auth screens | §5, §14.3 | ✅ |
-| Story detail screen | §5.3 | ✅ |
-| SQLite schema (record types + in-memory stub) | §8.2 | ✅ stub |
-| Drift on-disk store | §8.2 | ⏳ Phase 1 milestone |
-| On-device TTS (`flutter_tts` + `audio_service`) | §9 | ⏳ Phase 2 |
-| Google Sign-In + JWT exchange | §5.1 | ⏳ Phase 2 |
-| FCM push notifications | §15 | ⏳ Phase 2 |
-| Firebase Crashlytics / Analytics | §16 | ⏳ Phase 2 |
-| iOS port | §7.1 | ⏳ Phase 3 |
+| Story detail screen (HTML scrape — no JSON yet) | §5.3 | ✅ |
+| Notifications screen (HTML scrape — no JSON yet) | §6.2 | ✅ |
+| Download manager + queue UI | §5.5, §8 | ✅ |
+| On-device TTS via `audio_service` + `flutter_tts` | §9 | ✅ |
+| Drift on-disk SQLite store | §8.2 | ✅ |
+| GitHub Actions CI/CD → APK + AAB → Releases | §17 | ✅ |
+
+### What's deferred
+
+- `google_sign_in` + `POST /api/v1/auth/token` (waiting on backend)
+- FCM push notifications (waiting on backend `POST /api/v1/push/register`)
+- iOS port (Phase 3)
+- Drift schema migration story (currently v1, no migrations needed yet)
+
+## Architecture
+
+The backend's JSON API is **incomplete** — only `/api/v1/search`,
+`/api/v1/bookmarks`, `/api/v1/reading-progress`, `/api/v1/notifications`
+(stream + read/delete), `/api/v1/csrf-token` exist. The story list,
+story detail, chapter list, and chapter content endpoints from plan §12
+are **not yet implemented** in the backend.
+
+To unblock the mobile app we use a **hybrid strategy**:
+
+1. **Reads** of story lists / story detail / chapter content go through
+   `HtmlStoryDataSource` + `ChapterReaderDataSource`, which scrape the
+   SSR HTML pages (`/`, `/truyen/{slug}`, `/truyen/{slug}/chuong/{num}`).
+   The HTML is parsed by the `html` Dart package and rebuilt into the
+   same DTOs the future JSON endpoints will return.
+2. **Writes** (bookmark toggle, reading-progress save, search) use the
+   existing JSON endpoints via Dio.
+3. **Auth** uses a WebView-based Google OAuth flow: the WebView opens
+   `/dang-nhap`, the user completes OAuth, and we copy the resulting
+   `kd_auth` cookie from the WebView's CookieManager into our shared
+   `PersistCookieJar`. When the backend ships `POST /api/v1/auth/token`,
+   swap to `google_sign_in` + Bearer JWT.
+4. **CSRF** is handled by setting `Origin: <baseUrl>` on every mutating
+   call. The backend's CSRF middleware passes requests whose `Origin`
+   host matches the `Host` header (same-origin fallback).
+
+When the backend JSON endpoints land, swapping each `HtmlStoryDataSource`
+method for a one-line `dio.get('/api/v1/stories')` is a mechanical
+change — the return types already match the planned JSON shapes.
 
 ## Project layout
 
 ```
 lib/
 ├── main.dart
-├── app.dart                          # MaterialApp.router
+├── app.dart
 ├── core/
-│   ├── api/api_client.dart           # Dio + JWT interceptor
-│   ├── database/app_database.dart    # SQLite schema (stub, Drift-ready)
+│   ├── database/app_database.dart       # Drift schema (7 tables)
 │   ├── markdown/
-│   │   ├── ast.dart                  # sealed Block / Inline AST
-│   │   ├── parser.dart               # custom CommonMark parser
-│   │   ├── renderer.dart             # AST → Flutter widget tree
-│   │   ├── preprocessor_tts.dart     # md → TTS-friendly chunks
-│   │   └── markdown.dart             # barrel
+│   │   ├── ast.dart                      # sealed Block / Inline AST
+│   │   ├── parser.dart                   # custom CommonMark parser
+│   │   ├── renderer.dart                 # AST → Flutter widget tree
+│   │   └── preprocessor_tts.dart         # md → TTS-friendly chunks
+│   ├── network/api_client.dart           # Dio + CookieJar + CSRF
 │   ├── observability/app_logger.dart
-│   ├── router/app_router.dart        # go_router config
-│   ├── shell/main_shell.dart         # bottom-nav shell
-│   ├── storage/secure_storage.dart   # JWT storage
-│   └── theme/app_theme.dart          # M3 theme + design tokens
+│   ├── router/app_router.dart
+│   ├── shell/main_shell.dart             # bottom-nav shell
+│   └── theme/app_theme.dart
 ├── features/
-│   ├── auth/auth_screen.dart
+│   ├── auth/auth_screen.dart             # WebView OAuth flow
 │   ├── bookshelf/bookshelf_screen.dart
-│   ├── home/{home_screen.dart, widgets/story_card.dart}
+│   ├── downloads/downloads_screen.dart
+│   ├── home/{home_screen.dart, widgets/}
+│   ├── notifications/notifications_screen.dart
 │   ├── profile/profile_screen.dart
 │   ├── reader/
-│   │   ├── chapter_reader_screen.dart    # polymorphic dispatcher
+│   │   ├── chapter_reader_screen.dart
 │   │   ├── chapter_provider.dart
-│   │   ├── reader_providers.dart
 │   │   ├── reader_settings_provider.dart
-│   │   ├── views/
-│   │   │   ├── text_chapter_view.dart    # uses MarkdownRenderer
-│   │   │   ├── manga_chapter_view.dart   # photo_view gallery
-│   │   │   ├── chat_chapter_view.dart    # chat bubbles
-│   │   │   └── video_chapter_view.dart   # YouTube placeholder
-│   │   └── widgets/reader_chrome.dart
+│   │   ├── services/reading_progress_service.dart
+│   │   ├── views/{text,manga,chat,video}_chapter_view.dart
+│   │   └── widgets/{reader_chrome,reader_settings_sheet}.dart
 │   ├── search/search_screen.dart
 │   ├── settings/settings_screen.dart
-│   └── story/story_detail_screen.dart
-├── models/
-│   ├── chapter_content.dart          # sealed ChapterContent
-│   └── story.dart
-└── repositories/
-    └── story_repository.dart
+│   ├── story/story_detail_screen.dart
+│   └── tts/
+│       ├── tts_audio_handler.dart        # audio_service + flutter_tts
+│       └── tts_mini_player.dart
+├── models/{chapter_content,story}.dart
+├── repositories/
+│   ├── story_repository.dart             # unified read/write client
+│   ├── html_story_data_source.dart       # SSR HTML scraping
+│   └── chapter_reader_data_source.dart   # chapter HTML scraping
+└── services/download_manager.dart        # offline download queue
 
 test/
-├── fixtures/
-│   └── markdown-fixtures.json        # shared with backend (plan §13.5)
-├── markdown/
-│   ├── fixtures_test.dart            # fixture sync test
-│   └── parser_edge_cases_test.dart
-└── widget_test.dart                  # app boot smoke test
+├── fixtures/markdown-fixtures.json
+├── markdown/{fixtures,parser_edge_cases}_test.dart
+└── widget_test.dart
 ```
 
-## Running
+## Running locally
 
 ```bash
 flutter pub get
+dart run build_runner build --delete-conflicting-outputs   # Drift codegen
 flutter analyze       # 0 issues
-flutter test          # 22 tests, all pass
+flutter test          # 27 tests, all pass
 flutter run           # Android device / emulator required
 ```
 
 To point at a dev backend:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3000
 ```
 
-## Wiring the Phase-2 subsystems
+## CI/CD
 
-Each Phase-2/3 subsystem is scaffolded but gated behind a feature flag
-(pubspec comment). To enable:
+`.github/workflows/ci.yml` runs on every push and PR:
 
-### On-device TTS (Phase 2)
+1. **Analyze + Test** job — every push and PR. Runs `flutter analyze`
+   and `flutter test`. Fails the build on any issue.
+2. **Build Android** job — only on `main` pushes and `v*` tags. Runs
+   `flutter build apk --release` + `flutter build appbundle --release`
+   and uploads artifacts.
+3. **Publish to GitHub Releases**:
+   - On `v*` tags: creates a proper release with the APK + AAB attached.
+   - On `main` pushes: creates/updates a `dev-<sha>` prerelease tagged
+     "Dev build", so users can always grab the latest APK from the
+     Releases page.
 
-1. Uncomment `audio_service`, `flutter_tts`, `audio_session` in `pubspec.yaml`.
-2. Add a `TtsAudioHandler` (plan §9.5) under `lib/features/tts/`.
-3. Register the foreground service in `android/app/src/main/AndroidManifest.xml`.
-4. Wire `AudioService.init()` in `main.dart` before `runApp`.
+### Signing
 
-### Google Sign-In + JWT (Phase 2)
+The release build is signed if these repo secrets are set:
 
-1. Uncomment `google_sign_in` and `app_links` in `pubspec.yaml`.
-2. Create a Firebase project, drop `google-services.json` into
-   `android/app/`.
-3. Implement `POST /api/v1/auth/token` on the backend (plan §12.1).
-4. Replace `AuthScreen`'s "coming soon" callback with a real sign-in flow.
+- `KHONGDICH_KEYSTORE_BASE64` — base64-encoded `.jks` keystore
+- `KHONGDICH_KEYSTORE_PASSWORD` — keystore password
+- `KHONGDICH_KEY_ALIAS` — key alias
+- `KHONGDICH_KEY_PASSWORD` — key password
 
-### Drift on-disk store (Phase 1 milestone)
+If the secrets are absent, the build falls back to the debug signing
+config — useful for dev builds. To create a keystore:
 
-1. Uncomment `drift`, `sqlite3_flutter_libs`, `drift_dev`, `build_runner`
-   in `pubspec.yaml`.
-2. Convert each `*Record` class in `lib/core/database/app_database.dart`
-   to a Drift `Table` subclass (the field types map 1:1).
-3. Run `dart run build_runner build --delete-conflicting-outputs`.
-4. Replace the `AppDatabase` stub with the generated `_$AppDatabase`.
+```bash
+keytool -genkey -v -keystore khongdich-release.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -alias khongdich
+base64 -w 0 khongdich-release.jks  # paste into GitHub secret
+```
 
 ## Markdown fixture sync
 

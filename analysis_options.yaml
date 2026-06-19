@@ -1,6 +1,10 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  exclude:
+    - "lib/core/database/*.g.dart"
+    - "lib/core/database/*.drift.dart"
+
   language:
     strict-casts: true
     strict-raw-types: true
@@ -10,9 +14,6 @@ linter:
     prefer_single_quotes: true
     avoid_print: true
     require_trailing_commas: true
-    # The remaining `unnecessary_underscores` / `prefer_interpolation` info
-    # rules are noisy for a scaffold and not material to correctness. We
-    # turn them off explicitly so `flutter analyze` returns a clean exit.
     unnecessary_underscores: false
     prefer_interpolation_to_compose_strings: false
     unnecessary_string_interpolations: false

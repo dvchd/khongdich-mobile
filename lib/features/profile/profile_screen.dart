@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/network/api_client.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/storage/secure_storage.dart';
 
 /// Profile tab. Plan §5.7 — Settings entry + account section.
 class ProfileScreen extends ConsumerWidget {
@@ -18,28 +18,34 @@ class ProfileScreen extends ConsumerWidget {
           const _ProfileHeader(),
           const Divider(),
           ListTile(
-            leading: const Icon(Icons.settings_outlined),
-            title: const Text('Cài đặt'),
+            leading: const Icon(Icons.bookmark_outline),
+            title: const Text('Tủ truyện'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/settings'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.download_outlined),
-            title: const Text('Tải xuống'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showComingSoon(context, 'Quản lý tải xuống — Phase 2'),
+            onTap: () => context.go('/bookshelf'),
           ),
           ListTile(
             leading: const Icon(Icons.history),
             title: const Text('Lịch sử đọc'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showComingSoon(context, 'Lịch sử đọc — Phase 2'),
+            onTap: () => _toast(context, 'Lịch sử đọc sẽ có ở Phase 2'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Tải xuống'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/downloads'),
           ),
           ListTile(
             leading: const Icon(Icons.notifications_outlined),
             title: const Text('Thông báo'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showComingSoon(context, 'Thông báo — Phase 2'),
+            onTap: () => context.push('/notifications'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.settings_outlined),
+            title: const Text('Cài đặt'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/settings'),
           ),
           const Divider(),
           ListTile(
@@ -47,9 +53,16 @@ class ProfileScreen extends ConsumerWidget {
             title: const Text('Đăng xuất',
                 style: TextStyle(color: AppTheme.primary)),
             onTap: () async {
-              await ref.read(secureStorageProvider).deleteJwt();
+              final api = ref.read(apiClientProvider).maybeWhen(
+                    data: (c) => c,
+                    orElse: () => null,
+                  );
+              if (api != null) {
+                await api.clearAuth();
+              }
               if (context.mounted) {
-                context.go('/auth');
+                _toast(context, 'Đã đăng xuất.');
+                context.go('/home');
               }
             },
           ),
@@ -57,7 +70,7 @@ class ProfileScreen extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.all(16),
             child: Text(
-              'Không Dịch v0.1.0 (MVP scaffold)\n'
+              'Không Dịch v0.2.0 (MVP)\n'
               'Flutter 3.x · Riverpod · Drift · Dio · Custom markdown parser',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall,
@@ -68,18 +81,18 @@ class ProfileScreen extends ConsumerWidget {
     );
   }
 
-  void _showComingSoon(BuildContext context, String message) {
+  void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 }
 
-class _ProfileHeader extends StatelessWidget {
+class _ProfileHeader extends ConsumerWidget {
   const _ProfileHeader();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Row(

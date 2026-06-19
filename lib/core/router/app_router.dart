@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/auth_screen.dart';
 import '../../features/bookshelf/bookshelf_screen.dart';
+import '../../features/downloads/downloads_screen.dart';
 import '../../features/home/home_screen.dart';
+import '../../features/notifications/notifications_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/reader/chapter_reader_screen.dart';
 import '../../features/search/search_screen.dart';
@@ -42,16 +44,32 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ],
       ),
       GoRoute(
-        path: '/story/:id',
+        path: '/story/:slug',
         name: 'story_detail',
         builder: (context, state) =>
-            StoryDetailScreen(storyId: state.pathParameters['id']!),
+            StoryDetailScreen(storySlug: state.pathParameters['slug']!),
       ),
       GoRoute(
-        path: '/chapter/:chapterId',
+        path: '/chapter/:slug/:num',
         name: 'chapter_reader',
-        builder: (context, state) =>
-            ChapterReaderScreen(chapterId: state.pathParameters['chapterId']!),
+        builder: (context, state) {
+          final slug = state.pathParameters['slug']!;
+          final num = int.parse(state.pathParameters['num']!);
+          return ChapterReaderScreen(
+            storySlug: slug,
+            chapterNumber: num,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/notifications',
+        name: 'notifications',
+        builder: (context, state) => const NotificationsScreen(),
+      ),
+      GoRoute(
+        path: '/downloads',
+        name: 'downloads',
+        builder: (context, state) => const DownloadsScreen(),
       ),
       GoRoute(
         path: '/settings',

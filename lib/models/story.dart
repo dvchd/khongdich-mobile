@@ -63,6 +63,7 @@ class ChapterSummary {
     required this.contentVersion,
     required this.isPublished,
     required this.wordCount,
+    this.url,
   });
 
   final String id;
@@ -72,6 +73,7 @@ class ChapterSummary {
   final int contentVersion;
   final bool isPublished;
   final int wordCount;
+  final String? url;
 
   factory ChapterSummary.fromJson(Map<String, dynamic> json) => ChapterSummary(
         id: json['id'] as String,
@@ -81,5 +83,6 @@ class ChapterSummary {
         contentVersion: (json['content_version'] as num? ?? 1).toInt(),
         isPublished: json['is_published'] as bool? ?? true,
         wordCount: (json['word_count'] as num? ?? 0).toInt(),
+        url: json['url'] as String?,
       );
 }

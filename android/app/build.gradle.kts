@@ -1,7 +1,21 @@
+import java.util.Base64
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Decode a base64-encoded keystore (passed via env in CI) into a temp file.
+// Local dev: fall back to the debug keystore when no release keystore is set.
+fun keystoreFileFromEnv(): File? {
+    val env = System.getenv("KHONGDICH_KEYSTORE_BASE64")
+    if (env.isNullOrEmpty()) return null
+    val decoded = Base64.getDecoder().decode(env)
+    val out = File(System.getProperty("java.io.tmpdir"), "khongdich-release.jks")
+    out.writeBytes(decoded)
+    return out
 }
 
 android {
@@ -15,21 +29,38 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.khongdich.khongdich_mobile"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        applicationId = "com.khongdich.app"
+        minSdk = maxOf(flutter.minSdkVersion, 26)  // Android 8.0+ per plan §1
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            val ksFile = keystoreFileFromEnv()
+            if (ksFile != null) {
+                storeFile = ksFile
+                storePassword = System.getenv("KHONGDICH_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KHONGDICH_KEY_ALIAS")
+                keyPassword = System.getenv("KHONGDICH_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Use the release signing config if a keystore was supplied,
+            // otherwise fall back to the debug signing config so local
+            // `flutter build apk --release` still works.
+            val ksFile = keystoreFileFromEnv()
+            signingConfig = if (ksFile != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

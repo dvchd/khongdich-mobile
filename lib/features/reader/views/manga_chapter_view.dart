@@ -6,9 +6,14 @@ import 'package:photo_view/photo_view_gallery.dart';
 /// Manga chapter view: vertical list of cover-fit images, tap any image
 /// to open a pinch-to-zoom gallery. Plan §4.5 + §5.4.
 class MangaChapterView extends StatelessWidget {
-  const MangaChapterView({super.key, required this.images});
+  const MangaChapterView({
+    super.key,
+    required this.images,
+    this.scrollController,
+  });
 
   final List<String> images;
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context) {
@@ -16,6 +21,7 @@ class MangaChapterView extends StatelessWidget {
       return const Center(child: Text('Chương này không có ảnh.'));
     }
     return ListView.builder(
+      controller: scrollController,
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: images.length,
       itemBuilder: (context, i) {
@@ -24,11 +30,11 @@ class MangaChapterView extends StatelessWidget {
           child: CachedNetworkImage(
             imageUrl: images[i],
             fit: BoxFit.fitWidth,
-            placeholder: (_, __) => const SizedBox(
+            placeholder: (_, _) => const SizedBox(
               height: 240,
               child: Center(child: CircularProgressIndicator()),
             ),
-            errorWidget: (_, __, ___) => const SizedBox(
+            errorWidget: (_, _, _) => const SizedBox(
               height: 200,
               child: Center(child: Icon(Icons.broken_image_outlined, size: 36)),
             ),
@@ -48,8 +54,7 @@ class MangaChapterView extends StatelessWidget {
               PhotoViewGallery.builder(
                 backgroundDecoration: const BoxDecoration(color: Colors.black),
                 itemCount: images.length,
-                pageController:
-                    PageController(initialPage: initialIndex),
+                pageController: PageController(initialPage: initialIndex),
                 builder: (_, i) => PhotoViewGalleryPageOptions(
                   imageProvider: CachedNetworkImageProvider(images[i]),
                   minScale: PhotoViewComputedScale.contained,

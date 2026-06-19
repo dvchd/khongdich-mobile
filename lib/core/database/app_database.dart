@@ -1,218 +1,275 @@
+import 'dart:io';
+
+import 'package:drift/drift.dart';
+import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
+part 'app_database.g.dart';
 
 /// Local SQLite schema for the Không Dịch mobile app.
 ///
-/// Plan §8.2 — every table from the plan is declared below as Dart value
-/// classes. The on-disk store (Drift + sqlite3_flutter_libs) lands in the
-/// Phase-1 "offline reader" milestone; for the MVP scaffold we ship a
-/// no-op in-memory stub so the rest of the app compiles + tests cleanly
-/// while the schema is locked in.
+/// Per `docs/plan-flutter-app.md` §8.2 — every table from the plan is
+/// declared here as a Drift `Table` subclass. The schema is the source of
+/// truth for the offline reader, download manager, reading-progress
+/// cache, bookmarks cache, and TTS playback state.
 ///
-/// When wiring Drift:
-///   1. Add `drift_dev` + `build_runner` (already in dev_deps).
-///   2. Convert each `*Record` below to a Drift `Table` subclass.
-///   3. Run `dart run build_runner build --delete-conflicting-outputs`.
-///   4. Replace [AppDatabase] body with the generated `_$AppDatabase`.
+/// Schema version starts at 1. Future changes go through [migration]'s
+/// `onUpgrade` callback with `ALTER TABLE` statements or Drift's schema
+/// diff helpers.
 
-// ---- Records (Dart value classes) ----
+/// `downloaded_chapters` — Plan §8.2.
+///
+/// Stores raw markdown (for text) or structured JSON (for manga/chat/video)
+/// so the reader can render a chapter with zero network round-trips.
+class DownloadedChapters extends Table {
+  TextColumn get chapterId => text()();
+  TextColumn get storyId => text()();
+  TextColumn get storyTitle => text()();
+  TextColumn get storySlug => text()();
+  IntColumn get chapterNumber => integer()();
+  TextColumn get chapterTitle => text()();
+  TextColumn get contentType => text()(); // text|manga|chat|video
+  TextColumn get contentRaw => text()();
+  IntColumn get contentVersion => integer().withDefault(const Constant(1))();
+  IntColumn get wordCount => integer().withDefault(const Constant(0))();
+  TextColumn get downloadedAt => text()();
+  TextColumn get lastReadAt => text().nullable()();
+  IntColumn get isRead => integer().withDefault(const Constant(0))();
 
-class DownloadedChapterRecord {
-  const DownloadedChapterRecord({
-    required this.chapterId,
-    required this.storyId,
-    required this.storyTitle,
-    required this.storySlug,
-    required this.chapterNumber,
-    required this.chapterTitle,
-    required this.contentType,
-    required this.contentRaw,
-    this.contentVersion = 1,
-    this.wordCount = 0,
-    required this.downloadedAt,
-    this.lastReadAt,
-    this.isRead = 0,
-  });
-
-  final String chapterId;
-  final String storyId;
-  final String storyTitle;
-  final String storySlug;
-  final int chapterNumber;
-  final String chapterTitle;
-  final String contentType;
-  final String contentRaw;
-  final int contentVersion;
-  final int wordCount;
-  final String downloadedAt;
-  final String? lastReadAt;
-  final int isRead;
+  @override
+  Set<Column> get primaryKey => {chapterId};
 }
 
-class DownloadedChapterImageRecord {
-  const DownloadedChapterImageRecord({
-    this.id,
-    required this.chapterId,
-    required this.imageUrl,
-    required this.localPath,
-    this.sortOrder = 0,
-  });
-  final int? id;
-  final String chapterId;
-  final String imageUrl;
-  final String localPath;
-  final int sortOrder;
+/// `downloaded_chapter_images` — Plan §8.2.
+class DownloadedChapterImages extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get chapterId => text()();
+  TextColumn get imageUrl => text()();
+  TextColumn get localPath => text()();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
 }
 
-class ReadingProgressRecord {
-  const ReadingProgressRecord({
-    required this.storyId,
-    required this.lastChapter,
-    this.scrollRatio = 0,
-    this.anchor = '',
-    required this.updatedAt,
-    this.synced = 1,
-  });
-  final String storyId;
-  final int lastChapter;
-  final double scrollRatio;
-  final String anchor;
-  final String updatedAt;
-  final int synced;
+/// `reading_progress` — Plan §8.2. Mirrors the backend `reading_progress`
+/// table (migration 014 in the backend repo).
+class ReadingProgressTable extends Table {
+  TextColumn get storyId => text()();
+  IntColumn get lastChapter => integer()();
+  RealColumn get scrollRatio => real().withDefault(const Constant(0))();
+  TextColumn get anchor => text().withDefault(const Constant(''))();
+  TextColumn get updatedAt => text()();
+  IntColumn get synced => integer().withDefault(const Constant(1))();
+
+  @override
+  Set<Column> get primaryKey => {storyId};
 }
 
-class LocalBookmarkRecord {
-  const LocalBookmarkRecord({
-    required this.storyId,
-    required this.listType,
-    required this.updatedAt,
-    this.synced = 1,
-  });
-  final String storyId;
-  final String listType;
-  final String updatedAt;
-  final int synced;
+/// `local_bookmarks` — Plan §8.2. Cache of server-side bookmarks for
+/// offline browsing.
+class LocalBookmarks extends Table {
+  TextColumn get storyId => text()();
+  TextColumn get listType => text()(); // reading|completed|plan_to_read|favorite
+  TextColumn get updatedAt => text()();
+  IntColumn get synced => integer().withDefault(const Constant(1))();
+
+  @override
+  Set<Column> get primaryKey => {storyId};
 }
 
-class TtsPlaybackRecord {
-  const TtsPlaybackRecord({
-    required this.chapterId,
-    required this.storyId,
-    required this.chapterNumber,
-    this.chunkIndex = 0,
-    this.isPlaying = 0,
-    this.lastPlayedAt,
-  });
-  final String chapterId;
-  final String storyId;
-  final int chapterNumber;
-  final int chunkIndex;
-  final int isPlaying;
-  final String? lastPlayedAt;
+/// `tts_playback_state` — Plan §8.2.
+class TtsPlaybackState extends Table {
+  TextColumn get chapterId => text()();
+  TextColumn get storyId => text()();
+  IntColumn get chapterNumber => integer()();
+  IntColumn get chunkIndex => integer().withDefault(const Constant(0))();
+  IntColumn get isPlaying => integer().withDefault(const Constant(0))();
+  TextColumn get lastPlayedAt => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {chapterId};
 }
 
-class DownloadQueueRecord {
-  const DownloadQueueRecord({
-    this.id,
-    required this.storyId,
-    required this.chapterId,
-    required this.chapterNumber,
-    required this.downloadType,
-    this.status = 'pending',
-    this.progress = 0,
-    this.errorMessage,
-    required this.queuedAt,
-    this.startedAt,
-    this.completedAt,
-  });
-  final int? id;
-  final String storyId;
-  final String chapterId;
-  final int chapterNumber;
-  final String downloadType;
-  final String status;
-  final double progress;
-  final String? errorMessage;
-  final String queuedAt;
-  final String? startedAt;
-  final String? completedAt;
+/// `download_queue` — Plan §8.2.
+class DownloadQueue extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get storyId => text()();
+  TextColumn get storySlug => text()();
+  TextColumn get chapterId => text()();
+  IntColumn get chapterNumber => integer()();
+  TextColumn get downloadType => text()(); // chapter|chapter_with_images
+  TextColumn get status => text().withDefault(const Constant('pending'))();
+  RealColumn get progress => real().withDefault(const Constant(0))();
+  TextColumn get errorMessage => text().nullable()();
+  TextColumn get queuedAt => text()();
+  TextColumn get startedAt => text().nullable()();
+  TextColumn get completedAt => text().nullable()();
 }
 
-class AppSettingRecord {
-  const AppSettingRecord({required this.key, required this.value});
-  final String key;
-  final String value;
+/// `app_settings` — Plan §8.2. Key/value store for reader prefs, theme
+/// mode, cache cap, etc.
+class AppSettingsTable extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
 }
 
-// ---- In-memory stub ----
+@DriftDatabase(tables: [
+  DownloadedChapters,
+  DownloadedChapterImages,
+  ReadingProgressTable,
+  LocalBookmarks,
+  TtsPlaybackState,
+  DownloadQueue,
+  AppSettingsTable,
+])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase() : super(_open());
 
-/// MVP in-memory stub. Replaced with a real Drift `_$AppDatabase` once
-/// the offline-reader subsystem lands. API matches the planned Drift
-/// surface so call sites do not change.
-class AppDatabase {
-  AppDatabase();
+  @override
+  int get schemaVersion => 1;
 
-  final Map<String, DownloadedChapterRecord> _chapters = {};
-  final Map<String, ReadingProgressRecord> _progress = {};
-  final Map<String, LocalBookmarkRecord> _bookmarks = {};
-  final Map<String, String> _settings = {};
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          // Future migrations go here.
+        },
+      );
 
-  Future<DownloadedChapterRecord?> getDownloadedChapter(String chapterId) async {
-    return _chapters[chapterId];
+  // ---- Downloaded chapters ----
+
+  Future<DownloadedChapter?> getDownloadedChapter(String chapterId) {
+    return (select(downloadedChapters)
+          ..where((t) => t.chapterId.equals(chapterId)))
+        .getSingleOrNull();
   }
 
-  Future<void> upsertDownloadedChapter(DownloadedChapterRecord entry) async {
-    _chapters[entry.chapterId] = entry;
+  Future<List<DownloadedChapter>> getDownloadedChaptersForStory(
+          String storyId) {
+    return (select(downloadedChapters)
+          ..where((t) => t.storyId.equals(storyId))
+          ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
+        .get();
   }
 
-  Future<void> markChapterRead(String chapterId) async {
-    final existing = _chapters[chapterId];
-    if (existing == null) return;
-    _chapters[chapterId] = DownloadedChapterRecord(
-      chapterId: existing.chapterId,
-      storyId: existing.storyId,
-      storyTitle: existing.storyTitle,
-      storySlug: existing.storySlug,
-      chapterNumber: existing.chapterNumber,
-      chapterTitle: existing.chapterTitle,
-      contentType: existing.contentType,
-      contentRaw: existing.contentRaw,
-      contentVersion: existing.contentVersion,
-      wordCount: existing.wordCount,
-      downloadedAt: existing.downloadedAt,
-      lastReadAt: existing.lastReadAt,
-      isRead: 1,
+  Future<void> upsertDownloadedChapter(DownloadedChaptersCompanion entry) {
+    return into(downloadedChapters).insertOnConflictUpdate(entry);
+  }
+
+  Future<void> deleteDownloadedChapter(String chapterId) {
+    return (delete(downloadedChapters)
+          ..where((t) => t.chapterId.equals(chapterId)))
+        .go();
+  }
+
+  Future<void> markChapterRead(String chapterId) {
+    return (update(downloadedChapters)
+          ..where((t) => t.chapterId.equals(chapterId)))
+        .write(DownloadedChaptersCompanion(
+      isRead: const Value(1),
+      lastReadAt: Value(DateTime.now().toIso8601String()),
+    ));
+  }
+
+  // ---- Reading progress ----
+
+  Future<ReadingProgressTableData?> getReadingProgress(String storyId) {
+    return (select(readingProgressTable)
+          ..where((t) => t.storyId.equals(storyId)))
+        .getSingleOrNull();
+  }
+
+  Future<List<ReadingProgressTableData>> getAllReadingProgress() {
+    return (select(readingProgressTable)
+          ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
+        .get();
+  }
+
+  Future<void> upsertReadingProgress(ReadingProgressTableCompanion entry) {
+    return into(readingProgressTable).insertOnConflictUpdate(entry);
+  }
+
+  // ---- Bookmarks ----
+
+  Future<List<LocalBookmark>> getBookmarks() => select(localBookmarks).get();
+
+  Future<List<LocalBookmark>> getBookmarksByType(String listType) {
+    return (select(localBookmarks)
+          ..where((t) => t.listType.equals(listType)))
+        .get();
+  }
+
+  Future<void> upsertBookmark(LocalBookmarksCompanion entry) {
+    return into(localBookmarks).insertOnConflictUpdate(entry);
+  }
+
+  Future<void> deleteBookmark(String storyId) {
+    return (delete(localBookmarks)..where((t) => t.storyId.equals(storyId)))
+        .go();
+  }
+
+  // ---- TTS playback state ----
+
+  Future<TtsPlaybackStateData?> getTtsState(String chapterId) {
+    return (select(ttsPlaybackState)
+          ..where((t) => t.chapterId.equals(chapterId)))
+        .getSingleOrNull();
+  }
+
+  Future<void> upsertTtsState(TtsPlaybackStateCompanion entry) {
+    return into(ttsPlaybackState).insertOnConflictUpdate(entry);
+  }
+
+  // ---- Download queue ----
+
+  Future<List<DownloadQueueData>> getDownloadQueue() {
+    return (select(downloadQueue)
+          ..orderBy([(t) => OrderingTerm.asc(t.queuedAt)]))
+        .get();
+  }
+
+  Future<int> enqueueDownload(DownloadQueueCompanion entry) {
+    return into(downloadQueue).insert(entry);
+  }
+
+  Future<void> updateDownloadQueueRow(
+      int id, DownloadQueueCompanion entry) {
+    return (update(downloadQueue)..where((t) => t.id.equals(id)))
+        .write(entry);
+  }
+
+  Future<void> deleteDownloadQueueRow(int id) {
+    return (delete(downloadQueue)..where((t) => t.id.equals(id))).go();
+  }
+
+  // ---- Settings ----
+
+  Future<String?> getSetting(String key) async {
+    final row = await (select(appSettingsTable)
+          ..where((t) => t.key.equals(key)))
+        .getSingleOrNull();
+    return row?.value;
+  }
+
+  Future<void> setSetting(String key, String value) {
+    return into(appSettingsTable).insertOnConflictUpdate(
+      AppSettingsTableCompanion(key: Value(key), value: Value(value)),
     );
   }
-
-  Future<ReadingProgressRecord?> getReadingProgress(String storyId) async {
-    return _progress[storyId];
-  }
-
-  Future<void> upsertReadingProgress(ReadingProgressRecord entry) async {
-    _progress[entry.storyId] = entry;
-  }
-
-  Future<List<LocalBookmarkRecord>> getBookmarks() async {
-    return _bookmarks.values.toList(growable: false);
-  }
-
-  Future<void> upsertBookmark(LocalBookmarkRecord entry) async {
-    _bookmarks[entry.storyId] = entry;
-  }
-
-  Future<void> deleteBookmark(String storyId) async {
-    _bookmarks.remove(storyId);
-  }
-
-  Future<String?> getSetting(String key) async => _settings[key];
-
-  Future<void> setSetting(String key, String value) async {
-    _settings[key] = value;
-  }
-
-  Future<void> close() async {}
 }
 
+LazyDatabase _open() {
+  return LazyDatabase(() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dir.path, 'khongdich.sqlite'));
+    return NativeDatabase.createInBackground(file);
+  });
+}
+
+/// Provider for the singleton [AppDatabase].
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
   ref.onDispose(db.close);
