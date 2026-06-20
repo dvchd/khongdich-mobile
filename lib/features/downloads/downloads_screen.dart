@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -204,8 +206,33 @@ final downloadQueueProvider =
 
 class DownloadQueueNotifier
     extends StateNotifier<AsyncValue<List<DownloadQueueData>>> {
-  DownloadQueueNotifier(this._ref) : super(const AsyncValue.loading());
+  DownloadQueueNotifier(this._ref) : super(const AsyncValue.loading()) {
+    _init();
+  }
   final Ref _ref;
+  StreamSubscription<List<DownloadQueueData>>? _sub;
+
+  void _init() {
+    refresh();
+    // Listen to DownloadManager's watchQueue() stream so the UI
+    // auto-updates when download status changes (pending → downloading →
+    // completed/failed). This is the fix for "vẫn chỉ hiển thị đang tải
+    // mặc dù tải xong rồi".
+    try {
+      final dm = _ref.read(downloadManagerProvider);
+      _sub = dm.watchQueue().listen((rows) {
+        state = AsyncValue.data(rows);
+      });
+    } catch (_) {
+      // DownloadManager not ready yet — refresh manually.
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   Future<void> refresh() async {
     try {

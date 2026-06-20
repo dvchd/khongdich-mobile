@@ -232,15 +232,21 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       },
     );
 
-    // In horizontal mode, wrap content with swipe gesture detection.
+    // Swipe gestures work in BOTH vertical and horizontal scroll modes.
     // Swipe left → next chapter, swipe right → prev chapter.
-    final body = widget.settings.scrollMode == ReaderScrollMode.horizontal
-        ? _HorizontalSwipeWrapper(
-            onSwipeLeft: widget.onNext,
-            onSwipeRight: widget.onPrev,
-            child: content,
-          )
-        : content;
+    // This replaces the always-visible prev/next buttons.
+    final body = _HorizontalSwipeWrapper(
+      onSwipeLeft: widget.onNext,
+      onSwipeRight: widget.onPrev,
+      child: content,
+    );
+
+    // Resolve the reader background color from the theme mode.
+    final isSepia = widget.settings.theme == ReaderThemeMode.sepia;
+    final isReaderLight = brightness == Brightness.light && !isSepia;
+    final readerBgColor = isSepia
+        ? const Color(0xFFF5E6C8)
+        : (isReaderLight ? const Color(0xFFFAFAFA) : const Color(0xFF0F172A));
 
     return ReaderBar(
       chapter: widget.chapter,
@@ -249,16 +255,19 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       onOpenSettings: widget.onOpenSettings,
       onOpenChapterList: widget.onOpenChapterList,
       onToggleTts: widget.onToggleTts,
-      child: Stack(
-        children: [
-          body,
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: TtsMiniPlayer(chapter: widget.chapter),
-          ),
-        ],
+      child: ColoredBox(
+        color: readerBgColor,
+        child: Stack(
+          children: [
+            body,
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: TtsMiniPlayer(chapter: widget.chapter),
+            ),
+          ],
+        ),
       ),
     );
   }

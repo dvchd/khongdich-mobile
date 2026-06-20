@@ -34,10 +34,25 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     if (_initialised) return;
     _initialised = true;
     try {
+      // Check if vi-VN is available. On Android, the Google TTS engine
+      // may not have Vietnamese installed — log a warning but don't
+      // crash. The user will hear silence if no vi-VN voice exists.
+      final languages = await _tts.getLanguages;
+      if (languages != null) {
+        final hasVi = languages.any((l) =>
+            l.toString().toLowerCase().startsWith('vi')) == true;
+        if (!hasVi) {
+          AppLogger.warning(
+              'TTS: Vietnamese voice not found. Available: $languages');
+          // Try to set it anyway — some engines accept it and fall back.
+        }
+      }
       await _tts.setLanguage('vi-VN');
       await _tts.setPitch(1.0);
       await _tts.setVolume(1.0);
-      await _tts.setSpeechRate(0.5);
+      // Android speech rate: 0.0 = slowest, 1.0 = normal, 2.0 = fastest.
+      // Default to 1.0 (normal speed). The old 0.5 was too slow.
+      await _tts.setSpeechRate(1.0);
       await _tts.awaitSpeakCompletion(true);
 
       _tts.setCompletionHandler(() async {

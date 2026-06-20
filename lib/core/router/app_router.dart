@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,10 +13,12 @@ import '../../features/home/home_screen.dart';
 import '../../features/notifications/notifications_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/reader/chapter_reader_screen.dart';
+import '../../features/reader/views/chat_chapter_view.dart';
 import '../../features/search/search_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/story/story_detail_screen.dart';
 import '../../core/database/app_database.dart';
+import '../../core/markdown/markdown.dart';
 import '../../models/chapter_content.dart';
 import '../shell/main_shell.dart';
 
@@ -184,27 +187,47 @@ class _OfflineContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final readerTheme = ReaderTheme.defaults(isDark ? Brightness.dark : Brightness.light);
     return switch (chapter) {
       TextChapterContent(:final contentMarkdown) => SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: SelectableText(
-            contentMarkdown,
-            style: const TextStyle(fontSize: 18, height: 1.6),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: MarkdownRenderer(
+            blocks: MarkdownParser().parse(contentMarkdown),
+            theme: readerTheme,
           ),
         ),
       MangaChapterContent(:final images) => ListView.builder(
           itemCount: images.length,
-          itemBuilder: (_, i) => Image.network(images[i].url, fit: BoxFit.fitWidth),
-        ),
-      ChatChapterContent(:final messages) => ListView.builder(
-          itemCount: messages.length,
-          itemBuilder: (_, i) => ListTile(
-            title: Text(messages[i].content),
-            subtitle: Text(messages[i].messageType),
+          itemBuilder: (_, i) => CachedNetworkImage(
+            imageUrl: images[i].url,
+            fit: BoxFit.fitWidth,
+            errorWidget: (_, _, _) => const SizedBox(
+              height: 200,
+              child: Center(child: Icon(Icons.broken_image, size: 36)),
+            ),
           ),
         ),
+      ChatChapterContent(:final participants, :final messages) =>
+          ChatChapterView(
+            participants: participants,
+            messages: messages,
+          ),
       VideoChapterContent(:final video) => Center(
-          child: Text('Video: ${video.videoId} (cần mạng để xem)'),
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.videocam, size: 48, color: Colors.grey),
+                const SizedBox(height: 12),
+                Text('Video: ${video.videoId}'),
+                const SizedBox(height: 8),
+                const Text('Cần kết nối mạng để xem video.',
+                    style: TextStyle(fontSize: 13, color: Colors.grey)),
+              ],
+            ),
+          ),
         ),
     };
   }

@@ -64,30 +64,10 @@ class ReaderBar extends StatelessWidget {
         ],
       ),
       body: child,
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onPrev,
-                  icon: const Icon(Icons.chevron_left),
-                  label: const Text('Trước'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: onNext,
-                  icon: const Icon(Icons.chevron_right),
-                  label: const Text('Sau'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      // Bottom nav bar removed — chapter navigation is via swipe
+      // gestures (left = next, right = prev) in both vertical and
+      // horizontal scroll modes. This is cleaner UX: no always-visible
+      // buttons that take up screen space.
     );
   }
 }
