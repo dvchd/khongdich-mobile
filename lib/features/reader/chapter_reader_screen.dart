@@ -583,7 +583,7 @@ class _ChapterListSheet extends ConsumerWidget {
 /// trigger chapter navigation. Normal page-turn swipes are handled by
 /// the PageView inside.
 ///
-/// Implementation: we use NotificationListener<ScrollNotification> to
+/// Implementation: we use `NotificationListener<ScrollNotification>` to
 /// detect when the PageView reaches its boundary AND the user keeps
 /// swiping. The OverscrollNotification fires at that point.
 class _PageModeWrapper extends StatefulWidget {
