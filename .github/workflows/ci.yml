@@ -150,16 +150,30 @@ jobs:
         with:
           files: |
             artifacts/*.apk
-          name: Dev build ${{ github.sha }} (${{ matrix.flavor.name }})
+          name: Bản dev ${{ github.sha }} (${{ matrix.flavor.name }})
           tag_name: dev-${{ matrix.flavor.name }}-${{ github.sha }}
           prerelease: true
           generate_release_notes: true
           body: |
-            Automated dev build from `${{ github.sha }}` — **${{ matrix.flavor.name }}** flavor.
+            ## Bản dev tự động — ${{ matrix.flavor.name }}
 
-            - Backend: ${{ matrix.flavor.app_env == 'demo' && 'https://demo.khongdich.com (test nội bộ)' || 'https://khongdich.com (chính thức)' }}
-            - Commit: ${{ github.event.head_commit.message }}
-            - Branch: main
+            **Commit:** ${{ github.sha }}
+            **Flavor:** ${{ matrix.flavor.name }}
+            **Backend:** ${{ matrix.flavor.app_env == 'demo' && 'https://demo.khongdich.com (test nội bộ)' || 'https://khongdich.com (chính thức)' }}
 
-            Cài đặt: tải file `.apk` về, mở trên Android (cho phép "Install unknown apps").
-            Demo + Prod có thể cài song song vì khác `applicationIdSuffix`.
+            ### Hướng dẫn cài đặt
+
+            1. Tải file `.apk` về máy
+            2. Mở file trên Android (cho phép "Cài đặt từ nguồn không xác định")
+            3. Demo + Prod có thể cài song song (khác `applicationIdSuffix`)
+
+            ### Tính năng chính
+
+            - 📖 Đọc truyện online (text, manga, chat, video)
+            - 📚 Tải offline + đọc offline
+            - 🎧 TTS on-device (chọn giọng đọc, tốc độ 0.5x–2.5x)
+            - 🔖 Bookmark (local + server sync)
+            - 🎨 Theme (sáng/tối/sepia) + font (Noto Serif/Sans/Mono)
+            - 📖 Chế độ đọc: cuộn dọc / lật trang
+            - 🔔 Thông báo (FCM khi có server config)
+            - 🏷️ Đa môi trường (demo/prod) — đổi trong Settings
