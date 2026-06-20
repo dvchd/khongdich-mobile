@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
+import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
 
 /// Story detail screen. Plan §5.3.
@@ -172,10 +173,61 @@ class _StoryDetailBody extends ConsumerWidget {
                           ? Icons.bookmark_border
                           : Icons.bookmark),
                       onPressed: () async {
-                        await ref
+                        final added = await ref
                             .read(bookshelfProvider.notifier)
-                            .toggle(story.id);
+                            .toggle(
+                              story.id,
+                              title: story.title,
+                              slug: story.slug,
+                              coverUrl: story.coverUrl,
+                              author: story.author,
+                              contentType: story.contentTypes.isNotEmpty
+                                  ? story.contentTypes.first
+                                  : 'text',
+                            );
                         ref.invalidate(_storyDetailProvider(story.slug));
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(added
+                                  ? 'Đã thêm vào tủ truyện'
+                                  : 'Đã xoá khỏi tủ truyện'),
+                              duration: const Duration(seconds: 1),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                    IconButton.outlined(
+                      icon: const Icon(Icons.download_outlined),
+                      onPressed: () async {
+                        // Fetch chapter list and enqueue all for download.
+                        final repo = ref.read(storyRepositoryProvider);
+                        final page = await repo.fetchChapterList(story.id, perPage: 200);
+                        if (page.chapters.isEmpty) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Chưa có chương để tải.')),
+                            );
+                          }
+                          return;
+                        }
+                        await ref.read(downloadManagerProvider).enqueueAllChapters(
+                          storyId: story.id,
+                          storySlug: story.slug,
+                          chapters: page.chapters,
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Đang tải ${page.chapters.length} chương...'),
+                              action: SnackBarAction(
+                                label: 'Xem',
+                                onPressed: () => context.push('/downloads'),
+                              ),
+                            ),
+                          );
+                        }
                       },
                     ),
                   ],

@@ -1,11 +1,14 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/markdown/markdown.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/chapter_content.dart';
 import '../../repositories/story_repository.dart';
+import '../tts/tts_audio_handler.dart';
 import '../tts/tts_mini_player.dart';
 import 'chapter_provider.dart';
 import 'reader_settings_provider.dart';
@@ -79,6 +82,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
                   '/chapter/${widget.storyId}:${c.nextChapter}'),
           onOpenSettings: () => _openSettings(context),
           onOpenChapterList: () => _openChapterList(context, c),
+          onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
         ),
       ),
     );
@@ -102,6 +106,33 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       ),
     );
   }
+
+  void _toggleTts(TextChapterContent chapter) async {
+    try {
+      final handler = await ref.read(ttsHandlerProvider.future);
+      // Check if currently playing this chapter → pause; else → load + play.
+      final state = handler.playbackState.value;
+      if (state.playing && state.processingState == AudioProcessingState.ready) {
+        await handler.pause();
+      } else {
+        await handler.loadChapter(
+          chapterId: chapter.id,
+          storyId: chapter.storyId,
+          storyTitle: chapter.storyTitle,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          contentMarkdown: chapter.contentMarkdown,
+        );
+        await handler.play();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('TTS lỗi: $e')),
+        );
+      }
+    }
+  }
 }
 
 class _ReaderBody extends ConsumerStatefulWidget {
@@ -113,6 +144,7 @@ class _ReaderBody extends ConsumerStatefulWidget {
     this.onNext,
     this.onOpenSettings,
     this.onOpenChapterList,
+    this.onToggleTts,
   });
 
   final ChapterContent chapter;
@@ -122,6 +154,7 @@ class _ReaderBody extends ConsumerStatefulWidget {
   final VoidCallback? onNext;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenChapterList;
+  final VoidCallback? onToggleTts;
 
   @override
   ConsumerState<_ReaderBody> createState() => _ReaderBodyState();
@@ -161,7 +194,15 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
 
   @override
   Widget build(BuildContext context) {
-    final readerTheme = _resolveReaderTheme(widget.settings, Brightness.dark);
+    // Resolve brightness from ReaderThemeMode so light/dark/sepia
+    // actually change the background color, not just the text color.
+    final brightness = switch (widget.settings.theme) {
+      ReaderThemeMode.light => Brightness.light,
+      ReaderThemeMode.sepia => Brightness.light, // sepia uses light bg + brown text
+      ReaderThemeMode.dark => Brightness.dark,
+      ReaderThemeMode.system => MediaQuery.of(context).platformBrightness,
+    };
+    final readerTheme = _resolveReaderTheme(widget.settings, brightness);
     final content = _scrollWrapper(
       switch (widget.chapter) {
         TextChapterContent(:final contentMarkdown) => TextChapterView(
@@ -205,6 +246,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       onNext: widget.onNext,
       onOpenSettings: widget.onOpenSettings,
       onOpenChapterList: widget.onOpenChapterList,
+      onToggleTts: widget.onToggleTts,
       child: Stack(
         children: [
           body,
@@ -231,33 +273,55 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
   }
 
   ReaderTheme _resolveReaderTheme(ReaderSettings s, Brightness brightness) {
-    final base = ReaderTheme.defaults(brightness);
+    final isSepia = s.theme == ReaderThemeMode.sepia;
+    final isLight = brightness == Brightness.light && !isSepia;
+
+    // Resolve base colors from the theme mode.
+    final textColor = isSepia
+        ? const Color(0xFF3A2E1F)
+        : (isLight ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9));
+    final blockBg = isSepia
+        ? const Color(0xFFEDE0C8)
+        : (isLight ? const Color(0xFFF1F5F9) : const Color(0xFF1E293B));
+
+    // Resolve font: use GoogleFonts for actual font loading.
+    final baseFont = switch (s.fontFamily) {
+      'NotoSans' => GoogleFonts.notoSans(),
+      'monospace' => GoogleFonts.robotoMono(),
+      _ => GoogleFonts.notoSerif(),
+    };
+
     return ReaderTheme(
-      bodyStyle: base.bodyStyle.copyWith(
+      bodyStyle: baseFont.copyWith(
         fontSize: s.fontSize,
         height: s.lineHeight,
-        fontFamily: s.fontFamily,
-        color: s.theme == ReaderThemeMode.sepia
-            ? const Color(0xFF3A2E1F)
-            : base.bodyStyle.color,
+        color: textColor,
       ),
       headingStyles: {
-        for (final entry in base.headingStyles.entries)
-          entry.key: entry.value.copyWith(
-            fontFamily: s.fontFamily,
-            fontSize: (entry.value.fontSize ?? 18) * (s.fontSize / 18),
-            color: s.theme == ReaderThemeMode.sepia
-                ? const Color(0xFF3A2E1F)
-                : entry.value.color,
+        for (final entry in [1, 2, 3, 4, 5, 6])
+          entry: GoogleFonts.notoSans(
+            fontWeight: FontWeight.w700,
+            fontSize: switch (entry) {
+              1 => 28.0,
+              2 => 24.0,
+              3 => 20.0,
+              4 => 18.0,
+              5 => 16.0,
+              _ => 14.0,
+            } * (s.fontSize / 18),
+            height: 1.3,
+            color: textColor,
           ),
       },
-      accentColor: base.accentColor,
-      paragraphSpacing: base.paragraphSpacing,
-      codeStyle: base.codeStyle.copyWith(fontFamily: s.fontFamily),
-      quoteColor: base.quoteColor,
-      blockBackground: s.theme == ReaderThemeMode.sepia
-          ? const Color(0xFFF1E6CE)
-          : base.blockBackground,
+      accentColor: const Color(0xFF3B82F6),
+      paragraphSpacing: 12,
+      codeStyle: GoogleFonts.robotoMono(
+        fontSize: 15,
+        color: textColor,
+        backgroundColor: blockBg,
+      ),
+      quoteColor: const Color(0xFFE11D48),
+      blockBackground: blockBg,
     );
   }
 }

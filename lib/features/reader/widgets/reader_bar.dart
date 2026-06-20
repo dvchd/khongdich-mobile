@@ -15,6 +15,7 @@ class ReaderBar extends StatelessWidget {
     this.onNext,
     this.onOpenSettings,
     this.onOpenChapterList,
+    this.onToggleTts,
   });
 
   final ChapterContent chapter;
@@ -23,6 +24,7 @@ class ReaderBar extends StatelessWidget {
   final VoidCallback? onNext;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenChapterList;
+  final VoidCallback? onToggleTts;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +42,12 @@ class ReaderBar extends StatelessWidget {
         ),
         title: Text(chapter.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          if (chapter is TextChapterContent && onToggleTts != null)
+            IconButton(
+              icon: const Icon(Icons.headphones),
+              tooltip: 'Nghe audio',
+              onPressed: onToggleTts,
+            ),
           IconButton(
             icon: const Icon(Icons.list),
             tooltip: 'Danh sách chương',

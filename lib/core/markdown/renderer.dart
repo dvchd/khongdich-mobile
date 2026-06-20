@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'ast.dart';
 
@@ -30,14 +31,15 @@ class ReaderTheme {
     final onSurface =
         isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
     final bodyColor = onSurface;
-    final body = TextStyle(
-      fontFamily: 'NotoSerif',
+    // Use GoogleFonts to ensure the font is actually loaded — using
+    // fontFamily: 'NotoSerif' as a plain string doesn't work because
+    // GoogleFonts registers fonts under hashed names.
+    final body = GoogleFonts.notoSerif(
       fontSize: 18,
       height: 1.6,
       color: bodyColor,
     );
-    final headingBase = TextStyle(
-      fontFamily: 'NotoSans',
+    final headingBase = GoogleFonts.notoSans(
       fontWeight: FontWeight.w700,
       color: onSurface,
     );

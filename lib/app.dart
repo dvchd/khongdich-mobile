@@ -57,12 +57,40 @@ class KhongdichApp extends ConsumerWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset(
-                    'assets/icons/ic_launcher_splash.png',
-                    width: 96,
-                    height: 96,
-                    errorBuilder: (_, _, _) =>
-                        const Icon(Icons.menu_book, color: Colors.white, size: 72),
+                  // Use the mipmap launcher icon as the splash logo.
+                  // On Android, mipmap assets are accessible via
+                  // drawable references, but in Flutter we use
+                  // Image.asset from the Flutter assets bundle.
+                  // The icon was generated from the backend's OG image.
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Image.asset(
+                      'assets/icons/ic_launcher.png',
+                      width: 96,
+                      height: 96,
+                      errorBuilder: (_, _, _) => Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: const Icon(
+                          Icons.menu_book,
+                          color: AppTheme.primary,
+                          size: 48,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Không Dịch',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   const CircularProgressIndicator(color: Colors.white),

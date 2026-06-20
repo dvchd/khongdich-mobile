@@ -66,10 +66,17 @@ class ReadingProgressTable extends Table {
 }
 
 /// `local_bookmarks` — Plan §8.2. Cache of server-side bookmarks for
-/// offline browsing.
+/// offline browsing. Stores enough story metadata (title, slug, cover,
+/// author, content_type) so the bookshelf can render cards without
+/// fetching each story's detail from the server.
 class LocalBookmarks extends Table {
   TextColumn get storyId => text()();
   TextColumn get listType => text()(); // reading|completed|plan_to_read|favorite
+  TextColumn get storyTitle => text().withDefault(const Constant(''))();
+  TextColumn get storySlug => text().withDefault(const Constant(''))();
+  TextColumn get coverUrl => text().nullable()();
+  TextColumn get author => text().withDefault(const Constant(''))();
+  TextColumn get contentType => text().withDefault(const Constant('text'))();
   TextColumn get updatedAt => text()();
   IntColumn get synced => integer().withDefault(const Constant(1))();
 
@@ -129,13 +136,21 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_open());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) => m.createAll(),
         onUpgrade: (m, from, to) async {
-          // Future migrations go here.
+          if (from < 2) {
+            // v2: added storyTitle, storySlug, coverUrl, author,
+            // contentType columns to local_bookmarks.
+            await m.addColumn(localBookmarks, localBookmarks.storyTitle);
+            await m.addColumn(localBookmarks, localBookmarks.storySlug);
+            await m.addColumn(localBookmarks, localBookmarks.coverUrl);
+            await m.addColumn(localBookmarks, localBookmarks.author);
+            await m.addColumn(localBookmarks, localBookmarks.contentType);
+          }
         },
       );
 
