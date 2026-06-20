@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
@@ -29,16 +30,51 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final state = ref.watch(downloadQueueProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Tải xuống')),
-      body: state.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Lỗi: $e')),
-        data: (rows) => rows.isEmpty
-            ? const _EmptyState()
-            : ListView.separated(
-                itemCount: rows.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (_, i) => _DownloadRow(row: rows[i]),
+      body: Column(
+        children: [
+          // Quick link to offline library
+          Material(
+            color: Theme.of(context).colorScheme.primaryContainer,
+            child: InkWell(
+              onTap: () => context.push('/offline-library'),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                child: const Row(
+                  children: [
+                    Icon(Icons.library_books, size: 28),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Đọc truyện đã tải',
+                              style: TextStyle(fontWeight: FontWeight.w600)),
+                          Text('Mở thư viện offline',
+                              style: TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right),
+                  ],
+                ),
               ),
+            ),
+          ),
+          Expanded(
+            child: state.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(child: Text('Lỗi: $e')),
+              data: (rows) => rows.isEmpty
+                  ? const _EmptyState()
+                  : ListView.separated(
+                      itemCount: rows.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (_, i) => _DownloadRow(row: rows[i]),
+                    ),
+            ),
+          ),
+        ],
       ),
     );
   }

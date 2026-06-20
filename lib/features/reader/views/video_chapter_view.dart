@@ -4,13 +4,16 @@ import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import '../../../core/markdown/markdown.dart';
 
-/// Video chapter view: YouTube player + optional markdown caption.
+/// Video chapter view: YouTube player with default controls + optional
+/// markdown caption.
 ///
-/// Uses `youtube_player_flutter` v10 which renders its own custom
-/// controls overlay (not YouTube's native iframe controls). We use
-/// the `builder` parameter to provide a minimal overlay — just a
-/// center play/pause button — instead of the default full controls
-/// bar which caused the "duplicate controls" issue.
+/// Uses `youtube_player_flutter` v10 with `showControls: true` so
+/// YouTube's native iframe controls are visible. The v10 widget also
+/// renders its own custom overlay — we disable that overlay by using
+/// the `builder` to return only the raw player surface (no custom
+/// controls). This gives the user a single, familiar YouTube control
+/// bar (play/pause/seek/fullscreen/volume) — the same UX as watching
+/// on youtube.com.
 class VideoChapterView extends StatefulWidget {
   const VideoChapterView({
     super.key,
@@ -31,7 +34,6 @@ class VideoChapterView extends StatefulWidget {
 
 class _VideoChapterViewState extends State<VideoChapterView> {
   YoutubePlayerController? _controller;
-  PlayerState _playerState = PlayerState.unknown;
 
   @override
   void initState() {
@@ -40,19 +42,12 @@ class _VideoChapterViewState extends State<VideoChapterView> {
       _controller = YoutubePlayerController.fromVideoId(
         videoId: widget.videoId,
         params: const YoutubePlayerParams(
-          showControls: false,
-          showFullscreenButton: false,
+          showControls: true,       // YouTube native controls ON
+          showFullscreenButton: true,
           mute: false,
           enableCaption: true,
         ),
       );
-      _controller!.listen((value) {
-        if (mounted) {
-          setState(() {
-            _playerState = value.playerState;
-          });
-        }
-      });
     }
   }
 
@@ -61,22 +56,6 @@ class _VideoChapterViewState extends State<VideoChapterView> {
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _controller?.close();
     super.dispose();
-  }
-
-  void _togglePlay() {
-    if (_controller == null) return;
-    if (_playerState == PlayerState.playing) {
-      _controller!.pauseVideo();
-    } else {
-      _controller!.playVideo();
-    }
-  }
-
-  void _enterFullscreen() {
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
   }
 
   @override
@@ -88,56 +67,14 @@ class _VideoChapterViewState extends State<VideoChapterView> {
         if (_controller != null) ...[
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: AspectRatio(
+            child: YoutubePlayer(
+              controller: _controller!,
               aspectRatio: 16 / 9,
-              child: YoutubePlayer(
-                controller: _controller!,
-                aspectRatio: 16 / 9,
-                // Use builder to provide a MINIMAL overlay: just a
-                // center play/pause button + a fullscreen button in
-                // the corner. No duplicate progress bar, no duplicate
-                // controls row.
-                builder: (context, player, controller) {
-                  return Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      player,
-                      // Center play/pause button — only show when not
-                      // playing (auto-hides during playback).
-                      if (_playerState != PlayerState.playing &&
-                          _playerState != PlayerState.buffering)
-                        GestureDetector(
-                          onTap: _togglePlay,
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.5),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.play_arrow,
-                              color: Colors.white,
-                              size: 32,
-                            ),
-                          ),
-                        ),
-                      // Buffering indicator
-                      if (_playerState == PlayerState.buffering)
-                        const CircularProgressIndicator(color: Colors.white),
-                      // Fullscreen button (top-right)
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: IconButton(
-                          icon: const Icon(Icons.fullscreen,
-                              color: Colors.white, size: 20),
-                          onPressed: _enterFullscreen,
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+              // No builder = no custom overlay. The widget renders
+              // only the YouTube iframe with its native controls.
+              // This is the simplest + most reliable approach.
+              autoFullScreen: true,
+              enableFullScreenOnVerticalDrag: true,
             ),
           ),
           const SizedBox(height: 16),

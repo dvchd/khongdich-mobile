@@ -35,6 +35,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: const Text('Không Dịch'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.library_books_outlined),
+            tooltip: 'Truyện đã tải',
+            onPressed: () => context.push('/offline-library'),
+          ),
+          IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () => context.push('/notifications'),
           ),
@@ -44,9 +49,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onRefresh: () => ref.read(homeProvider.notifier).refresh(),
         child: state.when(
           loading: () => const _LoadingList(),
-          error: (e, _) => _ErrorState(
+          error: (e, _) => _OfflineOrErrorState(
             message: '$e',
             onRetry: () => ref.read(homeProvider.notifier).refresh(),
+            onGoOffline: () => context.push('/offline-library'),
           ),
           data: (home) => _HomeContent(home: home),
         ),
@@ -246,29 +252,47 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, required this.onRetry});
+/// Error state that also offers a "read offline" button when the
+/// network is down. This is the key UX fix: instead of just showing
+/// "Không tải được dữ liệu", we redirect the user to their offline
+/// library so they can keep reading downloaded chapters.
+class _OfflineOrErrorState extends StatelessWidget {
+  const _OfflineOrErrorState({
+    required this.message,
+    required this.onRetry,
+    required this.onGoOffline,
+  });
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback onGoOffline;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        const SizedBox(height: 120),
-        const Icon(Icons.cloud_off, size: 64),
+        const SizedBox(height: 100),
+        Icon(Icons.wifi_off, size: 64,
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
         const SizedBox(height: 12),
-        const Center(child: Text('Không tải được dữ liệu')),
+        const Center(child: Text('Không có kết nối mạng')),
         const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Text(
-            message,
+            'Bạn có thể đọc truyện đã tải offline.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
+        Center(
+          child: FilledButton.icon(
+            onPressed: onGoOffline,
+            icon: const Icon(Icons.library_books),
+            label: const Text('Đọc truyện đã tải'),
+          ),
+        ),
+        const SizedBox(height: 8),
         Center(
           child: OutlinedButton(onPressed: onRetry, child: const Text('Thử lại')),
         ),

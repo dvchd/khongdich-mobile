@@ -40,7 +40,11 @@ class ReaderBar extends StatelessWidget {
             }
           },
         ),
-        title: Text(chapter.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(
+          'Ch.${chapter.chapterNumber}${chapter.title.isNotEmpty ? ': ${chapter.title}' : ''}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           if (chapter is TextChapterContent && onToggleTts != null)
             IconButton(

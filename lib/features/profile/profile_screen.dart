@@ -106,6 +106,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             onTap: () => context.push('/downloads'),
           ),
           ListTile(
+            leading: const Icon(Icons.library_books_outlined),
+            title: const Text('Truyện đã tải (offline)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/offline-library'),
+          ),
+          ListTile(
             leading: const Icon(Icons.notifications_outlined),
             title: const Text('Thông báo'),
             trailing: const Icon(Icons.chevron_right),

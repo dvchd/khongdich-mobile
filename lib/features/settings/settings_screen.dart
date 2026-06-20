@@ -38,9 +38,10 @@ class SettingsScreen extends ConsumerWidget {
                     label: Text(mode.$2),
                     selected: appThemeMode.name == mode.$1,
                     onSelected: (_) {
-                      ref.read(themeModeProvider.notifier).state =
-                          ThemeMode.values.firstWhere(
-                              (m) => m.name == mode.$1);
+                      ref.read(themeModeProvider.notifier).set(
+                            ThemeMode.values
+                                .firstWhere((m) => m.name == mode.$1),
+                          );
                     },
                   ),
               ],

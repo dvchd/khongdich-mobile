@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Material 3 theme tokens for Không Dịch mobile app.
 ///
@@ -166,4 +167,32 @@ class AppTheme {
   }
 }
 
-final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
+/// App-wide theme mode. Persists to SharedPreferences so the choice
+/// survives across app launches.
+final themeModeProvider =
+    StateNotifierProvider<ThemeModeNotifier, ThemeMode>(
+  (ref) => ThemeModeNotifier(),
+);
+
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.system) {
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString('appThemeMode');
+    if (name != null) {
+      state = ThemeMode.values.firstWhere(
+        (m) => m.name == name,
+        orElse: () => ThemeMode.system,
+      );
+    }
+  }
+
+  Future<void> set(ThemeMode mode) async {
+    state = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('appThemeMode', mode.name);
+  }
+}

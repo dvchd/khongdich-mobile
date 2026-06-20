@@ -195,14 +195,21 @@ final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
   final db = ref.watch(appDatabaseProvider);
   final progress = ref.watch(readingProgressServiceProvider);
   final handler = TtsAudioHandler(db, progress);
-  await AudioService.init(
-    builder: () => handler,
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'com.khongdich.app.tts',
-      androidNotificationChannelName: 'Không Dịch — Đọc truyện',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-    ),
-  );
+  try {
+    await AudioService.init(
+      builder: () => handler,
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'com.khongdich.app.tts',
+        androidNotificationChannelName: 'Không Dịch — Đọc truyện',
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: true,
+      ),
+    );
+    // Pre-initialise the TTS engine so the first play() call is fast.
+    await handler._init();
+  } catch (e, s) {
+    AppLogger.warning('ttsHandlerProvider: AudioService.init failed', e, s);
+    // Return the handler anyway — play() will try _init() again.
+  }
   return handler;
 });

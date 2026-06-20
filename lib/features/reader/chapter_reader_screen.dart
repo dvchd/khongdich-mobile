@@ -219,6 +219,8 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
             participants: participants,
             messages: messages,
             scrollController: _scrollController,
+            onNext: widget.onNext,
+            onPrev: widget.onPrev,
           ),
         VideoChapterContent(:final video, :final captionMarkdown) =>
           VideoChapterView(
