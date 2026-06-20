@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/chapter_content.dart';
 import '../../repositories/story_repository.dart';
 import '../tts/tts_audio_handler.dart';
+import '../tts/tts_control_panel.dart';
 import '../tts/tts_mini_player.dart';
 import 'chapter_provider.dart';
 import 'reader_settings_provider.dart';
@@ -110,11 +111,10 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   void _toggleTts(TextChapterContent chapter) async {
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      // Check if currently playing this chapter → pause; else → load + play.
+      // If currently playing this chapter → open control panel.
+      // Otherwise → load + play + open panel.
       final state = handler.playbackState.value;
-      if (state.playing && state.processingState == AudioProcessingState.ready) {
-        await handler.pause();
-      } else {
+      if (!state.playing || state.processingState == AudioProcessingState.idle) {
         await handler.loadChapter(
           chapterId: chapter.id,
           storyId: chapter.storyId,
@@ -124,6 +124,14 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           contentMarkdown: chapter.contentMarkdown,
         );
         await handler.play();
+      }
+      // Open the full TTS control panel as a bottom sheet.
+      if (mounted) {
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) => const TtsControlPanel(),
+        );
       }
     } catch (e) {
       if (mounted) {

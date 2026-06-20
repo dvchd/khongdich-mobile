@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/markdown/markdown.dart';
@@ -10,12 +13,9 @@ import '../reader/services/reading_progress_service.dart';
 
 /// Foreground-service-backed TTS player for Không Dịch.
 ///
-/// Plan §9 — 100% on-device, no server round-trips. Wraps `flutter_tts`
-/// inside `audio_service` so playback survives screen lock + background
-/// and exposes a [MediaItem] to the Android notification shade.
-///
-/// Only `content_type=text` chapters are TTS-eligible; manga/chat/video
-/// are skipped (plan §9.1).
+/// Plan §9 — 100% on-device. Wraps `flutter_tts` inside `audio_service`.
+/// Supports voice selection, speed control (0.5x–2.5x), and per-chunk
+/// progress reporting for text highlighting.
 class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   TtsAudioHandler(this._db, this._progressService);
 
@@ -30,13 +30,34 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   int? _currentChapterNumber;
   bool _initialised = false;
 
+  // User settings (persisted)
+  double _speed = 1.0; // 0.5 to 2.5
+  String? _selectedVoiceName;
+
+  // Available voices
+  List<Map<String, String>> _availableVoices = [];
+
+  /// Stream of the current chunk index for text highlighting.
+  /// Emits (chapterId, chunkIndex, totalChunks) whenever the TTS
+  /// advances to a new chunk.
+  final _chunkProgressController =
+      StreamController<TtsChunkProgress>.broadcast();
+  Stream<TtsChunkProgress> get chunkProgress => _chunkProgressController.stream;
+
+  double get speed => _speed;
+  List<Map<String, String>> get availableVoices => _availableVoices;
+  String? get selectedVoiceName => _selectedVoiceName;
+
   Future<void> _init() async {
     if (_initialised) return;
     _initialised = true;
     try {
-      // Check if vi-VN is available. On Android, the Google TTS engine
-      // may not have Vietnamese installed — log a warning but don't
-      // crash. The user will hear silence if no vi-VN voice exists.
+      // Load persisted settings
+      final prefs = await SharedPreferences.getInstance();
+      _speed = prefs.getDouble('tts.speed') ?? 1.0;
+      _selectedVoiceName = prefs.getString('tts.voice');
+
+      // Check vi-VN availability
       final languages = await _tts.getLanguages;
       if (languages != null) {
         final hasVi = languages.any((l) =>
@@ -44,19 +65,47 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         if (!hasVi) {
           AppLogger.warning(
               'TTS: Vietnamese voice not found. Available: $languages');
-          // Try to set it anyway — some engines accept it and fall back.
         }
       }
       await _tts.setLanguage('vi-VN');
       await _tts.setPitch(1.0);
       await _tts.setVolume(1.0);
-      // Android speech rate: 0.0 = slowest, 1.0 = normal, 2.0 = fastest.
-      // Default to 1.0 (normal speed). The old 0.5 was too slow.
-      await _tts.setSpeechRate(1.0);
+      await _applySpeed();
       await _tts.awaitSpeakCompletion(true);
+
+      // Load available voices
+      try {
+        final voices = await _tts.getVoices;
+        if (voices != null) {
+          _availableVoices = (voices as List)
+              .map((v) => Map<String, String>.from(v as Map))
+              .where((v) =>
+                  (v['locale'] ?? v['language'] ?? '')
+                      .toLowerCase()
+                      .startsWith('vi'))
+              .toList();
+          // Apply persisted voice
+          if (_selectedVoiceName != null) {
+            final voice = _availableVoices
+                .where((v) => v['name'] == _selectedVoiceName)
+                .firstOrNull;
+            if (voice != null) {
+              await _tts.setVoice(voice);
+            }
+          }
+          AppLogger.info('TTS: ${_availableVoices.length} Vietnamese voices available');
+        }
+      } catch (e) {
+        AppLogger.warning('TTS: getVoices failed', e);
+      }
 
       _tts.setCompletionHandler(() async {
         _currentChunk++;
+        _chunkProgressController.add(TtsChunkProgress(
+          chapterId: _currentChapterId ?? '',
+          chunkIndex: _currentChunk,
+          totalChunks: _chunks.length,
+        ));
         if (_currentChunk < _chunks.length) {
           await _speakCurrentChunk();
         } else {
@@ -83,8 +132,41 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
   }
 
-  /// Load a text-content chapter into the TTS queue. Idempotent — calling
-  /// twice with the same chapter just resets the chunk pointer.
+  Future<void> _applySpeed() async {
+    // flutter_tts Android: 0.0 = slowest, 1.0 = normal.
+    // Map user-facing 0.5–2.5 → 0.0–1.0.
+    final rate = ((_speed - 0.5) / 2.0).clamp(0.0, 1.0);
+    await _tts.setSpeechRate(rate);
+  }
+
+  /// Set playback speed (0.5–2.5x). Persists to SharedPreferences.
+  @override
+  Future<void> setSpeed(double userSpeed) async {
+    _speed = userSpeed.clamp(0.5, 2.5);
+    await _applySpeed();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('tts.speed', _speed);
+  }
+
+  /// Set the voice by name. Persists to SharedPreferences.
+  Future<void> setVoice(String? voiceName) async {
+    _selectedVoiceName = voiceName;
+    if (voiceName != null) {
+      final voice = _availableVoices
+          .where((v) => v['name'] == voiceName)
+          .firstOrNull;
+      if (voice != null) {
+        await _tts.setVoice(voice);
+      }
+    }
+    final prefs = await SharedPreferences.getInstance();
+    if (voiceName != null) {
+      await prefs.setString('tts.voice', voiceName);
+    } else {
+      await prefs.remove('tts.voice');
+    }
+  }
+
   Future<void> loadChapter({
     required String chapterId,
     required String storyId,
@@ -99,7 +181,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _currentStoryId = storyId;
     _currentChapterNumber = chapterNumber;
 
-    // Restore position if we have a saved chunk index.
     final state = await _db.getTtsState(chapterId);
     _currentChunk = state?.chunkIndex ?? 0;
     if (_currentChunk >= _chunks.length) _currentChunk = 0;
@@ -118,13 +199,15 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     if (_currentChapterId == null || _chunks.isEmpty) return;
     await _init();
     playbackState.add(playbackState.value.copyWith(
-      controls: [
-        MediaControl.pause,
-        MediaControl.skipToNext,
-        MediaControl.stop,
-      ],
+      controls: [MediaControl.pause, MediaControl.skipToNext, MediaControl.stop],
       playing: true,
       processingState: AudioProcessingState.ready,
+    ));
+    // Emit initial progress
+    _chunkProgressController.add(TtsChunkProgress(
+      chapterId: _currentChapterId!,
+      chunkIndex: _currentChunk,
+      totalChunks: _chunks.length,
     ));
     await _speakCurrentChunk();
   }
@@ -133,11 +216,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   Future<void> pause() async {
     await _tts.stop();
     playbackState.add(playbackState.value.copyWith(
-      controls: [
-        MediaControl.play,
-        MediaControl.skipToNext,
-        MediaControl.stop,
-      ],
+      controls: [MediaControl.play, MediaControl.skipToNext, MediaControl.stop],
       playing: false,
     ));
     await _savePlaybackState(isPlaying: false);
@@ -158,15 +237,14 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   @override
   Future<void> skipToNext() => _onChapterComplete();
 
-  /// Set TTS playback speed. Renames `speed` to match the parent class.
-  @override
-  Future<void> setSpeed(double speed) async {
-    await _tts.setSpeechRate(_mapSpeedToRate(speed));
-  }
-
   Future<void> _speakCurrentChunk() async {
     if (_currentChunk >= _chunks.length) return;
     await _savePlaybackState(isPlaying: true);
+    _chunkProgressController.add(TtsChunkProgress(
+      chapterId: _currentChapterId!,
+      chunkIndex: _currentChunk,
+      totalChunks: _chunks.length,
+    ));
     await _tts.speak(_chunks[_currentChunk]);
   }
 
@@ -195,17 +273,20 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       AppLogger.warning('TtsAudioHandler._savePlaybackState', e, s);
     }
   }
-
-  /// Map 0.5×–2.0× user speed → flutter_tts speech rate (0.0–1.0).
-  /// Android and iOS use different scales; we normalise to Android.
-  double _mapSpeedToRate(double userSpeed) {
-    return ((userSpeed - 0.5) / 1.5).clamp(0.0, 1.0);
-  }
 }
 
-/// Singleton [TtsAudioHandler]. The handler is initialised lazily on the
-/// first call to [TtsController.play]; until then it's just a thin
-/// holder so the UI can read [playbackState].
+/// Emitted on every chunk boundary for text highlighting.
+class TtsChunkProgress {
+  const TtsChunkProgress({
+    required this.chapterId,
+    required this.chunkIndex,
+    required this.totalChunks,
+  });
+  final String chapterId;
+  final int chunkIndex;
+  final int totalChunks;
+}
+
 final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
   final db = ref.watch(appDatabaseProvider);
   final progress = ref.watch(readingProgressServiceProvider);
@@ -220,11 +301,9 @@ final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
         androidStopForegroundOnPause: true,
       ),
     );
-    // Pre-initialise the TTS engine so the first play() call is fast.
     await handler._init();
   } catch (e, s) {
     AppLogger.warning('ttsHandlerProvider: AudioService.init failed', e, s);
-    // Return the handler anyway — play() will try _init() again.
   }
   return handler;
 });
