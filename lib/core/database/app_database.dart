@@ -37,6 +37,9 @@ class DownloadedChapters extends Table {
   TextColumn get downloadedAt => text()();
   TextColumn get lastReadAt => text().nullable()();
   IntColumn get isRead => integer().withDefault(const Constant(0))();
+  TextColumn get coverUrl => text().nullable()();
+  TextColumn get storyAuthor => text().nullable()();
+  TextColumn get storySynopsis => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {chapterId};
@@ -111,6 +114,9 @@ class DownloadQueue extends Table {
   TextColumn get queuedAt => text()();
   TextColumn get startedAt => text().nullable()();
   TextColumn get completedAt => text().nullable()();
+  TextColumn get coverUrl => text().nullable()();
+  TextColumn get storyAuthor => text().nullable()();
+  TextColumn get storySynopsis => text().nullable()();
 }
 
 /// `app_settings` — Plan §8.2. Key/value store for reader prefs, theme
@@ -136,7 +142,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_open());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -150,6 +156,19 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(localBookmarks, localBookmarks.coverUrl);
             await m.addColumn(localBookmarks, localBookmarks.author);
             await m.addColumn(localBookmarks, localBookmarks.contentType);
+          }
+          if (from < 3) {
+            // v3: added coverUrl to downloaded_chapters and download_queue.
+            await m.addColumn(downloadedChapters, downloadedChapters.coverUrl);
+            await m.addColumn(downloadQueue, downloadQueue.coverUrl);
+          }
+          if (from < 4) {
+            // v4: added storyAuthor, storySynopsis to
+            // downloaded_chapters and download_queue.
+            await m.addColumn(downloadedChapters, downloadedChapters.storyAuthor);
+            await m.addColumn(downloadedChapters, downloadedChapters.storySynopsis);
+            await m.addColumn(downloadQueue, downloadQueue.storyAuthor);
+            await m.addColumn(downloadQueue, downloadQueue.storySynopsis);
           }
         },
       );
@@ -177,6 +196,16 @@ class AppDatabase extends _$AppDatabase {
   Future<void> deleteDownloadedChapter(String chapterId) {
     return (delete(downloadedChapters)
           ..where((t) => t.chapterId.equals(chapterId)))
+        .go();
+  }
+
+  Future<void> deleteAllDownloadedChapters() {
+    return delete(downloadedChapters).go();
+  }
+
+  Future<void> deleteDownloadedChaptersForStory(String storyId) {
+    return (delete(downloadedChapters)
+          ..where((t) => t.storyId.equals(storyId)))
         .go();
   }
 
@@ -210,6 +239,12 @@ class AppDatabase extends _$AppDatabase {
   // ---- Bookmarks ----
 
   Future<List<LocalBookmark>> getBookmarks() => select(localBookmarks).get();
+
+  Future<LocalBookmark?> getBookmarkForStory(String storyId) {
+    return (select(localBookmarks)
+          ..where((t) => t.storyId.equals(storyId)))
+        .getSingleOrNull();
+  }
 
   Future<List<LocalBookmark>> getBookmarksByType(String listType) {
     return (select(localBookmarks)
@@ -258,6 +293,10 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> deleteDownloadQueueRow(int id) {
     return (delete(downloadQueue)..where((t) => t.id.equals(id))).go();
+  }
+
+  Future<void> clearDownloadQueue() {
+    return delete(downloadQueue).go();
   }
 
   // ---- Settings ----

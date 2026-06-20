@@ -66,6 +66,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Request max refresh rate (120 Hz) on supported displays -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnablePreferredRefreshRate"
+            android:value="true" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

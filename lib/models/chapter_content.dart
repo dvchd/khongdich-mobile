@@ -38,6 +38,22 @@ sealed class ChapterContent {
   final int? nextChapter;
   final DateTime updatedAt;
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'story_id': storyId,
+        'story_title': storyTitle,
+        'story_slug': storySlug,
+        'chapter_number': chapterNumber,
+        'title': title,
+        'content_type': contentType,
+        'content_version': contentVersion,
+        'word_count': wordCount,
+        'is_published': isPublished,
+        'prev_chapter': prevChapter,
+        'next_chapter': nextChapter,
+        'updated_at': updatedAt.toIso8601String(),
+      };
+
   /// Construct the right variant from a `ChapterContentResponse` JSON
   /// payload (backend `src/api/mobile.rs::get_chapter`).
   factory ChapterContent.fromJson(Map<String, dynamic> json) {
@@ -126,6 +142,14 @@ class TextChapterContent extends ChapterContent {
     this.authorNote,
   }) : super(contentType: 'text');
 
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'content_markdown': contentMarkdown,
+        'content_format': contentFormat,
+        if (authorNote != null) 'author_note': authorNote,
+      };
+
   factory TextChapterContent._fromJson(
     _CommonFields c,
     Map<String, dynamic> json,
@@ -154,6 +178,12 @@ class MangaPage {
   final String url;
   final String? altText;
   final String? caption;
+
+  Map<String, dynamic> toJson() => {
+        'image_url': url,
+        if (altText != null) 'alt_text': altText,
+        if (caption != null) 'caption': caption,
+      };
 
   factory MangaPage.fromJson(Map<String, dynamic> json) => MangaPage(
         url: json['image_url'] as String,
@@ -188,6 +218,12 @@ class MangaChapterContent extends ChapterContent {
     required super.updatedAt,
     required this.images,
   }) : super(contentType: 'manga');
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'images': images.map((p) => p.toJson()).toList(),
+      };
 
   factory MangaChapterContent._fromJson(
     _CommonFields c,
@@ -225,6 +261,13 @@ class ChatParticipant {
   final String? avatarUrl;
   final String? color;
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        if (avatarUrl != null) 'avatar_url': avatarUrl,
+        if (color != null) 'color': color,
+      };
+
   factory ChatParticipant.fromJson(Map<String, dynamic> json) =>
       ChatParticipant(
         id: json['id'] as String,
@@ -247,6 +290,14 @@ class ChatMessage {
   final String content;
   final String messageType; // 'dialogue' | 'action' | 'narration' | 'system'
   final String? imageUrl;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        if (characterId != null) 'character_id': characterId,
+        'content': content,
+        'message_type': messageType,
+        if (imageUrl != null) 'image_url': imageUrl,
+      };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         id: json['id'] as String,
@@ -277,6 +328,13 @@ class ChatChapterContent extends ChapterContent {
     required this.participants,
     required this.messages,
   }) : super(contentType: 'chat');
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'participants': participants.map((p) => p.toJson()).toList(),
+        'messages': messages.map((m) => m.toJson()).toList(),
+      };
 
   factory ChatChapterContent._fromJson(
     _CommonFields c,
@@ -316,6 +374,12 @@ class VideoInfo {
   final String videoId;
   final String? caption;
 
+  Map<String, dynamic> toJson() => {
+        'provider': provider,
+        'video_id': videoId,
+        if (caption != null) 'caption': caption,
+      };
+
   factory VideoInfo.fromJson(Map<String, dynamic> json) => VideoInfo(
         provider: json['provider'] as String? ?? 'youtube',
         videoId: json['video_id'] as String? ?? '',
@@ -343,6 +407,13 @@ class VideoChapterContent extends ChapterContent {
     required this.video,
     this.captionMarkdown,
   }) : super(contentType: 'video');
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'video': video.toJson(),
+        if (captionMarkdown != null) 'content_markdown': captionMarkdown,
+      };
 
   factory VideoChapterContent._fromJson(
     _CommonFields c,

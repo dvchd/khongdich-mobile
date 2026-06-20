@@ -15,6 +15,7 @@ class TextChapterView extends ConsumerStatefulWidget {
     required this.markdown,
     required this.theme,
     this.scrollController,
+    this.pageController,
     this.onChapterEnd,
     this.onChapterStart,
     this.isPageMode = false,
@@ -23,6 +24,7 @@ class TextChapterView extends ConsumerStatefulWidget {
   final String markdown;
   final ReaderTheme theme;
   final ScrollController? scrollController;
+  final PageController? pageController;
   final VoidCallback? onChapterEnd;
   final VoidCallback? onChapterStart;
   final bool isPageMode;
@@ -33,7 +35,7 @@ class TextChapterView extends ConsumerStatefulWidget {
 
 class _TextChapterViewState extends ConsumerState<TextChapterView> {
   late List<Block> _blocks;
-  final _pageController = PageController();
+  late final PageController _pageController;
   // Pre-split pages: each entry is a list of block indices.
   List<List<int>> _pageBlockIndices = [];
   Size? _lastSize;
@@ -42,11 +44,15 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   void initState() {
     super.initState();
     _blocks = MarkdownParser().parse(widget.markdown);
+    _pageController = widget.pageController ?? PageController();
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
+    // Only dispose if we created the controller internally
+    if (widget.pageController == null) {
+      _pageController.dispose();
+    }
     super.dispose();
   }
 
@@ -90,7 +96,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             maxLines: null,
           );
           tp.layout(maxWidth: maxWidth - 32);
-          final h = tp.height + 24 + 12; // top + bottom padding
+          final h = tp.height + 12 + 8; // top + bottom padding
           tp.dispose();
           return h;
         }(),
@@ -200,7 +206,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   Widget _buildScrollMode() {
     return SingleChildScrollView(
       controller: widget.scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 48),
       child: MarkdownRenderer(blocks: _blocks, theme: widget.theme),
     );
   }
@@ -210,7 +216,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       // Single page — just render all blocks
       return SingleChildScrollView(
         physics: const NeverScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -238,7 +244,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         final pageBlocks = [for (final i in blockIndices) _blocks[i]];
         return SingleChildScrollView(
           physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

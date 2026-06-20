@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/database/app_database.dart';
 import '../../core/network/api_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../reader/reader_settings_provider.dart';
@@ -52,9 +54,7 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.dns_outlined),
             title: const Text('Backend'),
-            subtitle: Text(env.label),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showEnvSwitcher(context, ref),
+            subtitle: Text('${env.label} (cố định — build-time)'),
           ),
           const Divider(),
           _Section('Hiển thị'),
@@ -133,26 +133,28 @@ class SettingsScreen extends ConsumerWidget {
             onTap: () => Navigator.of(context).pushNamed('auth'),
           ),
           const Divider(),
-          _Section('Dữ liệu'),
+          _Section('Bộ nhớ'),
           ListTile(
-            leading: const Icon(Icons.storage_outlined),
-            title: const Text('Xoá cache ảnh'),
-            onTap: () => _toast(context, 'Cache ảnh sẽ được xoá khi đóng app.'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete_sweep_outlined,
-                color: AppTheme.primary),
-            title: const Text('Xoá toàn bộ truyện đã tải',
-                style: TextStyle(color: AppTheme.primary)),
-            onTap: () => _showClearDownloadsConfirm(context, ref),
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: const Text('Xoá toàn bộ truyện đã tải'),
+            subtitle: const Text('Giải phóng dung lượng'),
+            onTap: () => _confirmClearAllDownloads(context, ref),
           ),
           const Divider(),
           _Section('Về ứng dụng'),
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('Không Dịch Mobile'),
-            subtitle: Text('v0.3.0 — Bearer JWT + JSON API\n'
-                'Tài liệu kế hoạch: docs/plan-flutter-app.md (repo backend)'),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Không Dịch Mobile'),
+            subtitle: FutureBuilder<PackageInfo>(
+              future: PackageInfo.fromPlatform(),
+              builder: (context, snapshot) {
+                final info = snapshot.data;
+                final ver = info != null
+                    ? 'v${info.version}+${info.buildNumber}'
+                    : '...';
+                return Text('$ver\nBearer JWT + JSON API');
+              },
+            ),
           ),
         ],
       ),
@@ -172,65 +174,36 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  void _showEnvSwitcher(BuildContext context, WidgetRef ref) {
-    showDialog<void>(
+  Future<void> _confirmClearAllDownloads(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Chọn môi trường'),
-        content: const Text(
-          'Demo: demo.khongdich.com (test nội bộ)\n'
-          'Production: khongdich.com (chính thức)\n\n'
-          'Sau khi đổi, KHỞI ĐỘNG LẠI app để áp dụng.',
-        ),
+        title: const Text('Xoá toàn bộ?'),
+        content: const Text('Tất cả truyện đã tải xuống sẽ bị xoá khỏi thiết bị.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Huỷ'),
-          ),
-          for (final e in AppEnv.values)
-            FilledButton(
-              onPressed: () async {
-                final api = ref.read(apiClientProvider).maybeWhen(
-                      data: (c) => c,
-                      orElse: () => null,
-                    );
-                if (api != null) await api.setEnv(e);
-                ref.read(appEnvProvider.notifier).state = e;
-                if (context.mounted) {
-                  Navigator.of(context).pop();
-                  _toast(context, 'Đã đổi sang ${e.label}. Khởi động lại app.');
-                }
-              },
-              child: Text(e.name.toUpperCase()),
-            ),
-        ],
-      ),
-    );
-  }
-
-  void _showClearDownloadsConfirm(BuildContext context, WidgetRef ref) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Xoá toàn bộ truyện đã tải?'),
-        content: const Text(
-            'Hành động này không thể hoàn tác. Tất cả chương đã tải sẽ bị xoá khỏi thiết bị.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(context).pop(false),
             child: const Text('Huỷ'),
           ),
           FilledButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              _toast(context, 'Đã xoá (sẽ wire hẳn với Drift ở bản tiếp).');
-            },
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Xoá'),
           ),
         ],
       ),
     );
+    if (confirmed != true) return;
+
+    final db = ref.read(appDatabaseProvider);
+    await db.deleteAllDownloadedChapters();
+    await db.clearDownloadQueue();
+
+    if (context.mounted) {
+      _toast(context, 'Đã xoá tất cả truyện đã tải.');
+    }
   }
+
 }
 
 class _Section extends StatelessWidget {

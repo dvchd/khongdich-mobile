@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
@@ -100,18 +101,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             onTap: () => context.go('/bookshelf'),
           ),
           ListTile(
-            leading: const Icon(Icons.download_outlined),
-            title: const Text('Tải xuống'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/downloads'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.library_books_outlined),
-            title: const Text('Truyện đã tải (offline)'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/offline-library'),
-          ),
-          ListTile(
             leading: const Icon(Icons.notifications_outlined),
             title: const Text('Thông báo'),
             trailing: const Icon(Icons.chevron_right),
@@ -133,10 +122,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           const SizedBox(height: 24),
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Text(
-              'Không Dịch v0.3.0\nFlutter 3.x · Riverpod · Drift · Dio · Bearer JWT',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
+            child: FutureBuilder<PackageInfo>(
+              future: PackageInfo.fromPlatform(),
+              builder: (context, snapshot) {
+                final info = snapshot.data;
+                final ver = info != null
+                    ? 'v${info.version}+${info.buildNumber}'
+                    : '...';
+                return Text(
+                  'Không Dịch $ver\nFlutter 3.x · Riverpod · Drift · Dio',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                );
+              },
             ),
           ),
         ],

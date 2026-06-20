@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/database/app_database.dart';
 import '../core/network/api_client.dart';
 import '../core/observability/app_logger.dart';
+import '../models/chapter_content.dart';
 import '../models/story.dart';
 import '../repositories/story_repository.dart';
 
@@ -55,13 +56,30 @@ class DownloadManager {
     required String chapterId,
     required int chapterNumber,
     String downloadType = 'chapter',
+    String? coverUrl,
+    String? storyAuthor,
+    String? storySynopsis,
   }) async {
+    // Skip if already downloaded.
+    final existing = await _db.getDownloadedChapter(chapterId);
+    if (existing != null) return -1;
+
+    // Skip if already in the queue (pending or retry).
+    final queue = await _db.getDownloadQueue();
+    final alreadyQueued = queue.any((q) =>
+        q.chapterId == chapterId &&
+        (q.status == 'pending' || q.status == 'retry' || q.status == 'downloading'));
+    if (alreadyQueued) return -1;
+
     final id = await _db.enqueueDownload(DownloadQueueCompanion.insert(
       storyId: storyId,
       storySlug: storySlug,
       chapterId: chapterId,
       chapterNumber: chapterNumber,
       downloadType: downloadType,
+      coverUrl: Value(coverUrl),
+      storyAuthor: Value(storyAuthor),
+      storySynopsis: Value(storySynopsis),
       queuedAt: DateTime.now().toIso8601String(),
     ));
     await _emit();
@@ -69,25 +87,47 @@ class DownloadManager {
     return id;
   }
 
-  /// Enqueue every chapter of a story. Caller supplies the chapter list
-  /// (already fetched via [StoryRepository.fetchChapterList]).
-  Future<void> enqueueAllChapters({
+  /// Enqueue every chapter of a story. Returns the number of chapters
+  /// actually enqueued (skips already-downloaded and already-queued).
+  Future<int> enqueueAllChapters({
     required String storyId,
     required String storySlug,
     required List<ChapterSummary> chapters,
+    String? coverUrl,
+    String? storyAuthor,
+    String? storySynopsis,
   }) async {
+    final queue = await _db.getDownloadQueue();
+    final queuedIds = queue
+        .where((q) =>
+            q.status == 'pending' || q.status == 'retry' || q.status == 'downloading')
+        .map((q) => q.chapterId)
+        .toSet();
+
+    int enqueued = 0;
     for (final cs in chapters) {
+      // Skip if already downloaded.
+      final existing = await _db.getDownloadedChapter(cs.id);
+      if (existing != null) continue;
+      // Skip if already in the queue.
+      if (queuedIds.contains(cs.id)) continue;
+
       await _db.enqueueDownload(DownloadQueueCompanion.insert(
         storyId: storyId,
         storySlug: storySlug,
         chapterId: cs.id,
         chapterNumber: cs.chapterNumber,
         downloadType: 'chapter',
+        coverUrl: Value(coverUrl),
+        storyAuthor: Value(storyAuthor),
+        storySynopsis: Value(storySynopsis),
         queuedAt: DateTime.now().toIso8601String(),
       ));
+      enqueued++;
     }
     await _emit();
     unawaited(_processQueue());
+    return enqueued;
   }
 
   /// Cancel a queued or in-progress download.
@@ -104,68 +144,56 @@ class DownloadManager {
         .toList();
     if (pending.isEmpty) return;
 
+    // Group pending rows by story_id.
+    final byStory = <String, List<DownloadQueueData>>{};
     for (final row in pending) {
-      try {
-        // Skip if already downloaded — don't re-download.
-        final existing = await _db.getDownloadedChapter(row.chapterId);
-        if (existing != null) {
-          // Already have it — mark queue row as completed and skip.
-          await _db.updateDownloadQueueRow(
-              row.id,
-              DownloadQueueCompanion(
-                status: const Value('completed'),
-                progress: const Value(1.0),
-                completedAt: Value(DateTime.now().toIso8601String()),
-              ));
-          await _emit();
-          continue;
+      byStory.putIfAbsent(row.storyId, () => []).add(row);
+    }
+
+    for (final storyRows in byStory.values) {
+      // If 3+ pending for the same story, use batch fetch.
+      if (storyRows.length >= 3) {
+        await _processBatch(storyRows);
+      } else {
+        for (final row in storyRows) {
+          await _processSingle(row);
         }
+      }
+    }
+  }
 
-        await _db.updateDownloadQueueRow(
-            row.id,
-            DownloadQueueCompanion(
-              status: const Value('downloading'),
-              startedAt: Value(DateTime.now().toIso8601String()),
-              progress: const Value(0.1),
-            ));
-        await _emit();
-
-        // Fetch the chapter via the JSON endpoint.
-        final chapter = await _repo.fetchChapter(row.chapterId);
-
-        // Serialize to JSON for storage. We round-trip through the
-        // JSON codec because [ChapterContent] no longer has toJson —
-        // the backend's response is already the canonical shape, and
-        // re-parsing it gives us a Map<String, dynamic> we can persist.
-        final json = <String, dynamic>{
-          'id': chapter.id,
-          'story_id': chapter.storyId,
-          'story_title': chapter.storyTitle,
-          'story_slug': chapter.storySlug,
-          'chapter_number': chapter.chapterNumber,
-          'title': chapter.title,
-          'content_type': chapter.contentType,
-          'content_version': chapter.contentVersion,
-          'word_count': chapter.wordCount,
-          'is_published': chapter.isPublished,
-          'prev_chapter': chapter.prevChapter,
-          'next_chapter': chapter.nextChapter,
-          'updated_at': chapter.updatedAt.toIso8601String(),
-        };
-        await _db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
-          chapterId: chapter.id,
-          storyId: chapter.storyId,
-          storyTitle: chapter.storyTitle,
-          storySlug: chapter.storySlug,
-          chapterNumber: chapter.chapterNumber,
-          chapterTitle: chapter.title,
-          contentType: chapter.contentType,
-          contentRaw: jsonEncode(json),
-          contentVersion: Value(chapter.contentVersion),
-          wordCount: Value(chapter.wordCount),
-          downloadedAt: DateTime.now().toIso8601String(),
+  Future<void> _saveChapter(DownloadQueueData row, ChapterContent chapter) async {
+    final json = chapter.toJson();
+    await _db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
+      chapterId: chapter.id,
+      storyId: chapter.storyId,
+      storyTitle: chapter.storyTitle,
+      storySlug: chapter.storySlug,
+      chapterNumber: chapter.chapterNumber,
+      chapterTitle: chapter.title,
+      contentType: chapter.contentType,
+      contentRaw: jsonEncode(json),
+      contentVersion: Value(chapter.contentVersion),
+      wordCount: Value(chapter.wordCount),
+      downloadedAt: DateTime.now().toIso8601String(),
+      coverUrl: Value(row.coverUrl),
+      storyAuthor: Value(row.storyAuthor),
+      storySynopsis: Value(row.storySynopsis),
+    ));
+    await _db.updateDownloadQueueRow(
+        row.id,
+        DownloadQueueCompanion(
+          status: const Value('completed'),
+          progress: const Value(1.0),
+          completedAt: Value(DateTime.now().toIso8601String()),
         ));
+    await _emit();
+  }
 
+  Future<void> _processSingle(DownloadQueueData row) async {
+    try {
+      final existing = await _db.getDownloadedChapter(row.chapterId);
+      if (existing != null) {
         await _db.updateDownloadQueueRow(
             row.id,
             DownloadQueueCompanion(
@@ -174,15 +202,70 @@ class DownloadManager {
               completedAt: Value(DateTime.now().toIso8601String()),
             ));
         await _emit();
-      } catch (e, s) {
-        AppLogger.warning('DownloadManager._processQueue failed for row ${row.id}', e, s);
+        return;
+      }
+
+      await _db.updateDownloadQueueRow(
+          row.id,
+          DownloadQueueCompanion(
+            status: const Value('downloading'),
+            startedAt: Value(DateTime.now().toIso8601String()),
+            progress: const Value(0.1),
+          ));
+      await _emit();
+
+      final chapter = await _repo.fetchChapter(row.chapterId);
+      await _saveChapter(row, chapter);
+    } catch (e, s) {
+      AppLogger.warning('DownloadManager._processSingle failed for row ${row.id}', e, s);
+      await _db.updateDownloadQueueRow(
+          row.id,
+          DownloadQueueCompanion(
+            status: const Value('failed'),
+            errorMessage: Value(e.toString()),
+          ));
+      await _emit();
+    }
+  }
+
+  Future<void> _processBatch(List<DownloadQueueData> rows) async {
+    final chapterIds = rows.map((r) => r.chapterId).toList();
+    try {
+      // Mark all as downloading.
+      for (final row in rows) {
         await _db.updateDownloadQueueRow(
             row.id,
             DownloadQueueCompanion(
-              status: const Value('failed'),
-              errorMessage: Value(e.toString()),
+              status: const Value('downloading'),
+              startedAt: Value(DateTime.now().toIso8601String()),
+              progress: const Value(0.3),
             ));
-        await _emit();
+      }
+      await _emit();
+
+      final chapters = await _repo.fetchChaptersBatch(chapterIds);
+      final byId = {for (final c in chapters) c.id: c};
+
+      for (final row in rows) {
+        final ch = byId[row.chapterId];
+        if (ch != null) {
+          await _saveChapter(row, ch);
+        } else {
+          // Chapter not returned — skip / mark failed.
+          await _db.updateDownloadQueueRow(
+              row.id,
+              DownloadQueueCompanion(
+                status: const Value('failed'),
+                errorMessage: const Value('Không tìm thấy chương trên máy chủ'),
+              ));
+          await _emit();
+        }
+      }
+    } catch (e, s) {
+      // Batch failed — fall back to individual fetches.
+      AppLogger.warning('DownloadManager._processBatch failed, falling back to single', e, s);
+      for (final row in rows) {
+        await _processSingle(row);
       }
     }
   }

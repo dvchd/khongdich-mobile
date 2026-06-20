@@ -119,6 +119,20 @@ class StoryRepository {
     return ChapterContent.fromJson(r.data as Map<String, dynamic>);
   }
 
+  /// Batch fetch multiple chapters (max 50).
+  /// Hits `POST /api/v1/mobile/chapters/batch`.
+  Future<List<ChapterContent>> fetchChaptersBatch(List<String> chapterIds) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/chapters/batch',
+      data: {'chapter_ids': chapterIds},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final c in (data['chapters'] as List? ?? const []))
+        ChapterContent.fromJson(c as Map<String, dynamic>),
+    ];
+  }
+
   // ─── Search ─────────────────────────────────────────────────────
 
   /// Search stories + posts.

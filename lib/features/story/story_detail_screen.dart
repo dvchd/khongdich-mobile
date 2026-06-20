@@ -2,10 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
+import '../downloads/downloads_screen.dart' show downloadQueueProvider;
+import '../downloads/offline_library_screen.dart' show downloadedChaptersForStoryProvider;
+
+/// Live queue status for a specific story — auto-updates via
+/// [downloadQueueProvider].
+final downloadQueueForStoryProvider =
+    Provider.autoDispose.family<List<DownloadQueueData>, String>((ref, storyId) {
+  final queueAsync = ref.watch(downloadQueueProvider);
+  final queue = queueAsync.valueOrNull ?? [];
+  return queue.where((q) => q.storyId == storyId).toList();
+});
 
 /// Story detail screen. Plan §5.3.
 ///
@@ -27,20 +39,31 @@ class StoryDetailScreen extends ConsumerWidget {
           message: '$e',
           onRetry: () => ref.invalidate(_storyDetailProvider(storySlug)),
         ),
-        data: (detail) => _StoryDetailBody(detail: detail),
+        data: (result) => _StoryDetailBody(detail: result.detail, localBookmark: result.localBookmark),
       ),
     );
   }
 }
 
 class _StoryDetailBody extends ConsumerWidget {
-  const _StoryDetailBody({required this.detail});
+  const _StoryDetailBody({required this.detail, this.localBookmark});
   final StoryDetailPayload detail;
+  final String? localBookmark;
+
+  String? get _effectiveBookmark => localBookmark;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final story = detail.story;
     final chaptersAsync = ref.watch(chapterListProvider(story.id));
+    final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
+    final queueItems = ref.watch(downloadQueueForStoryProvider(story.id));
+    final downloadedIds = downloadedAsync.valueOrNull?.map((d) => d.chapterId).toSet() ?? {};
+    final downloadedCount = downloadedAsync.valueOrNull?.length ?? 0;
+    final totalChapters = story.chapterCount ?? 0;
+    final activeDownloads = queueItems.where((q) =>
+        q.status == 'pending' || q.status == 'downloading' || q.status == 'retry').length;
+    final queueStatus = {for (final q in queueItems) q.chapterId: q.status};
     return CustomScrollView(
       slivers: [
         SliverAppBar(
@@ -100,12 +123,30 @@ class _StoryDetailBody extends ConsumerWidget {
                         children: [
                           if (story.status != null)
                             _StatusChip(status: story.status!),
-                          if (detail.bookmark != null)
-                            _BookmarkChip(listType: detail.bookmark!),
+                          if (_effectiveBookmark != null)
+                            _BookmarkChip(listType: _effectiveBookmark!),
                           if (story.chapterCount != null)
                             Chip(
                               label: Text('${story.chapterCount} chương'),
                               visualDensity: VisualDensity.compact,
+                            ),
+                          if (downloadedCount > 0)
+                            Chip(
+                              avatar: const Icon(Icons.download_done, size: 16, color: Colors.green),
+                              label: Text('$downloadedCount${totalChapters > 0 ? '/$totalChapters' : ''} đã tải'),
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: Colors.green.withValues(alpha: 0.1),
+                            ),
+                          if (activeDownloads > 0)
+                            Chip(
+                              avatar: const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              label: Text('Đang tải $activeDownloads…'),
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: Colors.blue.withValues(alpha: 0.1),
                             ),
                         ],
                       ),
@@ -169,7 +210,7 @@ class _StoryDetailBody extends ConsumerWidget {
                     ),
                     const SizedBox(width: 8),
                     IconButton.outlined(
-                      icon: Icon(detail.bookmark == null
+                      icon: Icon(_effectiveBookmark == null
                           ? Icons.bookmark_border
                           : Icons.bookmark),
                       onPressed: () async {
@@ -199,9 +240,18 @@ class _StoryDetailBody extends ConsumerWidget {
                       },
                     ),
                     IconButton.outlined(
-                      icon: const Icon(Icons.download_outlined),
-                      onPressed: () async {
-                        // Fetch chapter list and enqueue all for download.
+                      icon: activeDownloads > 0
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : (downloadedCount > 0
+                              ? const Icon(Icons.download_done, color: Colors.green)
+                              : const Icon(Icons.download_outlined)),
+                      onPressed: activeDownloads > 0
+                          ? null
+                          : () async {
                         final repo = ref.read(storyRepositoryProvider);
                         final page = await repo.fetchChapterList(story.id, perPage: 200);
                         if (page.chapters.isEmpty) {
@@ -212,20 +262,23 @@ class _StoryDetailBody extends ConsumerWidget {
                           }
                           return;
                         }
-                        await ref.read(downloadManagerProvider).enqueueAllChapters(
+                        final total = page.chapters.length;
+                        final already = downloadedIds.length;
+                        final enqueued = await ref.read(downloadManagerProvider).enqueueAllChapters(
                           storyId: story.id,
                           storySlug: story.slug,
                           chapters: page.chapters,
+                          coverUrl: story.coverUrl,
+                          storyAuthor: story.author,
+                          storySynopsis: story.synopsis,
                         );
+                        ref.invalidate(downloadedChaptersForStoryProvider(story.id));
                         if (context.mounted) {
+                          final msg = enqueued == 0
+                              ? 'Đã tải xong $already/$total chương.'
+                              : 'Đang tải $enqueued chương (đã có $already/$total).';
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Đang tải ${page.chapters.length} chương...'),
-                              action: SnackBarAction(
-                                label: 'Xem',
-                                onPressed: () => context.push('/downloads'),
-                              ),
-                            ),
+                            SnackBar(content: Text(msg)),
                           );
                         }
                       },
@@ -296,7 +349,31 @@ class _StoryDetailBody extends ConsumerWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         subtitle: Text(_contentTypeLabel(story.contentTypes.first)),
-                        trailing: const Icon(Icons.chevron_right),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (queueStatus[c.id] == 'pending')
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(Icons.hourglass_top, size: 16, color: Colors.grey),
+                              ),
+                            if (queueStatus[c.id] == 'downloading')
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            if (downloadedIds.contains(c.id) && queueStatus[c.id] == null)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(Icons.download_done, size: 16, color: Colors.green),
+                              ),
+                            const Icon(Icons.chevron_right),
+                          ],
+                        ),
                         onTap: () =>
                             context.push('/chapter/${story.id}:${c.chapterNumber}'),
                       );
@@ -408,10 +485,33 @@ class _ErrorBody extends StatelessWidget {
 // readable without losing the sliver contract.
 typedef SlFillRemaining = SliverFillRemaining;
 
+/// Merged detail payload with local bookmark state.
+/// Falls back to local Drift bookmarks when the server returns null
+/// (e.g. anonymous users).
+class _DetailWithBookmark {
+  const _DetailWithBookmark({
+    required this.detail,
+    this.localBookmark,
+  });
+  final StoryDetailPayload detail;
+  final String? localBookmark; // listType if bookmarked locally
+}
+
 final _storyDetailProvider = FutureProvider.autoDispose
-    .family<StoryDetailPayload, String>((ref, slug) async {
+    .family<_DetailWithBookmark, String>((ref, slug) async {
   final repo = ref.watch(storyRepositoryProvider);
-  return repo.fetchStoryDetail(slug);
+  final db = ref.read(appDatabaseProvider);
+  final detail = await repo.fetchStoryDetail(slug);
+  // Merge local bookmark state for anonymous / offline users.
+  String? localBookmark;
+  try {
+    final local = await db.getBookmarkForStory(detail.story.id);
+    if (local != null) localBookmark = local.listType;
+  } catch (_) {}
+  return _DetailWithBookmark(
+    detail: detail,
+    localBookmark: detail.bookmark ?? localBookmark,
+  );
 });
 
 // chapterListProvider is now defined in repositories/story_repository.dart

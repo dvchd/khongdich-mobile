@@ -70,11 +70,11 @@ class _VideoChapterViewState extends State<VideoChapterView> {
             child: YoutubePlayer(
               controller: _controller!,
               aspectRatio: 16 / 9,
-              // No builder = no custom overlay. The widget renders
-              // only the YouTube iframe with its native controls.
-              // This is the simplest + most reliable approach.
               autoFullScreen: true,
               enableFullScreenOnVerticalDrag: true,
+              // Return only the raw player surface — no custom overlay.
+              // YouTube iframe native controls are sufficient.
+              builder: (context, player, controller) => player,
             ),
           ),
           const SizedBox(height: 16),

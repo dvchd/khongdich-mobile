@@ -110,7 +110,7 @@ class MarkdownRenderer extends StatelessWidget {
           ),
         ),
       Heading(:final level, :final children) => Padding(
-          padding: const EdgeInsets.only(top: 24, bottom: 12),
+          padding: const EdgeInsets.only(top: 12, bottom: 8),
           child: RichText(
             text: TextSpan(
               style: t.headingStyle(level),

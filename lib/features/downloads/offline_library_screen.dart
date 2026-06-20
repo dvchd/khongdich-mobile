@@ -25,7 +25,26 @@ final offlineChaptersProvider =
   return result;
 });
 
+final downloadedChaptersForStoryProvider =
+    FutureProvider.family<List<DownloadedChapter>, String>((ref, storyId) async {
+  final db = ref.read(appDatabaseProvider);
+  final result = await (db.select(db.downloadedChapters)
+        ..where((t) => t.storyId.equals(storyId))
+        ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
+      .get();
+  return result;
+});
+
 class _OfflineLibraryScreenState extends ConsumerState<OfflineLibraryScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Refresh data every time this screen is opened (after downloads, etc.)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.invalidate(offlineChaptersProvider);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final chaptersAsync = ref.watch(offlineChaptersProvider);

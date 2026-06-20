@@ -170,7 +170,9 @@ class _ReaderBody extends ConsumerStatefulWidget {
 
 class _ReaderBodyState extends ConsumerState<_ReaderBody> {
   late final ScrollController _scrollController;
+  final PageController _pageController = PageController();
   bool _progressSaved = false;
+  bool _chromeVisible = true;
 
   @override
   void initState() {
@@ -183,6 +185,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -200,24 +203,61 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
     }
   }
 
+  void _onTapZone(ReaderTapZone zone) {
+    final isPageMode = widget.settings.scrollMode == ReaderScrollMode.horizontal;
+    switch (zone) {
+      case ReaderTapZone.left:
+        if (isPageMode && _pageController.hasClients) {
+          final page = _pageController.page?.round() ?? 0;
+          if (page > 0) {
+            _pageController.previousPage(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+            );
+            return;
+          }
+        }
+        widget.onPrev?.call();
+      case ReaderTapZone.right:
+        if (isPageMode && _pageController.hasClients) {
+          final before = _pageController.page?.round() ?? 0;
+          _pageController.nextPage(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+          );
+          Future.delayed(const Duration(milliseconds: 250), () {
+            if (!mounted) return;
+            final after = _pageController.page?.round() ?? 0;
+            if (after <= before) {
+              widget.onNext?.call();
+            }
+          });
+          return;
+        }
+        widget.onNext?.call();
+      case ReaderTapZone.center:
+        setState(() => _chromeVisible = !_chromeVisible);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Resolve brightness from ReaderThemeMode so light/dark/sepia
-    // actually change the background color, not just the text color.
     final brightness = switch (widget.settings.theme) {
       ReaderThemeMode.light => Brightness.light,
-      ReaderThemeMode.sepia => Brightness.light, // sepia uses light bg + brown text
+      ReaderThemeMode.sepia => Brightness.light,
       ReaderThemeMode.dark => Brightness.dark,
       ReaderThemeMode.system => MediaQuery.of(context).platformBrightness,
     };
     final readerTheme = _resolveReaderTheme(widget.settings, brightness);
     final isPageMode = widget.settings.scrollMode == ReaderScrollMode.horizontal;
+
     final content = _scrollWrapper(
       switch (widget.chapter) {
         TextChapterContent(:final contentMarkdown) => TextChapterView(
             markdown: contentMarkdown,
             theme: readerTheme,
             scrollController: _scrollController,
+            pageController: isPageMode ? _pageController : null,
             isPageMode: isPageMode,
           ),
         MangaChapterContent(:final images) => MangaChapterView(
@@ -242,10 +282,6 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       },
     );
 
-    // In page-flip mode, the TextChapterView's PageView handles
-    // page-turning internally. We wrap it in a _PageModeWrapper that
-    // detects overscroll (swipe left on last page → next chapter,
-    // swipe right on first page → prev chapter).
     final body = isPageMode
         ? _PageModeWrapper(
             onNext: widget.onNext,
@@ -258,7 +294,6 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
             child: content,
           );
 
-    // Resolve the reader background color from the theme mode.
     final isSepia = widget.settings.theme == ReaderThemeMode.sepia;
     final isReaderLight = brightness == Brightness.light && !isSepia;
     final readerBgColor = isSepia
@@ -272,6 +307,8 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       onOpenSettings: widget.onOpenSettings,
       onOpenChapterList: widget.onOpenChapterList,
       onToggleTts: widget.onToggleTts,
+      // Hide AppBar chrome when user taps center zone
+      chromeVisible: _chromeVisible,
       child: ColoredBox(
         color: readerBgColor,
         child: Stack(
@@ -283,6 +320,12 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
               bottom: 0,
               child: TtsMiniPlayer(chapter: widget.chapter),
             ),
+            // Tap zones for edge navigation
+            // Skip for chat — it handles its own tap to reveal next message.
+            if (widget.chapter is! ChatChapterContent)
+              Positioned.fill(
+                child: ReaderTapZones(onTap: _onTapZone),
+              ),
           ],
         ),
       ),
@@ -342,7 +385,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
           ),
       },
       accentColor: const Color(0xFF3B82F6),
-      paragraphSpacing: 12,
+      paragraphSpacing: 6,
       codeStyle: GoogleFonts.robotoMono(
         fontSize: 15,
         color: textColor,
@@ -398,7 +441,7 @@ class _ReaderError extends StatelessWidget {
 }
 
 /// Wraps content with horizontal swipe detection for the horizontal
-/// reader mode. Swipe left → next chapter, swipe right → prev chapter.
+/// reader mode. Swipe right → next chapter, swipe left → prev chapter.
 /// Vertical scrolling passes through to the child widget.
 class _HorizontalSwipeWrapper extends StatelessWidget {
   const _HorizontalSwipeWrapper({
@@ -565,11 +608,9 @@ class _PageModeWrapperState extends State<_PageModeWrapper> {
             notification.metrics.axis == Axis.horizontal) {
           _accumulatedOverscroll += notification.overscroll;
           if (_accumulatedOverscroll.abs() > _threshold) {
-            if (_accumulatedOverscroll < 0 && widget.onNext != null) {
-              // Swiped left past the last page → next chapter
+            if (_accumulatedOverscroll > 0 && widget.onNext != null) {
               widget.onNext!();
-            } else if (_accumulatedOverscroll > 0 && widget.onPrev != null) {
-              // Swiped right past the first page → prev chapter
+            } else if (_accumulatedOverscroll < 0 && widget.onPrev != null) {
               widget.onPrev!();
             }
             _accumulatedOverscroll = 0;
@@ -580,6 +621,45 @@ class _PageModeWrapperState extends State<_PageModeWrapper> {
         return false;
       },
       child: widget.child,
+    );
+  }
+}
+
+/// Which third of the screen was tapped.
+enum ReaderTapZone { left, center, right }
+
+/// Detects taps on left (30%), center (40%), and right (30%) zones.
+class ReaderTapZones extends StatelessWidget {
+  const ReaderTapZones({super.key, required this.onTap});
+  final void Function(ReaderTapZone) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 3,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => onTap(ReaderTapZone.left),
+          ),
+        ),
+        Expanded(
+          flex: 4,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => onTap(ReaderTapZone.center),
+          ),
+        ),
+        Expanded(
+          flex: 3,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => onTap(ReaderTapZone.right),
+          ),
+        ),
+      ],
     );
   }
 }

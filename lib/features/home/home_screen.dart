@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
+import '../bookshelf/bookshelf_screen.dart' show bookshelfTabIntentProvider;
 import 'widgets/story_card.dart';
 import 'widgets/story_section.dart';
 
@@ -21,24 +22,33 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  bool _redirected = false;
+
   @override
   void initState() {
     super.initState();
     Future.microtask(() => ref.read(homeProvider.notifier).refresh());
   }
 
+  void _maybeRedirectOffline() {
+    if (_redirected) return;
+    _redirected = true;
+    // Set the tab intent to 0 (downloaded) so bookshelf opens on that tab
+    ref.read(bookshelfTabIntentProvider.notifier).state = 0;
+    context.go('/bookshelf');
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
+    // On first error (offline), auto-redirect to bookshelf downloaded tab
+    state.whenOrNull(
+      error: (_, __) => Future.microtask(_maybeRedirectOffline),
+    );
     return Scaffold(
       appBar: AppBar(
         title: const Text('Không Dịch'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.library_books_outlined),
-            tooltip: 'Truyện đã tải',
-            onPressed: () => context.push('/offline-library'),
-          ),
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () => context.push('/notifications'),
@@ -52,7 +62,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           error: (e, _) => _OfflineOrErrorState(
             message: '$e',
             onRetry: () => ref.read(homeProvider.notifier).refresh(),
-            onGoOffline: () => context.push('/offline-library'),
           ),
           data: (home) => _HomeContent(home: home),
         ),
@@ -260,11 +269,9 @@ class _OfflineOrErrorState extends StatelessWidget {
   const _OfflineOrErrorState({
     required this.message,
     required this.onRetry,
-    required this.onGoOffline,
   });
   final String message;
   final VoidCallback onRetry;
-  final VoidCallback onGoOffline;
 
   @override
   Widget build(BuildContext context) {
@@ -279,20 +286,12 @@ class _OfflineOrErrorState extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Text(
-            'Bạn có thể đọc truyện đã tải offline.',
+            'Đang chuyển đến truyện đã tải...',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
         const SizedBox(height: 20),
-        Center(
-          child: FilledButton.icon(
-            onPressed: onGoOffline,
-            icon: const Icon(Icons.library_books),
-            label: const Text('Đọc truyện đã tải'),
-          ),
-        ),
-        const SizedBox(height: 8),
         Center(
           child: OutlinedButton(onPressed: onRetry, child: const Text('Thử lại')),
         ),

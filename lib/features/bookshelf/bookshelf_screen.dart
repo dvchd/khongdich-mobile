@@ -8,15 +8,14 @@ import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
+import '../downloads/offline_library_screen.dart' show offlineChaptersProvider;
 import '../home/widgets/story_card.dart';
 
-/// Bookshelf — 4 list types (reading / completed / plan_to_read / favorite).
+/// Which tab to show by default (used for offline auto-redirect).
+final bookshelfTabIntentProvider = StateProvider<int>((ref) => 0);
+
+/// Bookshelf — 5 tabs including downloaded (added as 0th tab).
 /// Plan §5.6.
-///
-/// **Authenticated users**: bookmarks fetched from server + cached locally.
-/// **Anonymous users**: bookmarks stored ONLY in Drift with full story
-/// metadata (title, slug, cover, author) so the bookshelf renders
-/// proper cards.
 class BookshelfScreen extends ConsumerStatefulWidget {
   const BookshelfScreen({super.key});
 
@@ -28,6 +27,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   int _tab = 0;
 
   static const _tabs = [
+    ('downloaded', 'Đã tải xuống', Icons.download_done),
     ('reading', 'Đang đọc', Icons.menu_book),
     ('completed', 'Đã đọc xong', Icons.check_circle_outline),
     ('plan_to_read', 'Sẽ đọc', Icons.bookmark_outline),
@@ -37,17 +37,64 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   @override
   void initState() {
     super.initState();
+    // Pick up the intent provider once (e.g. offline redirect)
+    final intent = ref.read(bookshelfTabIntentProvider);
+    if (intent != 0) {
+      _tab = intent;
+      Future.microtask(() => ref.read(bookshelfTabIntentProvider.notifier).state = 0);
+    }
     Future.microtask(() => ref.read(bookshelfProvider.notifier).refresh());
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bookshelfProvider);
-    final currentListType = _tabs[_tab].$1;
-    final items = state.valueOrNull
-            ?.where((b) => b.listType == currentListType)
-            .toList() ??
-        const [];
+    final downloadsAsync = ref.watch(offlineChaptersProvider);
+
+    final downloadedStoryIds = downloadsAsync.valueOrNull
+            ?.map((d) => d.storyId)
+            .toSet() ??
+        {};
+    // Group downloaded chapters by story for the downloaded tab
+    final chapters = downloadsAsync.valueOrNull ?? [];
+    final downloadedStories = <StorySummary>[];
+    final seen = <String>{};
+    for (final d in chapters) {
+      if (seen.add(d.storyId)) {
+        downloadedStories.add(StorySummary(
+          id: d.storyId,
+          title: d.storyTitle,
+          slug: d.storySlug,
+          coverUrl: d.coverUrl,
+          author: '',
+          categories: const [],
+          tags: const [],
+          contentTypes: [d.contentType],
+          chapterCount: chapters.where((x) => x.storyId == d.storyId).length,
+        ));
+      }
+    }
+
+    final isDownloadedTab = _tab == 0;
+
+    final items = isDownloadedTab
+        ? downloadedStories
+        : (state.valueOrNull
+                    ?.where((b) => b.listType == _tabs[_tab].$1)
+                    .map((b) => StorySummary(
+                          id: b.storyId,
+                          title: b.title,
+                          slug: b.slug,
+                          coverUrl: b.coverUrl,
+                          author: b.author,
+                          categories: const [],
+                          tags: const [],
+                          contentTypes: [b.contentType],
+                          chapterCount: b.chapterCount,
+                        ))
+                    .toList() ??
+                const <StorySummary>[]);
+
     return Scaffold(
       appBar: AppBar(title: const Text('Tủ truyện')),
       body: Column(
@@ -73,12 +120,15 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
           ),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: () => ref.read(bookshelfProvider.notifier).refresh(),
+              onRefresh: () =>
+                  ref.read(bookshelfProvider.notifier).refresh(),
               child: items.isEmpty
                   ? ListView(
-                      children: const [
+                      children: [
                         SizedBox(height: 120),
-                        _EmptyBookshelf(),
+                        isDownloadedTab
+                            ? const _EmptyDownloads()
+                            : const _EmptyBookshelf(),
                       ],
                     )
                   : GridView.builder(
@@ -92,25 +142,70 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                       padding: const EdgeInsets.all(16),
                       itemCount: items.length,
                       itemBuilder: (_, i) {
-                        final b = items[i];
-                        final story = StorySummary(
-                          id: b.storyId,
-                          title: b.title,
-                          slug: b.slug,
-                          coverUrl: b.coverUrl,
-                          author: b.author,
-                          categories: const [],
-                          tags: const [],
-                          contentTypes: [b.contentType],
-                          chapterCount: b.chapterCount,
-                        );
-                        return StoryCard(
-                          story: story,
-                          onTap: () => context.push('/story/${b.slug}'),
+                        final s = items[i];
+                        final hasDownloads = downloadedStoryIds.contains(s.id);
+                        return Stack(
+                          children: [
+                            StoryCard(
+                              story: s,
+                              onTap: () {
+                                if (isDownloadedTab) {
+                                  // Navigate to offline story detail instead of
+                                  // jumping directly into the first chapter.
+                                  context.push('/offline-story/${s.id}');
+                                  return;
+                                }
+                                context.push('/story/${s.slug}');
+                              },
+                            ),
+                            if (hasDownloads)
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.green,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.download_done,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                          ],
                         );
                       },
                     ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyDownloads extends StatelessWidget {
+  const _EmptyDownloads();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cloud_download_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+          const SizedBox(height: 12),
+          const Text('Chưa có truyện đã tải xuống.'),
+          const SizedBox(height: 4),
+          Text(
+            'Tải chương từ trang chi tiết truyện để đọc offline.',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -222,8 +317,29 @@ class BookshelfNotifier
         state = AsyncValue.data(items);
       }
     } catch (e, s) {
-      AppLogger.warning('BookshelfNotifier.refresh failed', e, s);
-      state = AsyncValue.error(e, s);
+      AppLogger.warning('BookshelfNotifier.refresh failed, falling back to local', e, s);
+      // Fall back to local bookmarks when offline / API error
+      try {
+        final db = _ref.read(appDatabaseProvider);
+        final locals = await db.getBookmarks();
+        final items = locals.map((b) {
+          final cached = _storyCache[b.storyId];
+          return BookmarkItem(
+            storyId: b.storyId,
+            title: b.storyTitle.isNotEmpty ? b.storyTitle : (cached?.title ?? b.storyId),
+            slug: b.storySlug.isNotEmpty ? b.storySlug : (cached?.slug ?? b.storyId),
+            coverUrl: b.coverUrl ?? cached?.coverUrl,
+            author: b.author.isNotEmpty ? b.author : (cached?.author ?? ''),
+            listType: b.listType,
+            contentType: b.contentType.isNotEmpty ? b.contentType : (cached?.contentType ?? 'text'),
+            chapterCount: null,
+            bookmarkedAt: DateTime.tryParse(b.updatedAt) ?? DateTime.now(),
+          );
+        }).toList();
+        state = AsyncValue.data(items);
+      } catch (dbError) {
+        state = AsyncValue.error(dbError, StackTrace.current);
+      }
     }
   }
 

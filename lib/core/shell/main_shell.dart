@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/downloads/downloads_screen.dart' show downloadQueueProvider;
+
 /// Bottom navigation shell hosting the four primary tabs:
 /// Home / Search / Bookshelf / Profile (plan §14.3).
 class MainShell extends ConsumerWidget {
@@ -27,6 +29,11 @@ class MainShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final idx = _currentIndex(context);
+    final queueAsync = ref.watch(downloadQueueProvider);
+    final activeCount = queueAsync.valueOrNull
+            ?.where((q) => q.status == 'pending' || q.status == 'downloading' || q.status == 'retry')
+            .length ??
+        0;
     return Scaffold(
       body: child,
       bottomNavigationBar: NavigationBar(
@@ -35,8 +42,18 @@ class MainShell extends ConsumerWidget {
         destinations: [
           for (final t in _tabs)
             NavigationDestination(
-              icon: Icon(t.iconOutlined),
-              selectedIcon: Icon(t.iconFilled),
+              icon: t.path == '/bookshelf' && activeCount > 0
+                  ? Badge(
+                      label: Text('$activeCount'),
+                      child: Icon(t.iconOutlined),
+                    )
+                  : Icon(t.iconOutlined),
+              selectedIcon: t.path == '/bookshelf' && activeCount > 0
+                  ? Badge(
+                      label: Text('$activeCount'),
+                      child: Icon(t.iconFilled),
+                    )
+                  : Icon(t.iconFilled),
               label: t.label,
             ),
         ],
