@@ -608,9 +608,14 @@ class _PageModeWrapperState extends State<_PageModeWrapper> {
             notification.metrics.axis == Axis.horizontal) {
           _accumulatedOverscroll += notification.overscroll;
           if (_accumulatedOverscroll.abs() > _threshold) {
-            if (_accumulatedOverscroll > 0 && widget.onNext != null) {
+            // OverscrollNotification.overscroll:
+            //   positive = user is trying to scroll backward (swipe RIGHT
+            //     past the first page) → go to previous chapter
+            //   negative = user is trying to scroll forward (swipe LEFT
+            //     past the last page) → go to next chapter
+            if (_accumulatedOverscroll < 0 && widget.onNext != null) {
               widget.onNext!();
-            } else if (_accumulatedOverscroll < 0 && widget.onPrev != null) {
+            } else if (_accumulatedOverscroll > 0 && widget.onPrev != null) {
               widget.onPrev!();
             }
             _accumulatedOverscroll = 0;
