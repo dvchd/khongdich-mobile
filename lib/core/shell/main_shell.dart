@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../features/downloads/downloads_screen.dart' show downloadQueueProvider;
+import '../../features/downloads/downloads_screen.dart' show downloadQueueStreamProvider;
 
 /// Bottom navigation shell hosting the four primary tabs:
 /// Home / Search / Bookshelf / Profile (plan §14.3).
@@ -29,9 +29,12 @@ class MainShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final idx = _currentIndex(context);
-    final queueAsync = ref.watch(downloadQueueProvider);
+    final queueAsync = ref.watch(downloadQueueStreamProvider);
     final activeCount = queueAsync.valueOrNull
-            ?.where((q) => q.status == 'pending' || q.status == 'downloading' || q.status == 'retry')
+            ?.where((q) =>
+                q.status == 'pending' ||
+                q.status == 'downloading' ||
+                q.status == 'retry')
             .length ??
         0;
     return Scaffold(

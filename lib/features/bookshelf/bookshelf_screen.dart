@@ -8,7 +8,7 @@ import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
-import '../downloads/offline_library_screen.dart' show offlineChaptersProvider;
+import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import '../home/widgets/story_card.dart';
 
 /// Which tab to show by default (used for offline auto-redirect).
@@ -49,7 +49,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bookshelfProvider);
-    final downloadsAsync = ref.watch(offlineChaptersProvider);
+    final downloadsAsync = ref.watch(offlineLibraryStreamProvider);
 
     final downloadedStoryIds = downloadsAsync.valueOrNull
             ?.map((d) => d.storyId)

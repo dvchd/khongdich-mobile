@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
-import 'offline_library_screen.dart' show downloadedChaptersForStoryProvider;
+import '../story/story_detail_screen.dart' show downloadedChaptersForStoryProvider;
 
 /// Offline story detail — reads downloaded chapters from the local Drift DB
 /// and shows cover, author, synopsis, and chapter list. No network required.

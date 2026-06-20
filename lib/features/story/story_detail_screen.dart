@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,16 +8,29 @@ import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
-import '../downloads/downloads_screen.dart' show downloadQueueProvider;
-import '../downloads/offline_library_screen.dart' show downloadedChaptersForStoryProvider;
 
-/// Live queue status for a specific story — auto-updates via
-/// [downloadQueueProvider].
+/// Stream of download queue rows for a specific story — auto-updates
+/// via Drift's `watch()`.
 final downloadQueueForStoryProvider =
-    Provider.autoDispose.family<List<DownloadQueueData>, String>((ref, storyId) {
-  final queueAsync = ref.watch(downloadQueueProvider);
-  final queue = queueAsync.valueOrNull ?? [];
-  return queue.where((q) => q.storyId == storyId).toList();
+    StreamProvider.autoDispose.family<List<DownloadQueueData>, String>(
+        (ref, storyId) {
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.downloadQueue)
+        ..where((t) => t.storyId.equals(storyId))
+        ..orderBy([(t) => OrderingTerm.desc(t.queuedAt)]))
+      .watch();
+});
+
+/// Stream of downloaded chapters for a specific story — auto-updates
+/// via Drift's `watch()`.
+final downloadedChaptersForStoryProvider =
+    StreamProvider.autoDispose.family<List<DownloadedChapter>, String>(
+        (ref, storyId) {
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.downloadedChapters)
+        ..where((t) => t.storyId.equals(storyId))
+        ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
+      .watch();
 });
 
 /// Story detail screen. Plan §5.3.
@@ -57,7 +71,8 @@ class _StoryDetailBody extends ConsumerWidget {
     final story = detail.story;
     final chaptersAsync = ref.watch(chapterListProvider(story.id));
     final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
-    final queueItems = ref.watch(downloadQueueForStoryProvider(story.id));
+    final queueAsync = ref.watch(downloadQueueForStoryProvider(story.id));
+    final queueItems = queueAsync.valueOrNull ?? [];
     final downloadedIds = downloadedAsync.valueOrNull?.map((d) => d.chapterId).toSet() ?? {};
     final downloadedCount = downloadedAsync.valueOrNull?.length ?? 0;
     final totalChapters = story.chapterCount ?? 0;

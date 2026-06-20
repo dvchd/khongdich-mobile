@@ -1,5 +1,4 @@
-import 'dart:async';
-
+import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,77 +6,144 @@ import 'package:go_router/go_router.dart';
 import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/download_manager.dart';
+import 'offline_library_screen.dart' show offlineLibraryStreamProvider;
 
-/// Download queue screen. Plan §5.5.
+/// Unified download + offline library screen.
 ///
-/// Lists every entry in the [DownloadQueue] table, with live updates from
-/// [DownloadManager.watchQueue]. Tapping a failed row lets the user
-/// retry; swiping lets them cancel/remove.
-class DownloadsScreen extends ConsumerStatefulWidget {
+/// Shows TWO sections in one screen:
+///   1. **Đang tải** — active download queue with real-time progress
+///   2. **Đã tải xong** — offline library grouped by story
+///
+/// Both sections auto-update in real-time via Drift's `watch()` stream
+/// — no manual refresh needed.
+class DownloadsScreen extends ConsumerWidget {
   const DownloadsScreen({super.key});
 
   @override
-  ConsumerState<DownloadsScreen> createState() => _DownloadsScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final queueAsync = ref.watch(downloadQueueStreamProvider);
+    final libraryAsync = ref.watch(offlineLibraryStreamProvider);
+
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Tải xuống'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.download), text: 'Đang tải'),
+              Tab(icon: Icon(Icons.library_books), text: 'Đã tải'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _QueueTab(queueAsync: queueAsync),
+            _LibraryTab(libraryAsync: libraryAsync),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(() => ref.read(downloadQueueProvider.notifier).refresh());
-  }
+// ─── Tab 1: Download Queue ──────────────────────────────────────
+
+/// StreamProvider that watches the download queue via Drift's native
+/// `watch()` — auto-updates when any row changes (status, progress).
+final downloadQueueStreamProvider =
+    StreamProvider<List<DownloadQueueData>>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.downloadQueue)
+        ..orderBy([(t) => OrderingTerm.desc(t.queuedAt)]))
+      .watch();
+});
+
+class _QueueTab extends ConsumerWidget {
+  const _QueueTab({required this.queueAsync});
+  final AsyncValue<List<DownloadQueueData>> queueAsync;
 
   @override
-  Widget build(BuildContext context) {
-    final state = ref.watch(downloadQueueProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Tải xuống')),
-      body: Column(
-        children: [
-          // Quick link to offline library
-          Material(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            child: InkWell(
-              onTap: () => context.push('/offline-library'),
-              child: Container(
+  Widget build(BuildContext context, WidgetRef ref) {
+    return queueAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Lỗi: $e')),
+      data: (rows) {
+        if (rows.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.download_done_outlined, size: 64,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+                const SizedBox(height: 12),
+                const Text('Không có tải xuống nào.'),
+                const SizedBox(height: 8),
+                Text(
+                  'Mở trang chi tiết truyện → nút ⬇ để tải chương.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        }
+
+        // Summary header
+        final pending = rows.where((r) => r.status == 'pending').length;
+        final downloading = rows.where((r) => r.status == 'downloading').length;
+        final completed = rows.where((r) => r.status == 'completed').length;
+        final failed = rows.where((r) => r.status == 'failed').length;
+
+        return Column(
+          children: [
+            // Progress summary
+            if (pending > 0 || downloading > 0)
+              Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                child: const Row(
+                padding: const EdgeInsets.all(12),
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Row(
                   children: [
-                    Icon(Icons.library_books, size: 28),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Đọc truyện đã tải',
-                              style: TextStyle(fontWeight: FontWeight.w600)),
-                          Text('Mở thư viện offline',
-                              style: TextStyle(fontSize: 13)),
-                        ],
-                      ),
+                    if (downloading > 0)
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      const Icon(Icons.hourglass_top, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      downloading > 0
+                          ? 'Đang tải $downloading chương… ($pending chờ)'
+                          : '$pending chương đang chờ tải…',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                    Icon(Icons.chevron_right),
+                    const Spacer(),
+                    Text('$completed đã xong',
+                        style: const TextStyle(fontSize: 12)),
+                    if (failed > 0) ...[
+                      const SizedBox(width: 8),
+                      Text('$failed lỗi',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.error)),
+                    ],
                   ],
                 ),
               ),
+            // Queue list
+            Expanded(
+              child: ListView.separated(
+                itemCount: rows.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (_, i) => _DownloadRow(row: rows[i]),
+              ),
             ),
-          ),
-          Expanded(
-            child: state.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('Lỗi: $e')),
-              data: (rows) => rows.isEmpty
-                  ? const _EmptyState()
-                  : ListView.separated(
-                      itemCount: rows.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (_, i) => _DownloadRow(row: rows[i]),
-                    ),
-            ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 }
@@ -88,6 +154,7 @@ class _DownloadRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isActive = row.status == 'pending' || row.status == 'downloading';
     return ListTile(
       leading: _StatusIcon(status: row.status),
       title: Text(
@@ -98,56 +165,58 @@ class _DownloadRow extends ConsumerWidget {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LinearProgressIndicator(
-            value: row.progress.clamp(0.0, 1.0),
-            minHeight: 4,
-            backgroundColor:
-                Theme.of(context).colorScheme.surfaceContainerHighest,
-          ),
+          if (isActive)
+            LinearProgressIndicator(
+              value: row.progress > 0 && row.progress < 1 ? row.progress : null,
+              minHeight: 4,
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+            )
+          else
+            const SizedBox(height: 4),
           const SizedBox(height: 4),
           Text(
-            _statusLabel(row.status, row.errorMessage),
+            _statusLabel(),
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
       ),
-      trailing: row.status == 'failed'
+      trailing: isActive
           ? IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () => ref
-                  .read(downloadManagerProvider)
-                  .enqueueChapter(
-                    storyId: row.storyId,
-                    storySlug: row.storySlug,
-                    chapterId: row.chapterId,
-                    chapterNumber: row.chapterNumber,
-                  ),
+              icon: const Icon(Icons.cancel_outlined),
+              onPressed: () =>
+                  ref.read(downloadManagerProvider).cancel(row.id),
             )
-          : row.status == 'downloading' || row.status == 'pending'
-              ? IconButton(
-                  icon: const Icon(Icons.cancel_outlined),
-                  onPressed: () =>
-                      ref.read(downloadManagerProvider).cancel(row.id),
-                )
-              : IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () async {
-                    final db = ref.read(appDatabaseProvider);
-                    await db.deleteDownloadQueueRow(row.id);
-                    ref.read(downloadQueueProvider.notifier).refresh();
-                  },
-                ),
+          : IconButton(
+              icon: Icon(row.status == 'failed'
+                  ? Icons.refresh
+                  : Icons.delete_outline),
+              onPressed: () async {
+                if (row.status == 'failed') {
+                  await ref.read(downloadManagerProvider).enqueueChapter(
+                        storyId: row.storyId,
+                        storySlug: row.storySlug,
+                        chapterId: row.chapterId,
+                        chapterNumber: row.chapterNumber,
+                      );
+                } else {
+                  final db = ref.read(appDatabaseProvider);
+                  await db.deleteDownloadQueueRow(row.id);
+                }
+              },
+            ),
     );
   }
 
-  String _statusLabel(String status, String? error) {
-    return switch (status) {
+  String _statusLabel() {
+    return switch (row.status) {
       'pending' => 'Đang chờ…',
-      'downloading' => 'Đang tải… ${(row.progress * 100).toStringAsFixed(0)}%',
-      'completed' => 'Đã tải xong',
-      'failed' => 'Lỗi: ${error ?? "không rõ"}',
+      'downloading' =>
+        'Đang tải… ${(row.progress * 100).toStringAsFixed(0)}%',
+      'completed' => 'Đã tải xong ✓',
+      'failed' => 'Lỗi: ${row.errorMessage ?? "không rõ"}',
       'cancelled' => 'Đã huỷ',
-      _ => status,
+      _ => row.status,
     };
   }
 }
@@ -160,8 +229,7 @@ class _StatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (icon, color) = switch (status) {
       'pending' => (Icons.hourglass_top, Colors.grey),
-      'downloading' =>
-        (Icons.downloading, const Color(0xFF2563EB)),
+      'downloading' => (Icons.downloading, const Color(0xFF2563EB)),
       'completed' => (Icons.check_circle, const Color(0xFF16A34A)),
       'failed' => (Icons.error_outline, AppTheme.primary),
       'cancelled' => (Icons.cancel_outlined, Colors.grey),
@@ -171,75 +239,100 @@ class _StatusIcon extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+// ─── Tab 2: Offline Library ─────────────────────────────────────
+// offlineLibraryStreamProvider is defined in offline_library_screen.dart
+// and imported above. This avoids duplicate provider definitions.
+
+class _LibraryTab extends ConsumerWidget {
+  const _LibraryTab({required this.libraryAsync});
+  final AsyncValue<List<DownloadedChapter>> libraryAsync;
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.download_done_outlined,
-              size: 64,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
-          const SizedBox(height: 12),
-          const Text('Chưa có tải xuống nào.'),
-          const SizedBox(height: 4),
-          Text(
-            'Mở trang chi tiết truyện và nhấn "Tải xuống" để lưu chương.',
-            style: Theme.of(context).textTheme.bodySmall,
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    return libraryAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Lỗi: $e')),
+      data: (chapters) {
+        if (chapters.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.cloud_off, size: 64,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+                const SizedBox(height: 12),
+                const Text('Chưa có truyện nào được tải.'),
+                const SizedBox(height: 4),
+                Text(
+                  'Mở trang chi tiết truyện → nút ⬇ để tải chương.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        }
+
+        // Group by story
+        final byStory = <String, List<DownloadedChapter>>{};
+        for (final ch in chapters) {
+          byStory.putIfAbsent(ch.storyId, () => []).add(ch);
+        }
+
+        return ListView.builder(
+          itemCount: byStory.length,
+          itemBuilder: (_, i) {
+            final storyId = byStory.keys.elementAt(i);
+            final storyChapters = byStory[storyId]!;
+            storyChapters.sort(
+                (a, b) => a.chapterNumber.compareTo(b.chapterNumber));
+            final first = storyChapters.first;
+            return ExpansionTile(
+              leading: first.coverUrl != null && first.coverUrl!.isNotEmpty
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        first.coverUrl!,
+                        width: 40,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            const Icon(Icons.book, size: 40),
+                      ),
+                    )
+                  : const Icon(Icons.book, size: 40),
+              title: Text(
+                first.storyTitle.isEmpty
+                    ? first.storyId
+                    : first.storyTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text('${storyChapters.length} chương đã tải'),
+              children: storyChapters.map((ch) {
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        const Color(0xFFE11D48).withValues(alpha: 0.12),
+                    child: Text('${ch.chapterNumber}',
+                        style: const TextStyle(color: Color(0xFFE11D48))),
+                  ),
+                  title: Text(ch.chapterTitle.isEmpty
+                      ? 'Chương ${ch.chapterNumber}'
+                      : ch.chapterTitle),
+                  subtitle: Text('${ch.wordCount} từ'),
+                  trailing: ch.isRead == 1
+                      ? const Icon(Icons.check_circle,
+                          color: Colors.green, size: 16)
+                      : null,
+                  onTap: () =>
+                      context.push('/chapter-offline/${ch.chapterId}'),
+                );
+              }).toList(),
+            );
+          },
+        );
+      },
     );
-  }
-}
-
-// ---- State ----
-
-final downloadQueueProvider =
-    StateNotifierProvider<DownloadQueueNotifier, AsyncValue<List<DownloadQueueData>>>(
-  (ref) => DownloadQueueNotifier(ref),
-);
-
-class DownloadQueueNotifier
-    extends StateNotifier<AsyncValue<List<DownloadQueueData>>> {
-  DownloadQueueNotifier(this._ref) : super(const AsyncValue.loading()) {
-    _init();
-  }
-  final Ref _ref;
-  StreamSubscription<List<DownloadQueueData>>? _sub;
-
-  void _init() {
-    refresh();
-    // Listen to DownloadManager's watchQueue() stream so the UI
-    // auto-updates when download status changes (pending → downloading →
-    // completed/failed). This is the fix for "vẫn chỉ hiển thị đang tải
-    // mặc dù tải xong rồi".
-    try {
-      final dm = _ref.read(downloadManagerProvider);
-      _sub = dm.watchQueue().listen((rows) {
-        state = AsyncValue.data(rows);
-      });
-    } catch (_) {
-      // DownloadManager not ready yet — refresh manually.
-    }
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
-
-  Future<void> refresh() async {
-    try {
-      final db = _ref.read(appDatabaseProvider);
-      state = AsyncValue.data(await db.getDownloadQueue());
-    } catch (e, s) {
-      state = AsyncValue.error(e, s);
-    }
   }
 }
