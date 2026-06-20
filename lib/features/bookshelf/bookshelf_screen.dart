@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/database/app_database.dart';
+import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
@@ -10,8 +12,13 @@ import '../home/widgets/story_card.dart';
 /// Bookshelf — 4 list types (reading / completed / plan_to_read / favorite).
 /// Plan §5.6.
 ///
-/// Hits `GET /api/v1/mobile/bookmarks?list_type=…` for each tab. Tapping
-/// a row deep-links to the story detail page.
+/// **Authenticated users**: bookmarks are fetched from the server via
+/// `GET /api/v1/mobile/bookmarks`. When toggled, the change is pushed to
+/// the server AND cached locally in Drift.
+///
+/// **Anonymous users**: bookmarks are stored ONLY in Drift (local). When
+/// the user logs in later, the local bookmarks can be synced to the
+/// server via `POST /api/v1/mobile/sync`.
 class BookshelfScreen extends ConsumerStatefulWidget {
   const BookshelfScreen({super.key});
 
@@ -39,8 +46,9 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(bookshelfProvider);
     final currentListType = _tabs[_tab].$1;
-    final items = state.valueOrNull?.where((b) => b.listType == currentListType).toList() ??
-        const [];
+    final items =
+        state.valueOrNull?.where((b) => b.listType == currentListType).toList() ??
+            const [];
     return Scaffold(
       appBar: AppBar(title: const Text('Tủ truyện')),
       body: Column(
@@ -151,14 +159,72 @@ class BookshelfNotifier
 
   Future<void> refresh() async {
     try {
-      final repo = _ref.read(storyRepositoryProvider);
-      final page = await repo.listBookmarks(perPage: 100);
-      state = AsyncValue.data(page.bookmarks);
+      final api = _ref.read(apiClientProvider).maybeWhen(
+            data: (c) => c,
+            orElse: () => null,
+          );
+      final isAuthenticated = api != null && await api.isAuthenticated();
+
+      if (isAuthenticated) {
+        // Server bookmarks
+        final repo = _ref.read(storyRepositoryProvider);
+        final page = await repo.listBookmarks(perPage: 100);
+        state = AsyncValue.data(page.bookmarks);
+      } else {
+        // Local bookmarks (anonymous mode)
+        final db = _ref.read(appDatabaseProvider);
+        final locals = await db.getBookmarks();
+        // Convert local bookmarks to BookmarkItem shape so the UI
+        // can render them without knowing the source.
+        final items = locals.map((b) => BookmarkItem(
+          storyId: b.storyId,
+          title: b.storyId, // We don't store title locally yet —
+                            // the story detail fetch will fill it.
+          slug: b.storyId,
+          coverUrl: null,
+          author: '',
+          listType: b.listType,
+          contentType: 'text',
+          chapterCount: null,
+          bookmarkedAt: DateTime.tryParse(b.updatedAt) ?? DateTime.now(),
+        )).toList();
+        state = AsyncValue.data(items);
+      }
     } catch (e, s) {
       AppLogger.warning('BookshelfNotifier.refresh failed', e, s);
       state = AsyncValue.error(e, s);
     }
   }
-}
 
-// (no trailing helpers)
+  /// Toggle a bookmark. If authenticated, pushes to server. Always
+  /// caches locally so the bookshelf works offline.
+  Future<void> toggle(String storyId, {String listType = 'reading'}) async {
+    final db = _ref.read(appDatabaseProvider);
+    final existing = (await db.getBookmarks())
+        .where((b) => b.storyId == storyId)
+        .toList();
+
+    if (existing.any((b) => b.listType == listType)) {
+      // Remove
+      await db.deleteBookmark(storyId);
+      // Try server
+      try {
+        final repo = _ref.read(storyRepositoryProvider);
+        await repo.toggleBookmark(storyId, listType: listType);
+      } catch (_) {/* offline — local is source of truth */}
+    } else {
+      // Add
+      await db.upsertBookmark(LocalBookmarksCompanion.insert(
+        storyId: storyId,
+        listType: listType,
+        updatedAt: DateTime.now().toIso8601String(),
+      ));
+      // Try server
+      try {
+        final repo = _ref.read(storyRepositoryProvider);
+        await repo.toggleBookmark(storyId, listType: listType);
+      } catch (_) {/* offline — local is source of truth */}
+    }
+    await refresh();
+  }
+}

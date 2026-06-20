@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
+import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
 
 /// Story detail screen. Plan §5.3.
 ///
@@ -38,55 +39,89 @@ class _StoryDetailBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final story = detail.story;
-    final chaptersAsync = ref.watch(_chapterListProvider(story.id));
+    final chaptersAsync = ref.watch(chapterListProvider(story.id));
     return CustomScrollView(
       slivers: [
         SliverAppBar(
           pinned: true,
-          expandedHeight: 260,
-          flexibleSpace: FlexibleSpaceBar(
-            title: Text(
-              story.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            background: story.coverUrl == null
-                ? Container(color: AppTheme.primary.withValues(alpha: 0.2))
-                : Image.network(
-                    story.coverUrl!,
-                    fit: BoxFit.cover,
-                    color: Colors.black.withValues(alpha: 0.4),
-                    colorBlendMode: BlendMode.darken,
-                    errorBuilder: (_, _, _) => Container(
-                      color: AppTheme.primary.withValues(alpha: 0.2),
-                    ),
+          title: Text(
+            story.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        // Cover + info row: 3:4 cover on the left, title/author/status
+        // on the right. This matches the web story detail layout.
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 3:4 cover image
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 120,
+                    height: 160,
+                    child: story.coverUrl == null
+                        ? Container(
+                            color: AppTheme.primary.withValues(alpha: 0.2),
+                            child: const Icon(Icons.book, size: 48),
+                          )
+                        : Image.network(
+                            story.coverUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => Container(
+                              color: AppTheme.primary.withValues(alpha: 0.2),
+                              child: const Icon(Icons.book, size: 48),
+                            ),
+                          ),
                   ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        story.title,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        story.author,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        children: [
+                          if (story.status != null)
+                            _StatusChip(status: story.status!),
+                          if (detail.bookmark != null)
+                            _BookmarkChip(listType: detail.bookmark!),
+                          if (story.chapterCount != null)
+                            Chip(
+                              label: Text('${story.chapterCount} chương'),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        story.author,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    if (story.status != null)
-                      _StatusChip(status: story.status!),
-                    if (detail.bookmark != null) ...[
-                      const SizedBox(width: 6),
-                      _BookmarkChip(listType: detail.bookmark!),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (story.categories.isNotEmpty)
+                if (story.categories.isNotEmpty) ...[
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
@@ -97,8 +132,9 @@ class _StoryDetailBody extends ConsumerWidget {
                             visualDensity: VisualDensity.compact),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                ],
                 if (story.tags.isNotEmpty) ...[
-                  const SizedBox(height: 6),
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
@@ -111,8 +147,8 @@ class _StoryDetailBody extends ConsumerWidget {
                         ),
                     ],
                   ),
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 12),
                 Text(
                   story.synopsis ?? '(Chưa có giới thiệu)',
                   style: Theme.of(context).textTheme.bodyMedium,
@@ -137,8 +173,8 @@ class _StoryDetailBody extends ConsumerWidget {
                           : Icons.bookmark),
                       onPressed: () async {
                         await ref
-                            .read(storyRepositoryProvider)
-                            .toggleBookmark(story.id);
+                            .read(bookshelfProvider.notifier)
+                            .toggle(story.id);
                         ref.invalidate(_storyDetailProvider(story.slug));
                       },
                     ),
@@ -326,8 +362,6 @@ final _storyDetailProvider = FutureProvider.autoDispose
   return repo.fetchStoryDetail(slug);
 });
 
-final _chapterListProvider = FutureProvider.autoDispose
-    .family<PaginatedChapters, String>((ref, storyId) async {
-  final repo = ref.watch(storyRepositoryProvider);
-  return repo.fetchChapterList(storyId, perPage: 100);
-});
+// chapterListProvider is now defined in repositories/story_repository.dart
+// and shared between this screen and the chapter reader's chapter-list
+// bottom sheet.

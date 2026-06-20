@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/markdown/markdown.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/chapter_content.dart';
+import '../../repositories/story_repository.dart';
 import '../tts/tts_mini_player.dart';
 import 'chapter_provider.dart';
 import 'reader_settings_provider.dart';
@@ -77,6 +78,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
               : () => context.go(
                   '/chapter/${widget.storyId}:${c.nextChapter}'),
           onOpenSettings: () => _openSettings(context),
+          onOpenChapterList: () => _openChapterList(context, c),
         ),
       ),
     );
@@ -89,6 +91,17 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       builder: (_) => const ReaderSettingsSheet(),
     );
   }
+
+  void _openChapterList(BuildContext context, ChapterContent chapter) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ChapterListSheet(
+        storyId: widget.storyId,
+        currentChapter: chapter.chapterNumber,
+      ),
+    );
+  }
 }
 
 class _ReaderBody extends ConsumerStatefulWidget {
@@ -99,6 +112,7 @@ class _ReaderBody extends ConsumerStatefulWidget {
     this.onPrev,
     this.onNext,
     this.onOpenSettings,
+    this.onOpenChapterList,
   });
 
   final ChapterContent chapter;
@@ -107,6 +121,7 @@ class _ReaderBody extends ConsumerStatefulWidget {
   final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenChapterList;
 
   @override
   ConsumerState<_ReaderBody> createState() => _ReaderBodyState();
@@ -189,6 +204,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       onPrev: widget.onPrev,
       onNext: widget.onNext,
       onOpenSettings: widget.onOpenSettings,
+      onOpenChapterList: widget.onOpenChapterList,
       child: Stack(
         children: [
           body,
@@ -319,3 +335,110 @@ class _HorizontalSwipeWrapper extends StatelessWidget {
     );
   }
 }
+
+/// Bottom sheet listing all chapters in the current story. Tapping a
+/// chapter navigates to it. The current chapter is highlighted.
+class _ChapterListSheet extends ConsumerWidget {
+  const _ChapterListSheet({
+    required this.storyId,
+    required this.currentChapter,
+  });
+
+  final String storyId;
+  final int currentChapter;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final chaptersAsync = ref.watch(chapterListProvider(storyId));
+    return DraggableScrollableSheet(
+      initialChildSize: 0.7,
+      minChildSize: 0.3,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Text('Danh sách chương',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: chaptersAsync.when(
+                  loading: () => const Center(
+                      child: CircularProgressIndicator()),
+                  error: (e, _) => Center(child: Text('Lỗi: $e')),
+                  data: (page) => ListView.builder(
+                    controller: scrollController,
+                    itemCount: page.chapters.length,
+                    itemBuilder: (_, i) {
+                      final c = page.chapters[i];
+                      final isCurrent = c.chapterNumber == currentChapter;
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isCurrent
+                              ? AppTheme.primary
+                              : Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                          child: Text(
+                            '${c.chapterNumber}',
+                            style: TextStyle(
+                              color: isCurrent
+                                  ? Colors.white
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .onSurface,
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                          c.title.isEmpty
+                              ? 'Chương ${c.chapterNumber}'
+                              : c.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: isCurrent
+                              ? TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.primary,
+                                )
+                              : null,
+                        ),
+                        trailing: isCurrent
+                            ? const Icon(Icons.check_circle,
+                                color: AppTheme.primary, size: 20)
+                            : null,
+                        onTap: () {
+                          context.go(
+                              '/chapter/$storyId:${c.chapterNumber}');
+                          Navigator.of(context).pop();
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+

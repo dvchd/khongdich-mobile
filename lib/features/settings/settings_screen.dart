@@ -17,10 +17,36 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final reader = ref.watch(readerSettingsProvider);
     final env = ref.watch(appEnvProvider);
+    final appThemeMode = ref.watch(themeModeProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Cài đặt')),
       body: ListView(
         children: [
+          _Section('Giao diện'),
+          ListTile(
+            leading: const Icon(Icons.brightness_6_outlined),
+            title: const Text('Theme ứng dụng'),
+            subtitle: Wrap(
+              spacing: 6,
+              children: [
+                for (final mode in [
+                  ('system', 'Theo hệ thống'),
+                  ('light', 'Sáng'),
+                  ('dark', 'Tối'),
+                ])
+                  ChoiceChip(
+                    label: Text(mode.$2),
+                    selected: appThemeMode.name == mode.$1,
+                    onSelected: (_) {
+                      ref.read(themeModeProvider.notifier).state =
+                          ThemeMode.values.firstWhere(
+                              (m) => m.name == mode.$1);
+                    },
+                  ),
+              ],
+            ),
+          ),
+          const Divider(),
           _Section('Môi trường'),
           ListTile(
             leading: const Icon(Icons.dns_outlined),

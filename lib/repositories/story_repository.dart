@@ -353,6 +353,14 @@ final storyRepositoryProvider = Provider<StoryRepository>((ref) {
   return StoryRepository(api);
 });
 
+/// Paginated chapter list for a story. Shared by story detail screen
+/// and the chapter reader's chapter-list bottom sheet.
+final chapterListProvider = FutureProvider.autoDispose
+    .family<PaginatedChapters, String>((ref, storyId) async {
+  final repo = ref.watch(storyRepositoryProvider);
+  return repo.fetchChapterList(storyId, perPage: 200);
+});
+
 // ─── DTOs ──────────────────────────────────────────────────────────
 
 class PaginatedStories {

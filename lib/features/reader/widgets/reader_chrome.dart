@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../models/chapter_content.dart';
 
@@ -13,6 +14,7 @@ class ReaderChrome extends StatelessWidget {
     this.onPrev,
     this.onNext,
     this.onOpenSettings,
+    this.onOpenChapterList,
   });
 
   final ChapterContent chapter;
@@ -20,6 +22,7 @@ class ReaderChrome extends StatelessWidget {
   final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenChapterList;
 
   @override
   Widget build(BuildContext context) {
@@ -27,13 +30,20 @@ class ReaderChrome extends StatelessWidget {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).maybePop(),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
         ),
         title: Text(chapter.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            icon: const Icon(Icons.bookmark_border),
-            onPressed: () => _toast(context, 'Bookmark — nhấn giữ để thêm vào tủ'),
+            icon: const Icon(Icons.list),
+            tooltip: 'Danh sách chương',
+            onPressed: onOpenChapterList,
           ),
           IconButton(
             icon: const Icon(Icons.text_fields),
@@ -66,12 +76,6 @@ class ReaderChrome extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-  void _toast(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 1)),
     );
   }
 }
