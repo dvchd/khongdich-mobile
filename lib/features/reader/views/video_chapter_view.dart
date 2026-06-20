@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import '../../../core/markdown/markdown.dart';
 
 /// Video chapter view: YouTube player + optional markdown caption.
 ///
-/// Plan §4.5 — uses `youtube_player_flutter` v10 (which wraps
-/// `youtube_player_iframe` for web-view-based playback — no native
-/// `flutter_inappwebview` proguard conflict).
+/// Uses `youtube_player_flutter` v10. The player widget renders its
+/// own controls overlay — we don't add a second set.
+///
+/// Fullscreen: when the user taps the fullscreen button, we force
+/// landscape orientation. On exit, we restore portrait.
 class VideoChapterView extends StatefulWidget {
   const VideoChapterView({
     super.key,
@@ -47,6 +50,8 @@ class _VideoChapterViewState extends State<VideoChapterView> {
 
   @override
   void dispose() {
+    // Restore portrait when leaving the video view.
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _controller?.close();
     super.dispose();
   }
@@ -58,11 +63,15 @@ class _VideoChapterViewState extends State<VideoChapterView> {
       padding: const EdgeInsets.all(16),
       children: [
         if (_controller != null) ...[
-          AspectRatio(
-            aspectRatio: 16 / 9,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
             child: YoutubePlayer(
               controller: _controller!,
               aspectRatio: 16 / 9,
+              // Enable auto-fullscreen on vertical drag (user swipes up
+              // → fullscreen landscape).
+              autoFullScreen: true,
+              enableFullScreenOnVerticalDrag: true,
             ),
           ),
           const SizedBox(height: 16),

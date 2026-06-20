@@ -14,7 +14,7 @@ import 'views/chat_chapter_view.dart';
 import 'views/manga_chapter_view.dart';
 import 'views/text_chapter_view.dart';
 import 'views/video_chapter_view.dart';
-import 'widgets/reader_chrome.dart';
+import 'widgets/reader_bar.dart';
 import 'widgets/reader_settings_sheet.dart';
 
 /// Polymorphic chapter reader. Dispatches to one of the four content_type
@@ -199,7 +199,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
           )
         : content;
 
-    return ReaderChrome(
+    return ReaderBar(
       chapter: widget.chapter,
       onPrev: widget.onPrev,
       onNext: widget.onNext,

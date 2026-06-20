@@ -255,21 +255,6 @@ class ChatMessage {
         messageType: json['message_type'] as String? ?? 'dialogue',
         imageUrl: json['image_url'] as String?,
       );
-
-  /// Render-side: "left" / "right" / "narration" — matches the
-  /// ChatChapterView widget contract. Backend doesn't compute this,
-  /// so we derive it from `message_type` + `character_id`. The first
-  /// participant in the story's character list is treated as the
-  /// "left" speaker; everyone else is "right". `narration` and
-  /// `system` messages span the full width.
-  String sideFor(List<ChatParticipant> participants) {
-    if (messageType == 'narration' || messageType == 'system') {
-      return 'narration';
-    }
-    if (characterId == null || participants.isEmpty) return 'left';
-    final firstId = participants.first.id;
-    return characterId == firstId ? 'left' : 'right';
-  }
 }
 
 class ChatChapterContent extends ChapterContent {

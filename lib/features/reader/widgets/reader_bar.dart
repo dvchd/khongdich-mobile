@@ -6,8 +6,8 @@ import '../../../models/chapter_content.dart';
 /// Shared chrome around the polymorphic chapter views: app bar with the
 /// chapter title, a bottom progress bar with prev/next navigation, and a
 /// reading-settings entry point. Plan §5.4 + §14.4.
-class ReaderChrome extends StatelessWidget {
-  const ReaderChrome({
+class ReaderBar extends StatelessWidget {
+  const ReaderBar({
     super.key,
     required this.chapter,
     required this.child,
