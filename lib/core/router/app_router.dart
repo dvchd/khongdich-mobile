@@ -155,8 +155,10 @@ class OfflineChapterReader extends ConsumerWidget {
           'title': row.chapterTitle,
         };
         final chapter = ChapterContent.fromJson(fullJson);
-        // Use a simplified reader that doesn't try to fetch from server.
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFFAFAFA);
         return Scaffold(
+          backgroundColor: bgColor,
           appBar: AppBar(
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),

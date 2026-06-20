@@ -211,15 +211,14 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       ReaderThemeMode.system => MediaQuery.of(context).platformBrightness,
     };
     final readerTheme = _resolveReaderTheme(widget.settings, brightness);
+    final isPageMode = widget.settings.scrollMode == ReaderScrollMode.horizontal;
     final content = _scrollWrapper(
       switch (widget.chapter) {
         TextChapterContent(:final contentMarkdown) => TextChapterView(
             markdown: contentMarkdown,
             theme: readerTheme,
             scrollController: _scrollController,
-            isPageMode: widget.settings.scrollMode == ReaderScrollMode.horizontal,
-            onChapterEnd: widget.onNext,
-            onChapterStart: widget.onPrev,
+            isPageMode: isPageMode,
           ),
         MangaChapterContent(:final images) => MangaChapterView(
             images: [for (final p in images) p.url],
@@ -243,12 +242,16 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       },
     );
 
-    // In page-flip mode, TextChapterView uses PageView which handles
-    // horizontal swipes internally. In vertical scroll mode, wrap with
-    // _HorizontalSwipeWrapper for chapter navigation via swipe.
-    final isPageMode = widget.settings.scrollMode == ReaderScrollMode.horizontal;
+    // In page-flip mode, the TextChapterView's PageView handles
+    // page-turning internally. We wrap it in a _PageModeWrapper that
+    // detects overscroll (swipe left on last page → next chapter,
+    // swipe right on first page → prev chapter).
     final body = isPageMode
-        ? content
+        ? _PageModeWrapper(
+            onNext: widget.onNext,
+            onPrev: widget.onPrev,
+            child: content,
+          )
         : _HorizontalSwipeWrapper(
             onSwipeLeft: widget.onNext,
             onSwipeRight: widget.onPrev,
@@ -527,6 +530,56 @@ class _ChapterListSheet extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Wrapper for page-flip mode. Intercepts horizontal drag gestures that
+/// go BEYOND the PageView's scroll boundaries — i.e. swiping left on
+/// the last page or right on the first page. Only those overscrolls
+/// trigger chapter navigation. Normal page-turn swipes are handled by
+/// the PageView inside.
+///
+/// Implementation: we use NotificationListener<ScrollNotification> to
+/// detect when the PageView reaches its boundary AND the user keeps
+/// swiping. The OverscrollNotification fires at that point.
+class _PageModeWrapper extends StatefulWidget {
+  const _PageModeWrapper({this.onNext, this.onPrev, required this.child});
+  final VoidCallback? onNext;
+  final VoidCallback? onPrev;
+  final Widget child;
+
+  @override
+  State<_PageModeWrapper> createState() => _PageModeWrapperState();
+}
+
+class _PageModeWrapperState extends State<_PageModeWrapper> {
+  double _accumulatedOverscroll = 0;
+  static const _threshold = 60.0; // px of overscroll to trigger chapter nav
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is OverscrollNotification &&
+            notification.metrics.axis == Axis.horizontal) {
+          _accumulatedOverscroll += notification.overscroll;
+          if (_accumulatedOverscroll.abs() > _threshold) {
+            if (_accumulatedOverscroll < 0 && widget.onNext != null) {
+              // Swiped left past the last page → next chapter
+              widget.onNext!();
+            } else if (_accumulatedOverscroll > 0 && widget.onPrev != null) {
+              // Swiped right past the first page → prev chapter
+              widget.onPrev!();
+            }
+            _accumulatedOverscroll = 0;
+          }
+        } else if (notification is ScrollEndNotification) {
+          _accumulatedOverscroll = 0;
+        }
+        return false;
+      },
+      child: widget.child,
     );
   }
 }

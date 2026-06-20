@@ -51,53 +51,53 @@ class KhongdichApp extends ConsumerWidget {
       routes: [
         GoRoute(
           path: '/',
-          builder: (_, _) => Scaffold(
-            backgroundColor: AppTheme.primary,
-            body: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Use the mipmap launcher icon as the splash logo.
-                  // On Android, mipmap assets are accessible via
-                  // drawable references, but in Flutter we use
-                  // Image.asset from the Flutter assets bundle.
-                  // The icon was generated from the backend's OG image.
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Image.asset(
-                      'assets/icons/ic_launcher.png',
-                      width: 96,
-                      height: 96,
-                      errorBuilder: (_, _, _) => Container(
+          builder: (context, _) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFFAFAFA);
+            final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+            return Scaffold(
+              backgroundColor: bgColor,
+              body: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: Image.asset(
+                        'assets/icons/ic_launcher.png',
                         width: 96,
                         height: 96,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        child: const Icon(
-                          Icons.menu_book,
-                          color: AppTheme.primary,
-                          size: 48,
+                        errorBuilder: (_, _, _) => Container(
+                          width: 96,
+                          height: 96,
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary,
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: const Icon(
+                            Icons.menu_book,
+                            color: Colors.white,
+                            size: 48,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Không Dịch',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
+                    const SizedBox(height: 16),
+                    Text(
+                      'Không Dịch',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  const CircularProgressIndicator(color: Colors.white),
-                ],
+                    const SizedBox(height: 16),
+                    CircularProgressIndicator(color: AppTheme.primary),
+                  ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ],
     );
