@@ -189,46 +189,73 @@ class _OfflineContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final readerTheme = ReaderTheme.defaults(isDark ? Brightness.dark : Brightness.light);
-    return switch (chapter) {
-      TextChapterContent(:final contentMarkdown) => SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-          child: MarkdownRenderer(
-            blocks: MarkdownParser().parse(contentMarkdown),
-            theme: readerTheme,
-          ),
-        ),
-      MangaChapterContent(:final images) => ListView.builder(
-          itemCount: images.length,
-          itemBuilder: (_, i) => CachedNetworkImage(
-            imageUrl: images[i].url,
-            fit: BoxFit.fitWidth,
-            errorWidget: (_, _, _) => const SizedBox(
-              height: 200,
-              child: Center(child: Icon(Icons.broken_image, size: 36)),
+    // Must wrap in ColoredBox with matching background so text is visible
+    // regardless of app theme. Without this, dark text on dark scaffold
+    // = invisible.
+    final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFFAFAFA);
+    final textColor = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    // Override the reader theme's body color to match background.
+    final fixedTheme = ReaderTheme(
+      bodyStyle: readerTheme.bodyStyle.copyWith(color: textColor),
+      headingStyles: {
+        for (final e in readerTheme.headingStyles.entries)
+          e.key: e.value.copyWith(color: textColor),
+      },
+      accentColor: readerTheme.accentColor,
+      paragraphSpacing: readerTheme.paragraphSpacing,
+      codeStyle: readerTheme.codeStyle.copyWith(color: textColor),
+      quoteColor: readerTheme.quoteColor,
+      blockBackground: readerTheme.blockBackground,
+    );
+
+    return ColoredBox(
+      color: bgColor,
+      child: switch (chapter) {
+        TextChapterContent(:final contentMarkdown) => SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            child: MarkdownRenderer(
+              blocks: MarkdownParser().parse(contentMarkdown),
+              theme: fixedTheme,
             ),
           ),
-        ),
-      ChatChapterContent(:final participants, :final messages) =>
+        MangaChapterContent(:final images) => ListView.builder(
+            itemCount: images.length,
+            itemBuilder: (_, i) => ColoredBox(
+              color: bgColor,
+              child: CachedNetworkImage(
+                imageUrl: images[i].url,
+                fit: BoxFit.fitWidth,
+                errorWidget: (_, _, _) => SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Icon(Icons.broken_image, size: 36, color: textColor.withValues(alpha: 0.4)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ChatChapterContent(:final participants, :final messages) =>
           ChatChapterView(
             participants: participants,
             messages: messages,
           ),
-      VideoChapterContent(:final video) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.videocam, size: 48, color: Colors.grey),
-                const SizedBox(height: 12),
-                Text('Video: ${video.videoId}'),
-                const SizedBox(height: 8),
-                const Text('Cần kết nối mạng để xem video.',
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
-              ],
+        VideoChapterContent(:final video) => Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.videocam, size: 48, color: textColor.withValues(alpha: 0.4)),
+                  const SizedBox(height: 12),
+                  Text('Video: ${video.videoId}', style: TextStyle(color: textColor)),
+                  const SizedBox(height: 8),
+                  Text('Cần kết nối mạng để xem video.',
+                      style: TextStyle(fontSize: 13, color: textColor.withValues(alpha: 0.5))),
+                ],
+              ),
             ),
           ),
-        ),
-    };
+      },
+    );
   }
 }

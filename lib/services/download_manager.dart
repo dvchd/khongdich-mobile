@@ -106,6 +106,21 @@ class DownloadManager {
 
     for (final row in pending) {
       try {
+        // Skip if already downloaded — don't re-download.
+        final existing = await _db.getDownloadedChapter(row.chapterId);
+        if (existing != null) {
+          // Already have it — mark queue row as completed and skip.
+          await _db.updateDownloadQueueRow(
+              row.id,
+              DownloadQueueCompanion(
+                status: const Value('completed'),
+                progress: const Value(1.0),
+                completedAt: Value(DateTime.now().toIso8601String()),
+              ));
+          await _emit();
+          continue;
+        }
+
         await _db.updateDownloadQueueRow(
             row.id,
             DownloadQueueCompanion(
@@ -115,8 +130,7 @@ class DownloadManager {
             ));
         await _emit();
 
-        // Fetch the chapter via the new JSON endpoint. We pass the
-        // chapter_id stored on the queue row.
+        // Fetch the chapter via the JSON endpoint.
         final chapter = await _repo.fetchChapter(row.chapterId);
 
         // Serialize to JSON for storage. We round-trip through the

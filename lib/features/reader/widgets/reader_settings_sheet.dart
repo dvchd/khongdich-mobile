@@ -145,6 +145,6 @@ class ReaderSettingsSheet extends ConsumerWidget {
 
   String _scrollLabel(ReaderScrollMode mode) => switch (mode) {
         ReaderScrollMode.vertical => 'Cuộn dọc',
-        ReaderScrollMode.horizontal => 'Vuốt ngang',
+        ReaderScrollMode.horizontal => 'Lật trang',
       };
 }

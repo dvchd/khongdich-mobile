@@ -217,6 +217,9 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
             markdown: contentMarkdown,
             theme: readerTheme,
             scrollController: _scrollController,
+            isPageMode: widget.settings.scrollMode == ReaderScrollMode.horizontal,
+            onChapterEnd: widget.onNext,
+            onChapterStart: widget.onPrev,
           ),
         MangaChapterContent(:final images) => MangaChapterView(
             images: [for (final p in images) p.url],
@@ -240,14 +243,17 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       },
     );
 
-    // Swipe gestures work in BOTH vertical and horizontal scroll modes.
-    // Swipe left → next chapter, swipe right → prev chapter.
-    // This replaces the always-visible prev/next buttons.
-    final body = _HorizontalSwipeWrapper(
-      onSwipeLeft: widget.onNext,
-      onSwipeRight: widget.onPrev,
-      child: content,
-    );
+    // In page-flip mode, TextChapterView uses PageView which handles
+    // horizontal swipes internally. In vertical scroll mode, wrap with
+    // _HorizontalSwipeWrapper for chapter navigation via swipe.
+    final isPageMode = widget.settings.scrollMode == ReaderScrollMode.horizontal;
+    final body = isPageMode
+        ? content
+        : _HorizontalSwipeWrapper(
+            onSwipeLeft: widget.onNext,
+            onSwipeRight: widget.onPrev,
+            child: content,
+          );
 
     // Resolve the reader background color from the theme mode.
     final isSepia = widget.settings.theme == ReaderThemeMode.sepia;
