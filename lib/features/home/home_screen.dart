@@ -306,14 +306,15 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
     state = const AsyncValue.loading();
     try {
       final repo = _ref.read(storyRepositoryProvider);
-      // Fan out the section fetches in parallel.
+      // Fan out the section fetches in parallel. `fetchContinueReading`
+      // is wrapped in a try-catch because it returns 401 when the user
+      // is not authenticated — we don't want that to crash the whole
+      // home screen.
       final results = await Future.wait([
         repo.listStories(sort: 'hot', perPage: 20),
         repo.listStories(sort: 'fresh', perPage: 20),
         repo.listStories(sort: 'picks', perPage: 20),
-        // continueReading returns an empty list when the user is not
-        // authenticated — that's fine, we just skip the strip.
-        repo.fetchContinueReading(),
+        repo.fetchContinueReading().catchError((_) => <ContinueReadingItem>[]),
       ]);
       state = AsyncValue.data(HomeFeed(
         hot: (results[0] as PaginatedStories).stories,

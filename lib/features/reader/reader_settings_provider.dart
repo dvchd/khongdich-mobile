@@ -9,24 +9,28 @@ class ReaderSettings {
     this.lineHeight = 1.6,
     this.fontFamily = 'NotoSerif',
     this.theme = ReaderThemeMode.system,
+    this.scrollMode = ReaderScrollMode.vertical,
   });
 
   final double fontSize;
   final double lineHeight;
   final String fontFamily;
   final ReaderThemeMode theme;
+  final ReaderScrollMode scrollMode;
 
   ReaderSettings copyWith({
     double? fontSize,
     double? lineHeight,
     String? fontFamily,
     ReaderThemeMode? theme,
+    ReaderScrollMode? scrollMode,
   }) =>
       ReaderSettings(
         fontSize: fontSize ?? this.fontSize,
         lineHeight: lineHeight ?? this.lineHeight,
         fontFamily: fontFamily ?? this.fontFamily,
         theme: theme ?? this.theme,
+        scrollMode: scrollMode ?? this.scrollMode,
       );
 
   Map<String, dynamic> toJson() => {
@@ -34,6 +38,7 @@ class ReaderSettings {
         'lineHeight': lineHeight,
         'fontFamily': fontFamily,
         'theme': theme.name,
+        'scrollMode': scrollMode.name,
       };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) => ReaderSettings(
@@ -44,10 +49,17 @@ class ReaderSettings {
           (m) => m.name == (json['theme'] as String?),
           orElse: () => ReaderThemeMode.system,
         ),
+        scrollMode: ReaderScrollMode.values.firstWhere(
+          (m) => m.name == (json['scrollMode'] as String?),
+          orElse: () => ReaderScrollMode.vertical,
+        ),
       );
 }
 
 enum ReaderThemeMode { system, light, dark, sepia }
+
+/// Vertical = cuộn dọc truyền thống. Horizontal = vuốt ngang chuyển chương.
+enum ReaderScrollMode { vertical, horizontal }
 
 final readerSettingsProvider =
     StateNotifierProvider<ReaderSettingsNotifier, ReaderSettings>(
@@ -65,6 +77,7 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
     final lineHeight = prefs.getDouble('reader.lineHeight');
     final fontFamily = prefs.getString('reader.fontFamily');
     final themeName = prefs.getString('reader.theme');
+    final scrollModeName = prefs.getString('reader.scrollMode');
     state = ReaderSettings(
       fontSize: fontSize ?? state.fontSize,
       lineHeight: lineHeight ?? state.lineHeight,
@@ -72,6 +85,10 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
       theme: ReaderThemeMode.values.firstWhere(
         (m) => m.name == themeName,
         orElse: () => ReaderThemeMode.system,
+      ),
+      scrollMode: ReaderScrollMode.values.firstWhere(
+        (m) => m.name == scrollModeName,
+        orElse: () => ReaderScrollMode.vertical,
       ),
     );
   }
@@ -98,5 +115,11 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
     state = state.copyWith(theme: v);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('reader.theme', v.name);
+  }
+
+  Future<void> setScrollMode(ReaderScrollMode v) async {
+    state = state.copyWith(scrollMode: v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('reader.scrollMode', v.name);
   }
 }

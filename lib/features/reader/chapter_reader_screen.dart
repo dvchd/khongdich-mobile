@@ -147,6 +147,43 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
   @override
   Widget build(BuildContext context) {
     final readerTheme = _resolveReaderTheme(widget.settings, Brightness.dark);
+    final content = _scrollWrapper(
+      switch (widget.chapter) {
+        TextChapterContent(:final contentMarkdown) => TextChapterView(
+            markdown: contentMarkdown,
+            theme: readerTheme,
+            scrollController: _scrollController,
+          ),
+        MangaChapterContent(:final images) => MangaChapterView(
+            images: [for (final p in images) p.url],
+            scrollController: _scrollController,
+          ),
+        ChatChapterContent(:final participants, :final messages) =>
+          ChatChapterView(
+            participants: participants,
+            messages: messages,
+            scrollController: _scrollController,
+          ),
+        VideoChapterContent(:final video, :final captionMarkdown) =>
+          VideoChapterView(
+            videoId: video.videoId,
+            captionMarkdown: captionMarkdown,
+            readerTheme: readerTheme,
+            scrollController: _scrollController,
+          ),
+      },
+    );
+
+    // In horizontal mode, wrap content with swipe gesture detection.
+    // Swipe left → next chapter, swipe right → prev chapter.
+    final body = widget.settings.scrollMode == ReaderScrollMode.horizontal
+        ? _HorizontalSwipeWrapper(
+            onSwipeLeft: widget.onNext,
+            onSwipeRight: widget.onPrev,
+            child: content,
+          )
+        : content;
+
     return ReaderChrome(
       chapter: widget.chapter,
       onPrev: widget.onPrev,
@@ -154,32 +191,7 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
       onOpenSettings: widget.onOpenSettings,
       child: Stack(
         children: [
-          _scrollWrapper(
-            switch (widget.chapter) {
-              TextChapterContent(:final contentMarkdown) => TextChapterView(
-                  markdown: contentMarkdown,
-                  theme: readerTheme,
-                  scrollController: _scrollController,
-                ),
-              MangaChapterContent(:final images) => MangaChapterView(
-                  images: [for (final p in images) p.url],
-                  scrollController: _scrollController,
-                ),
-              ChatChapterContent(:final participants, :final messages) =>
-                ChatChapterView(
-                  participants: participants,
-                  messages: messages,
-                  scrollController: _scrollController,
-                ),
-              VideoChapterContent(:final video, :final captionMarkdown) =>
-                VideoChapterView(
-                  videoId: video.videoId,
-                  captionMarkdown: captionMarkdown,
-                  readerTheme: readerTheme,
-                  scrollController: _scrollController,
-                ),
-            },
-          ),
+          body,
           Positioned(
             left: 0,
             right: 0,
@@ -273,6 +285,37 @@ class _ReaderError extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Wraps content with horizontal swipe detection for the horizontal
+/// reader mode. Swipe left → next chapter, swipe right → prev chapter.
+/// Vertical scrolling passes through to the child widget.
+class _HorizontalSwipeWrapper extends StatelessWidget {
+  const _HorizontalSwipeWrapper({
+    required this.child,
+    this.onSwipeLeft,
+    this.onSwipeRight,
+  });
+
+  final Widget child;
+  final VoidCallback? onSwipeLeft;
+  final VoidCallback? onSwipeRight;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity < -300 && onSwipeLeft != null) {
+          onSwipeLeft!();
+        } else if (velocity > 300 && onSwipeRight != null) {
+          onSwipeRight!();
+        }
+      },
+      behavior: HitTestBehavior.translucent,
+      child: child,
     );
   }
 }

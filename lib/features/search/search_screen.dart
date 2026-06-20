@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../home/widgets/story_card.dart';
 
-/// Search screen. Plan §6.3 lists full-text + autocomplete as Phase 2.
-/// MVP: simple `q` query that hits `GET /api/v1/search?q=&limit=` —
-/// the only JSON search endpoint currently exposed by the backend.
+/// Search screen. Plan §6.3.
+///
+/// On initial load (no query entered), shows ~12 random stories so the
+/// user can start browsing immediately. Once a query is entered, the
+/// results replace the random stories.
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
 
@@ -17,28 +20,35 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
-  final _focus = FocusNode();
+  bool _searched = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => ref.read(randomStoriesProvider.notifier).load());
+  }
 
   @override
   void dispose() {
     _controller.dispose();
-    _focus.dispose();
     super.dispose();
   }
 
   Future<void> _runSearch(String q) async {
     final query = q.trim();
     if (query.isEmpty) {
+      setState(() => _searched = false);
       ref.read(searchProvider.notifier).clear();
       return;
     }
-    _focus.unfocus();
+    setState(() => _searched = true);
     await ref.read(searchProvider.notifier).run(query);
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(searchProvider);
+    final searchState = ref.watch(searchProvider);
+    final randomState = ref.watch(randomStoriesProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Padding(
@@ -47,7 +57,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           children: [
             TextField(
               controller: _controller,
-              focusNode: _focus,
               textInputAction: TextInputAction.search,
               onSubmitted: _runSearch,
               decoration: InputDecoration(
@@ -58,7 +67,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         icon: const Icon(Icons.clear),
                         onPressed: () {
                           _controller.clear();
-                          ref.read(searchProvider.notifier).clear();
+                          _runSearch('');
                         },
                       )
                     : null,
@@ -67,41 +76,86 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: switch (state) {
-                SearchIdle() => const _EmptyState(
-                    icon: Icons.search_off,
-                    message: 'Nhập từ khoá rồi nhấn tìm.',
-                  ),
-                SearchLoading() =>
-                  const Center(child: CircularProgressIndicator()),
-                SearchError(:final message) => _EmptyState(
-                    icon: Icons.cloud_off,
-                    message: 'Tìm kiếm thất bại: $message',
-                  ),
-                SearchSuccess(:final result) => result.stories.isEmpty
-                    ? const _EmptyState(
-                        icon: Icons.inbox_outlined,
-                        message: 'Không có kết quả phù hợp.',
-                      )
-                    : GridView.builder(
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.62,
-                        ),
-                        itemCount: result.stories.length,
-                        itemBuilder: (_, i) => StoryCard(
-                          story: result.stories[i],
-                          onTap: () =>
-                              context.push('/story/${result.stories[i].slug}'),
-                        ),
-                      ),
-              },
+              child: _searched
+                  ? _buildSearchResults(searchState)
+                  : _buildRandom(randomState),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSearchResults(SearchState state) {
+    return switch (state) {
+      SearchIdle() => const _EmptyState(
+          icon: Icons.search_off,
+          message: 'Nhập từ khoá rồi nhấn tìm.',
+        ),
+      SearchLoading() =>
+        const Center(child: CircularProgressIndicator()),
+      SearchError(:final message) => _EmptyState(
+          icon: Icons.cloud_off,
+          message: 'Tìm kiếm thất bại: $message',
+        ),
+      SearchSuccess(:final result) => result.stories.isEmpty
+          ? const _EmptyState(
+              icon: Icons.inbox_outlined,
+              message: 'Không có kết quả phù hợp.',
+            )
+          : GridView.builder(
+              gridDelegate:
+                  const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 0.62,
+              ),
+              itemCount: result.stories.length,
+              itemBuilder: (_, i) => StoryCard(
+                story: result.stories[i],
+                onTap: () =>
+                    context.push('/story/${result.stories[i].slug}'),
+              ),
+            ),
+    };
+  }
+
+  Widget _buildRandom(AsyncValue<List<StorySummary>> state) {
+    return state.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _EmptyState(
+        icon: Icons.cloud_off,
+        message: 'Không tải được truyện: $e',
+      ),
+      data: (stories) => CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Khám phá truyện',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+          ),
+          SliverGrid(
+            gridDelegate:
+                const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 0.62,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, i) => StoryCard(
+                story: stories[i],
+                onTap: () => context.push('/story/${stories[i].slug}'),
+              ),
+              childCount: stories.length,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -128,7 +182,7 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-// ---- Search state ----
+// ─── Search state ───────────────────────────────────────────────
 
 sealed class SearchState {
   const SearchState();
@@ -173,4 +227,27 @@ class SearchNotifier extends StateNotifier<SearchState> {
   }
 
   void clear() => state = const SearchIdle();
+}
+
+// ─── Random stories (initial browse) ────────────────────────────
+
+final randomStoriesProvider = StateNotifierProvider<
+    RandomStoriesNotifier, AsyncValue<List<StorySummary>>>((ref) {
+  return RandomStoriesNotifier(ref);
+});
+
+class RandomStoriesNotifier
+    extends StateNotifier<AsyncValue<List<StorySummary>>> {
+  RandomStoriesNotifier(this._ref) : super(const AsyncValue.loading());
+  final Ref _ref;
+
+  Future<void> load() async {
+    try {
+      final repo = _ref.read(storyRepositoryProvider);
+      final page = await repo.listStories(sort: 'random', perPage: 12);
+      state = AsyncValue.data(page.stories);
+    } catch (e, s) {
+      state = AsyncValue.error(e, s);
+    }
+  }
 }

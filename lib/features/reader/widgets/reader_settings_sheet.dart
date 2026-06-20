@@ -110,6 +110,25 @@ class ReaderSettingsSheet extends ConsumerWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 12),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text('Chế độ đọc'),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Wrap(
+                spacing: 6,
+                children: [
+                  for (final mode in ReaderScrollMode.values)
+                    ChoiceChip(
+                      label: Text(_scrollLabel(mode)),
+                      selected: s.scrollMode == mode,
+                      onSelected: (_) => notifier.setScrollMode(mode),
+                    ),
+                ],
+              ),
+            ),
             const SizedBox(height: 16),
           ],
         ),
@@ -122,5 +141,10 @@ class ReaderSettingsSheet extends ConsumerWidget {
         ReaderThemeMode.light => 'Sáng',
         ReaderThemeMode.dark => 'Tối',
         ReaderThemeMode.sepia => 'Sepia',
+      };
+
+  String _scrollLabel(ReaderScrollMode mode) => switch (mode) {
+        ReaderScrollMode.vertical => 'Cuộn dọc',
+        ReaderScrollMode.horizontal => 'Vuốt ngang',
       };
 }
