@@ -76,11 +76,11 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           settings: settings,
           onPrev: c.prevChapter == null
               ? null
-              : () => context.go(
+              : () => context.replace(
                   '/chapter/${widget.storyId}:${c.prevChapter}'),
           onNext: c.nextChapter == null
               ? null
-              : () => context.go(
+              : () => context.replace(
                   '/chapter/${widget.storyId}:${c.nextChapter}'),
           onOpenSettings: () => _openSettings(context),
           onOpenChapterList: () => _openChapterList(context, c),
@@ -180,7 +180,7 @@ class _OnlineChapterListSheet extends ConsumerWidget {
         ],
         currentChapter: currentChapter,
         onSelect: (number) =>
-            context.go('/chapter/$storyId:$number'),
+            context.replace('/chapter/$storyId:$number'),
       ),
     );
   }

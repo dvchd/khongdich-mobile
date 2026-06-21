@@ -259,14 +259,14 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   void _goPrev() {
     final i = _currentIndex;
     if (i > 0) {
-      context.go('/chapter-offline/${_siblings[i - 1].chapterId}');
+      context.replace('/chapter-offline/${_siblings[i - 1].chapterId}');
     }
   }
 
   void _goNext() {
     final i = _currentIndex;
     if (i >= 0 && i < _siblings.length - 1) {
-      context.go('/chapter-offline/${_siblings[i + 1].chapterId}');
+      context.replace('/chapter-offline/${_siblings[i + 1].chapterId}');
     }
   }
 
@@ -292,12 +292,15 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         currentChapter: ch.chapterNumber,
         onSelect: (number) {
           // Find the sibling with this chapter number and navigate
-          // to its offline chapter route.
+          // to its offline chapter route. Use `replace` (not `go`)
+          // so the parent offline-story-detail screen stays in the
+          // back stack — pressing Back from the chapter reader
+          // returns to the story detail, not exits the app.
           final target = _siblings
               .where((s) => s.chapterNumber == number)
               .firstOrNull;
           if (target != null) {
-            context.go('/chapter-offline/${target.chapterId}');
+            context.replace('/chapter-offline/${target.chapterId}');
           }
         },
       ),

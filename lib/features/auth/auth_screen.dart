@@ -45,7 +45,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       final auth = await account.authentication;
       final idToken = auth.idToken;
       if (idToken == null) {
-        _toast('Không lấy được idToken từ Google. Thử lại.');
+        _showError(
+            'Không lấy được idToken từ Google.',
+            'Thiếu `openid` scope hoặc google-services.json chưa cấu hình '
+                'đúng. Kiểm tra lại Firebase + OAuth Client ID.');
         return;
       }
 
@@ -59,10 +62,69 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       }
     } catch (e, s) {
       AppLogger.error('Google Sign-In failed', e, s);
-      if (mounted) _toast('Đăng nhập thất bại: $e');
+      if (!mounted) return;
+      _showSignInError(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Translate raw Google Sign-In exceptions into user-friendly
+  /// Vietnamese messages. The raw exception text is rarely actionable
+  /// for end-users (e.g. `PlatformException(sign_in_failed, ..., 10: , null, null)`)
+  /// — we extract the GMS status code and map to a hint.
+  void _showSignInError(Object e) {
+    final msg = e.toString();
+    // Google Play Services ApiException codes:
+    //   10  = DEVELOPER_ERROR  → SHA-1 / package name not registered in
+    //                            Google Cloud Console OAuth Client ID
+    //   12500 = SIGN_IN_CANCELLED
+    //   7   = NETWORK_ERROR
+    //   8   = INTERNAL_ERROR
+    //   13  = ERROR
+    //   4   = SIGN_IN_REQUIRED
+    //   5   = INVALID_ACCOUNT
+    //   6   = RESOLUTION_REQUIRED
+    String userMessage;
+    String hint;
+    if (msg.contains('10:') || msg.contains('ApiException: 10')) {
+      userMessage = 'Lỗi cấu hình Google Sign-In (DEVELOPER_ERROR).';
+      hint = 'SHA-1 của APK chưa được thêm vào OAuth Client ID trên Google '
+          'Cloud Console, hoặc package name không khớp. Xem hướng dẫn '
+          'trong README → "Thiết lập đăng nhập Google".';
+    } else if (msg.contains('12500') || msg.contains('SIGN_IN_CANCELLED')) {
+      userMessage = 'Đăng nhập đã bị huỷ.';
+      hint = '';
+    } else if (msg.contains('7:') || msg.contains('NETWORK_ERROR')) {
+      userMessage = 'Lỗi mạng khi đăng nhập.';
+      hint = 'Kiểm tra kết nối Internet và thử lại.';
+    } else if (msg.contains('8:') || msg.contains('INTERNAL_ERROR')) {
+      userMessage = 'Lỗi nội bộ Google Play Services.';
+      hint = 'Thử cập nhật Google Play Services trên thiết bị rồi đăng nhập lại.';
+    } else {
+      userMessage = 'Đăng nhập thất bại.';
+      hint = 'Chi tiết: $msg';
+    }
+    _showError(userMessage, hint);
+  }
+
+  void _showError(String title, String hint) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            if (hint.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(hint, style: const TextStyle(fontSize: 12)),
+            ],
+          ],
+        ),
+        duration: const Duration(seconds: 8),
+      ),
+    );
   }
 
   void _toast(String msg) {
