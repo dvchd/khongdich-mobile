@@ -1,23 +1,39 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../models/story.dart';
+import '../../downloads/offline_library_screen.dart' show downloadedStoryIdsProvider;
 
 /// Compact story tile used in home / search / bookshelf grids and lists.
-class StoryCard extends StatelessWidget {
+///
+/// Renders a green "downloaded" badge on the cover whenever the story
+/// has at least one chapter stored in the local Drift DB. The badge is
+/// story-level (not per-chapter) so it shows up consistently across
+/// home, search, bookshelf and story-detail screens — exactly matching
+/// the user's mental model of "I have this story offline".
+class StoryCard extends ConsumerWidget {
   const StoryCard({
     super.key,
     required this.story,
     this.onTap,
     this.badge,
+    /// When true, suppresses the auto-rendered downloaded badge.
+    /// Used by screens that already convey download state in another
+    /// way (e.g. the Downloaded tab in the bookshelf).
+    this.hideDownloadedBadge = false,
   });
 
   final StorySummary story;
   final VoidCallback? onTap;
   final String? badge;
+  final bool hideDownloadedBadge;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final downloadedIds = ref.watch(downloadedStoryIdsProvider);
+    final isDownloaded = downloadedIds.contains(story.id);
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -75,6 +91,26 @@ class StoryCard extends StatelessWidget {
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
+                        ),
+                      ),
+                    ),
+                  // Story-level "downloaded" badge — top-left corner so
+                  // it doesn't clash with the optional [badge] chip on
+                  // the top-right.
+                  if (isDownloaded && !hideDownloadedBadge)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.download_done,
+                          size: 14,
+                          color: Colors.white,
                         ),
                       ),
                     ),

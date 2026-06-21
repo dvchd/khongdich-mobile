@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_bottom_nav.dart';
 import '../story/story_detail_screen.dart' show downloadedChaptersForStoryProvider;
 
 /// Offline story detail — reads downloaded chapters from the local Drift DB
@@ -169,6 +170,10 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
           );
         },
       ),
+      // Bottom nav so the user can jump between Home / Search /
+      // Bookshelf / Profile directly from the offline story detail
+      // (this screen lives outside MainShell).
+      bottomNavigationBar: const AppBottomNav(currentIndex: -1),
     );
   }
 }

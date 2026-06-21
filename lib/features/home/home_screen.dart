@@ -5,7 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
-import '../bookshelf/bookshelf_screen.dart' show bookshelfTabIntentProvider;
+import '../bookshelf/bookshelf_screen.dart'
+    show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
 import 'widgets/story_card.dart';
 import 'widgets/story_section.dart';
 
@@ -33,8 +34,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _maybeRedirectOffline() {
     if (_redirected) return;
     _redirected = true;
-    // Set the tab intent to 0 (downloaded) so bookshelf opens on that tab
-    ref.read(bookshelfTabIntentProvider.notifier).state = 0;
+    // Set the tab intent to the "Downloaded" tab (last index in the
+    // bookshelf) so the user lands on their offline library directly
+    // when the home feed can't load.
+    ref.read(bookshelfTabIntentProvider.notifier).state =
+        kBookshelfDownloadedTabIndex;
     context.go('/bookshelf');
   }
 

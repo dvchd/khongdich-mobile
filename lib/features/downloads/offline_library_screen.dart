@@ -113,3 +113,14 @@ final offlineLibraryStreamProvider =
         ..orderBy([(t) => OrderingTerm.desc(t.downloadedAt)]))
       .watch();
 });
+
+/// Set of story IDs that have at least one downloaded chapter.
+///
+/// Derived from [offlineLibraryStreamProvider] so it auto-updates
+/// whenever a download finishes. Used by [StoryCard] to render the
+/// green "downloaded" badge on covers across all screens
+/// (home / search / bookshelf / story detail).
+final downloadedStoryIdsProvider = Provider<Set<String>>((ref) {
+  final chapters = ref.watch(offlineLibraryStreamProvider).valueOrNull ?? [];
+  return chapters.map((c) => c.storyId).toSet();
+});

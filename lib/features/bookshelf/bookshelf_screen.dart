@@ -11,11 +11,27 @@ import '../../repositories/story_repository.dart';
 import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import '../home/widgets/story_card.dart';
 
+/// Index of the "Downloaded" tab. The home screen sets this as the
+/// bookshelf intent when the device is offline so the user lands on
+/// their offline library directly.
+const kBookshelfDownloadedTabIndex = 5;
+
 /// Which tab to show by default (used for offline auto-redirect).
+/// Defaults to 0 (the "All" tab) when online.
 final bookshelfTabIntentProvider = StateProvider<int>((ref) => 0);
 
-/// Bookshelf — 5 tabs including downloaded (added as 0th tab).
-/// Plan §5.6.
+/// Bookshelf — 6 tabs:
+///   0. Tất cả      (merged bookshelf + downloaded, deduped by story id)
+///   1. Đang đọc
+///   2. Đã đọc xong
+///   3. Sẽ đọc
+///   4. Yêu thích
+///   5. Đã tải      (offline library)
+///
+/// Default tab is 0 (All) when online. When the home screen detects
+/// no network, it sets [bookshelfTabIntentProvider] to
+/// [kBookshelfDownloadedTabIndex] so the bookshelf opens directly on
+/// the offline library.
 class BookshelfScreen extends ConsumerStatefulWidget {
   const BookshelfScreen({super.key});
 
@@ -27,17 +43,19 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   int _tab = 0;
 
   static const _tabs = [
-    ('downloaded', 'Đã tải xuống', Icons.download_done),
+    ('all', 'Tất cả', Icons.apps),
     ('reading', 'Đang đọc', Icons.menu_book),
     ('completed', 'Đã đọc xong', Icons.check_circle_outline),
     ('plan_to_read', 'Sẽ đọc', Icons.bookmark_outline),
     ('favorite', 'Yêu thích', Icons.favorite_outline),
+    ('downloaded', 'Đã tải', Icons.download_done),
   ];
 
   @override
   void initState() {
     super.initState();
-    // Pick up the intent provider once (e.g. offline redirect)
+    // Pick up the intent provider once (e.g. offline redirect sets it
+    // to kBookshelfDownloadedTabIndex so the user lands on offline lib).
     final intent = ref.read(bookshelfTabIntentProvider);
     if (intent != 0) {
       _tab = intent;
@@ -51,12 +69,12 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     final state = ref.watch(bookshelfProvider);
     final downloadsAsync = ref.watch(offlineLibraryStreamProvider);
 
-    final downloadedStoryIds = downloadsAsync.valueOrNull
-            ?.map((d) => d.storyId)
-            .toSet() ??
-        {};
-    // Group downloaded chapters by story for the downloaded tab
     final chapters = downloadsAsync.valueOrNull ?? [];
+    // `downloadedStoryIds` is implicitly tracked via [StoryCard]'s
+    // own `downloadedStoryIdsProvider` watch — here we only need the
+    // list of StorySummary rows for the Downloaded tab.
+
+    // Build StorySummary list for downloaded stories (one entry per story).
     final downloadedStories = <StorySummary>[];
     final seen = <String>{};
     for (final d in chapters) {
@@ -66,7 +84,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
           title: d.storyTitle,
           slug: d.storySlug,
           coverUrl: d.coverUrl,
-          author: '',
+          author: d.storyAuthor ?? '',
           categories: const [],
           tags: const [],
           contentTypes: [d.contentType],
@@ -75,25 +93,58 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
       }
     }
 
-    final isDownloadedTab = _tab == 0;
+    // Snapshot of bookmarks for the "All" tab merge — kept lazy so the
+    // list-type tabs below can re-filter directly from `state.valueOrNull`.
+    final bookmarks = state.valueOrNull ?? [];
 
-    final items = isDownloadedTab
-        ? downloadedStories
-        : (state.valueOrNull
-                    ?.where((b) => b.listType == _tabs[_tab].$1)
-                    .map((b) => StorySummary(
-                          id: b.storyId,
-                          title: b.title,
-                          slug: b.slug,
-                          coverUrl: b.coverUrl,
-                          author: b.author,
-                          categories: const [],
-                          tags: const [],
-                          contentTypes: [b.contentType],
-                          chapterCount: b.chapterCount,
-                        ))
-                    .toList() ??
-                const <StorySummary>[]);
+    final isAllTab = _tab == 0;
+    final isDownloadedTab = _tab == _tabs.length - 1;
+
+    final List<StorySummary> items;
+    if (isAllTab) {
+      // Merge bookshelf stories + downloaded stories, dedupe by story ID.
+      // Bookshelf metadata takes precedence (it has author / categories
+      // from the server), but we fall back to downloaded-chapter metadata
+      // for stories that exist only locally.
+      final merged = <String, StorySummary>{};
+      for (final b in bookmarks) {
+        merged[b.storyId] = StorySummary(
+          id: b.storyId,
+          title: b.title,
+          slug: b.slug,
+          coverUrl: b.coverUrl,
+          author: b.author,
+          categories: const [],
+          tags: const [],
+          contentTypes: [b.contentType],
+          chapterCount: b.chapterCount,
+        );
+      }
+      for (final s in downloadedStories) {
+        merged.putIfAbsent(s.id, () => s);
+      }
+      items = merged.values.toList();
+    } else if (isDownloadedTab) {
+      items = downloadedStories;
+    } else {
+      // Filter bookshelf by list_type (reading / completed /
+      // plan_to_read / favorite).
+      final listType = _tabs[_tab].$1;
+      items = bookmarks
+          .where((b) => b.listType == listType)
+          .map((b) => StorySummary(
+                id: b.storyId,
+                title: b.title,
+                slug: b.slug,
+                coverUrl: b.coverUrl,
+                author: b.author,
+                categories: const [],
+                tags: const [],
+                contentTypes: [b.contentType],
+                chapterCount: b.chapterCount,
+              ))
+          .toList();
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Tủ truyện')),
@@ -128,7 +179,9 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                         SizedBox(height: 120),
                         isDownloadedTab
                             ? const _EmptyDownloads()
-                            : const _EmptyBookshelf(),
+                            : (isAllTab
+                                ? const _EmptyAll()
+                                : const _EmptyBookshelf()),
                       ],
                     )
                   : GridView.builder(
@@ -143,39 +196,27 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                       itemCount: items.length,
                       itemBuilder: (_, i) {
                         final s = items[i];
-                        final hasDownloads = downloadedStoryIds.contains(s.id);
-                        return Stack(
-                          children: [
-                            StoryCard(
-                              story: s,
-                              onTap: () {
-                                if (isDownloadedTab) {
-                                  // Navigate to offline story detail instead of
-                                  // jumping directly into the first chapter.
-                                  context.push('/offline-story/${s.id}');
-                                  return;
-                                }
-                                context.push('/story/${s.slug}');
-                              },
-                            ),
-                            if (hasDownloads)
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.green,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.download_done,
-                                    size: 16,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                          ],
+                        // In the "Downloaded" tab we hide the
+                        // StoryCard's auto-badge (every story already
+                        // shows up here because it's downloaded).
+                        final hideDownloadedBadge = isDownloadedTab;
+                        return StoryCard(
+                          story: s,
+                          hideDownloadedBadge: hideDownloadedBadge,
+                          onTap: () {
+                            if (isDownloadedTab) {
+                              // Navigate to offline story detail instead of
+                              // jumping directly into the first chapter.
+                              context.push('/offline-story/${s.id}');
+                              return;
+                            }
+                            // For "All" tab and bookshelf tabs, prefer
+                            // the online story detail. If the device is
+                            // offline, the story detail screen shows
+                            // its own error state and the user can
+                            // fall back to the Downloaded tab.
+                            context.push('/story/${s.slug}');
+                          },
                         );
                       },
                     ),
@@ -204,6 +245,32 @@ class _EmptyDownloads extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             'Tải chương từ trang chi tiết truyện để đọc offline.',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyAll extends StatelessWidget {
+  const _EmptyAll();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.inbox_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+          const SizedBox(height: 12),
+          const Text('Tủ truyện đang trống.'),
+          const SizedBox(height: 4),
+          Text(
+            'Đánh dấu truyện từ trang chi tiết hoặc tải chương để đọc offline.',
             style: Theme.of(context).textTheme.bodySmall,
             textAlign: TextAlign.center,
           ),

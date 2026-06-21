@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_bottom_nav.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
@@ -55,6 +56,10 @@ class StoryDetailScreen extends ConsumerWidget {
         ),
         data: (result) => _StoryDetailBody(detail: result.detail, localBookmark: result.localBookmark),
       ),
+      // Bottom nav so the user can jump between Home / Search /
+      // Bookshelf / Profile directly from the story detail page
+      // (this screen lives outside MainShell).
+      bottomNavigationBar: const AppBottomNav(currentIndex: -1),
     );
   }
 }
@@ -347,6 +352,15 @@ class _StoryDetailBody extends ConsumerWidget {
                   delegate: SliverChildBuilderDelegate(
                     (context, i) {
                       final c = page.chapters[i];
+                      // Only pending / downloading / retry count as
+                      // "active in queue" — a `completed` queue row
+                      // means the chapter is on disk and should render
+                      // the green checkmark, not a spinner.
+                      final queueState = queueStatus[c.id];
+                      final isActiveInQueue = queueState == 'pending' ||
+                          queueState == 'downloading' ||
+                          queueState == 'retry';
+                      final isDownloaded = downloadedIds.contains(c.id);
                       return ListTile(
                         leading: CircleAvatar(
                           backgroundColor:
@@ -367,12 +381,12 @@ class _StoryDetailBody extends ConsumerWidget {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (queueStatus[c.id] == 'pending')
+                            if (queueState == 'pending')
                               const Padding(
                                 padding: EdgeInsets.only(right: 4),
                                 child: Icon(Icons.hourglass_top, size: 16, color: Colors.grey),
                               ),
-                            if (queueStatus[c.id] == 'downloading')
+                            if (queueState == 'downloading')
                               const Padding(
                                 padding: EdgeInsets.only(right: 4),
                                 child: SizedBox(
@@ -381,7 +395,7 @@ class _StoryDetailBody extends ConsumerWidget {
                                   child: CircularProgressIndicator(strokeWidth: 2),
                                 ),
                               ),
-                            if (downloadedIds.contains(c.id) && queueStatus[c.id] == null)
+                            if (isDownloaded && !isActiveInQueue)
                               const Padding(
                                 padding: EdgeInsets.only(right: 4),
                                 child: Icon(Icons.download_done, size: 16, color: Colors.green),
