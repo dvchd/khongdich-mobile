@@ -172,7 +172,10 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
   late final ScrollController _scrollController;
   final PageController _pageController = PageController();
   bool _progressSaved = false;
-  bool _chromeVisible = true;
+  // Chrome is now always visible — tap-center opens the settings
+  // sheet instead of toggling the AppBar. Kept as a constant for
+  // ReaderBar's `chromeVisible` parameter.
+  final bool _chromeVisible = true;
 
   @override
   void initState() {
@@ -236,7 +239,11 @@ class _ReaderBodyState extends ConsumerState<_ReaderBody> {
         }
         widget.onNext?.call();
       case ReaderTapZone.center:
-        setState(() => _chromeVisible = !_chromeVisible);
+        // Tap center → open the reader settings sheet (matches the
+        // behaviour of popular reader apps like NovelFever). The
+        // sheet lets the user adjust font / theme / scroll mode /
+        // TTS without having to hunt for the small toolbar icon.
+        widget.onOpenSettings?.call();
     }
   }
 
@@ -608,14 +615,18 @@ class _PageModeWrapperState extends State<_PageModeWrapper> {
             notification.metrics.axis == Axis.horizontal) {
           _accumulatedOverscroll += notification.overscroll;
           if (_accumulatedOverscroll.abs() > _threshold) {
-            // OverscrollNotification.overscroll:
-            //   positive = user is trying to scroll backward (swipe RIGHT
-            //     past the first page) → go to previous chapter
-            //   negative = user is trying to scroll forward (swipe LEFT
-            //     past the last page) → go to next chapter
-            if (_accumulatedOverscroll < 0 && widget.onNext != null) {
+            // Flutter's OverscrollNotification.overscroll sign convention:
+            //   POSITIVE = user is scrolling FORWARD past the max extent
+            //     (in a LTR horizontal PageView, this means swiping LEFT
+            //     on the LAST page → user wants NEXT chapter)
+            //   NEGATIVE = user is scrolling BACKWARD past the min extent
+            //     (swiping RIGHT on the FIRST page → user wants PREV chapter)
+            //
+            // The previous version had this backwards, which caused
+            // chapter navigation to feel "reversed" at the last page.
+            if (_accumulatedOverscroll > 0 && widget.onNext != null) {
               widget.onNext!();
-            } else if (_accumulatedOverscroll > 0 && widget.onPrev != null) {
+            } else if (_accumulatedOverscroll < 0 && widget.onPrev != null) {
               widget.onPrev!();
             }
             _accumulatedOverscroll = 0;

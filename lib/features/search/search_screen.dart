@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
+import '../bookshelf/bookshelf_screen.dart'
+    show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
+import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import '../home/widgets/story_card.dart';
 
 /// Search screen. Plan §6.3.
@@ -11,6 +14,11 @@ import '../home/widgets/story_card.dart';
 /// On initial load (no query entered), shows ~12 random stories so the
 /// user can start browsing immediately. Once a query is entered, the
 /// results replace the random stories.
+///
+/// When the device is offline, the random-stories fetch fails. Rather
+/// than showing a dead error state, we auto-redirect to the bookshelf
+/// "Đã tải" tab so the user lands on their offline library — same
+/// pattern as the home screen's offline fallback.
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
 
@@ -21,6 +29,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   bool _searched = false;
+  bool _redirected = false;
 
   @override
   void initState() {
@@ -32,6 +41,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  void _maybeRedirectOffline() {
+    if (_redirected) return;
+    // Only redirect if there's at least one downloaded chapter —
+    // otherwise the offline library is empty and redirecting would
+    // just show another empty state.
+    final downloads =
+        ref.read(offlineLibraryStreamProvider).valueOrNull ?? [];
+    if (downloads.isEmpty) return;
+    _redirected = true;
+    ref.read(bookshelfTabIntentProvider.notifier).state =
+        kBookshelfDownloadedTabIndex;
+    context.go('/bookshelf');
   }
 
   Future<void> _runSearch(String q) async {
@@ -49,6 +72,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Widget build(BuildContext context) {
     final searchState = ref.watch(searchProvider);
     final randomState = ref.watch(randomStoriesProvider);
+    // When the random-stories fetch fails (offline), auto-redirect
+    // to the bookshelf "Đã tải" tab.
+    randomState.whenOrNull(
+      error: (_, __) => Future.microtask(_maybeRedirectOffline),
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Padding(

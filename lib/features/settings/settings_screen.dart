@@ -3,22 +3,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/database/app_database.dart';
-import '../../core/network/api_client.dart';
 import '../../core/theme/app_theme.dart';
 import '../reader/reader_settings_provider.dart';
 
 /// Settings screen — plan §5.7. Includes:
 ///   - Reader typography (font, size, line height, theme)
-///   - Backend environment switcher (demo / production)
 ///   - Account
 ///   - Cache management
+///
+/// The backend environment is now fixed at build time via flavors
+/// (`demo` / `prod`). Each push produces two separate APKs in CI/CD,
+/// so there is no longer a runtime env switcher here — the user
+/// simply installs the right flavor for the environment they want.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final reader = ref.watch(readerSettingsProvider);
-    final env = ref.watch(appEnvProvider);
     final appThemeMode = ref.watch(themeModeProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Cài đặt')),
@@ -48,13 +50,6 @@ class SettingsScreen extends ConsumerWidget {
                   ),
               ],
             ),
-          ),
-          const Divider(),
-          _Section('Môi trường'),
-          ListTile(
-            leading: const Icon(Icons.dns_outlined),
-            title: const Text('Backend'),
-            subtitle: Text('${env.label} (cố định — build-time)'),
           ),
           const Divider(),
           _Section('Hiển thị'),

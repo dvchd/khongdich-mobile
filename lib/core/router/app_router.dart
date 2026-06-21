@@ -156,7 +156,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   ChapterContent? _chapter;
   List<DownloadedChapter> _siblings = [];
   bool _loading = true;
-  bool _chromeVisible = true;
+  // Chrome is always visible — tap-center opens the settings sheet
+  // instead of toggling the AppBar.
+  final bool _chromeVisible = true;
 
   @override
   void initState() {
@@ -273,7 +275,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
       case ReaderTapZone.right:
         _goNext();
       case ReaderTapZone.center:
-        setState(() => _chromeVisible = !_chromeVisible);
+        // Tap center → open the reader settings sheet (matches the
+        // online reader and popular apps like NovelFever).
+        _openSettings();
     }
   }
 
@@ -510,12 +514,16 @@ class _OfflinePageModeWrapperState extends State<_OfflinePageModeWrapper> {
             notification.metrics.axis == Axis.horizontal) {
           _accumulatedOverscroll += notification.overscroll;
           if (_accumulatedOverscroll.abs() > _threshold) {
-            // Same sign convention as online _PageModeWrapper:
-            // negative overscroll = swiped left past last page = next chapter
-            // positive overscroll = swiped right past first page = prev chapter
-            if (_accumulatedOverscroll < 0 && widget.onNext != null) {
+            // Flutter's OverscrollNotification.overscroll sign:
+            //   POSITIVE = scrolling FORWARD past max extent
+            //     = swiping LEFT on the LAST page → NEXT chapter
+            //   NEGATIVE = scrolling BACKWARD past min extent
+            //     = swiping RIGHT on the FIRST page → PREV chapter
+            //
+            // Must match the online _PageModeWrapper convention.
+            if (_accumulatedOverscroll > 0 && widget.onNext != null) {
               widget.onNext!();
-            } else if (_accumulatedOverscroll > 0 && widget.onPrev != null) {
+            } else if (_accumulatedOverscroll < 0 && widget.onPrev != null) {
               widget.onPrev!();
             }
             _accumulatedOverscroll = 0;

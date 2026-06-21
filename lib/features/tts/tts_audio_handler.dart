@@ -50,9 +50,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   // User settings (persisted)
   double _speed = 1.0;
   String? _selectedVoiceName;
+  String? _selectedEngine;
 
-  // Available voices
+  // Available voices — List<Map> with keys `name`, `locale`.
   List<Map<String, String>> _availableVoices = [];
+  // Available TTS engines — List of package names like
+  // "com.google.android.tts", "com.samsung.SMT", etc.
+  List<String> _availableEngines = [];
 
   final _chunkProgressController =
       StreamController<TtsChunkProgress>.broadcast();
@@ -60,7 +64,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   double get speed => _speed;
   List<Map<String, String>> get availableVoices => _availableVoices;
+  List<String> get availableEngines => _availableEngines;
   String? get selectedVoiceName => _selectedVoiceName;
+  String? get selectedEngine => _selectedEngine;
 
   Future<void> _init() async {
     if (_initialised) return;
@@ -72,14 +78,41 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       final prefs = await SharedPreferences.getInstance();
       _speed = prefs.getDouble('tts.speed') ?? 1.0;
       _selectedVoiceName = prefs.getString('tts.voice');
+      _selectedEngine = prefs.getString('tts.engine');
 
-      // On Android, set the TTS engine explicitly to ensure it's ready.
-      // The default engine is usually "com.google.android.tts".
-      if (!identical(0, 0.0)) {
-        // This is a hack to ensure we're on Android — the check
-        // `Platform.isAndroid` requires dart:io which we avoid in
-        // this file for web compatibility. The flutter_tts plugin
-        // handles platform detection internally.
+      // ── Engine selection ────────────────────────────────────────
+      // On Android, flutter_tts exposes getEngines / getDefaultEngine /
+      // setEngine. Setting the engine explicitly is important — when
+      // the device has multiple TTS engines installed (Google, Samsung,
+      // Huawei, etc.), the default may not support Vietnamese voices.
+      // We pick the user's saved engine, then the system default, then
+      // the first available.
+      try {
+        final defaultEngine = await _tts.getDefaultEngine;
+        AppLogger.info('TTS: default engine = $defaultEngine');
+        final engines = await _tts.getEngines;
+        if (engines != null) {
+          _availableEngines = (engines as List)
+              .map((e) => e?.toString() ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList();
+          AppLogger.info(
+              'TTS: ${_availableEngines.length} engines available: $_availableEngines');
+
+          final desired = _selectedEngine ?? defaultEngine?.toString();
+          if (desired != null && _availableEngines.contains(desired)) {
+            final setResult = await _tts.setEngine(desired);
+            AppLogger.info('TTS: setEngine($desired) → $setResult');
+          } else if (_availableEngines.isNotEmpty) {
+            // Fall back to first available engine.
+            final setResult =
+                await _tts.setEngine(_availableEngines.first);
+            AppLogger.info(
+                'TTS: setEngine(${_availableEngines.first}) fallback → $setResult');
+          }
+        }
+      } catch (e, s) {
+        AppLogger.warning('TTS: engine enumeration failed', e, s);
       }
 
       // Set language FIRST — this is critical. If the language is not
@@ -104,17 +137,30 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       // resolves immediately and our chunk chaining breaks.
       await _tts.awaitSpeakCompletion(true);
 
-      // Load available voices
+      // ── Load voices ─────────────────────────────────────────────
+      // We load ALL voices (not just vi-*) so the user can pick any
+      // installed voice. The previous filter (`locale.startsWith('vi')`)
+      // was too strict and hid voices that the device actually had
+      // installed — particularly when the engine returned locale in
+      // a non-standard format like "vi_VN" vs "vi-VN".
       try {
         final voices = await _tts.getVoices;
         if (voices != null) {
           _availableVoices = (voices as List)
               .map((v) => Map<String, String>.from(v as Map))
-              .where((v) =>
-                  (v['locale'] ?? v['language'] ?? '')
-                      .toLowerCase()
-                      .startsWith('vi'))
               .toList();
+          // Sort: Vietnamese voices first (so they appear at the top
+          // of the dropdown), then everything else alphabetically.
+          _availableVoices.sort((a, b) {
+            final aLocale = (a['locale'] ?? a['language'] ?? '').toLowerCase();
+            final bLocale = (b['locale'] ?? b['language'] ?? '').toLowerCase();
+            final aVi = aLocale.startsWith('vi') ? 0 : 1;
+            final bVi = bLocale.startsWith('vi') ? 0 : 1;
+            if (aVi != bVi) return aVi.compareTo(bVi);
+            return (a['name'] ?? '').compareTo(b['name'] ?? '');
+          });
+          AppLogger.info(
+              'TTS: ${_availableVoices.length} voices available');
           if (_selectedVoiceName != null) {
             final voice = _availableVoices
                 .where((v) => v['name'] == _selectedVoiceName)
@@ -123,8 +169,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
               await _tts.setVoice(voice);
             }
           }
-          AppLogger.info(
-              'TTS: ${_availableVoices.length} Vietnamese voices available');
         }
       } catch (e) {
         AppLogger.warning('TTS: getVoices failed', e);
@@ -204,6 +248,50 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     } else {
       await prefs.remove('tts.voice');
     }
+  }
+
+  /// Switch the active TTS engine (e.g. from "com.google.android.tts"
+  /// to "com.samsung.SMT"). After switching, re-enumerate voices
+  /// because each engine exposes its own voice list.
+  ///
+  /// Returns the new list of available voices so the caller can
+  /// update its dropdown.
+  Future<List<Map<String, String>>> setEngine(String? engineName) async {
+    _selectedEngine = engineName;
+    if (engineName != null && _availableEngines.contains(engineName)) {
+      await _tts.setEngine(engineName);
+      AppLogger.info('TTS: setEngine($engineName)');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    if (engineName != null) {
+      await prefs.setString('tts.engine', engineName);
+    } else {
+      await prefs.remove('tts.engine');
+    }
+    // Re-fetch voices for the new engine. Reset the selected voice
+    // because the previous voice name likely doesn't exist on the
+    // new engine.
+    _selectedVoiceName = null;
+    await prefs.remove('tts.voice');
+    try {
+      final voices = await _tts.getVoices;
+      if (voices != null) {
+        _availableVoices = (voices as List)
+            .map((v) => Map<String, String>.from(v as Map))
+            .toList();
+        _availableVoices.sort((a, b) {
+          final aLocale = (a['locale'] ?? a['language'] ?? '').toLowerCase();
+          final bLocale = (b['locale'] ?? b['language'] ?? '').toLowerCase();
+          final aVi = aLocale.startsWith('vi') ? 0 : 1;
+          final bVi = bLocale.startsWith('vi') ? 0 : 1;
+          if (aVi != bVi) return aVi.compareTo(bVi);
+          return (a['name'] ?? '').compareTo(b['name'] ?? '');
+        });
+      }
+    } catch (e) {
+      AppLogger.warning('TTS: re-fetch voices after engine switch failed', e);
+    }
+    return _availableVoices;
   }
 
   Future<void> loadChapter({

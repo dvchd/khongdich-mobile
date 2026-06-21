@@ -6,8 +6,9 @@ import 'tts_audio_handler.dart';
 
 /// Full-screen TTS control panel with:
 ///   - Play/pause/stop buttons
+///   - Engine selector (dropdown of installed TTS engines)
+///   - Voice selector (dropdown of available voices)
 ///   - Speed selector (0.5x – 2.5x)
-///   - Voice selector (dropdown of available vi-VN voices)
 ///   - Progress bar showing chunk N/total
 ///   - Chapter title display
 ///
@@ -42,6 +43,8 @@ class _PanelContent extends StatefulWidget {
 class _PanelContentState extends State<_PanelContent> {
   late double _speed;
   String? _selectedVoice;
+  String? _selectedEngine;
+  List<Map<String, String>> _voices = const [];
   TtsChunkProgress? _progress;
 
   @override
@@ -49,6 +52,8 @@ class _PanelContentState extends State<_PanelContent> {
     super.initState();
     _speed = widget.handler.speed;
     _selectedVoice = widget.handler.selectedVoiceName;
+    _selectedEngine = widget.handler.selectedEngine;
+    _voices = widget.handler.availableVoices;
     widget.handler.chunkProgress.listen((p) {
       if (mounted) setState(() => _progress = p);
     });
@@ -118,8 +123,8 @@ class _PanelContentState extends State<_PanelContent> {
                   ),
                   const SizedBox(width: 16),
                   Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE11D48),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFE11D48),
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
@@ -146,6 +151,90 @@ class _PanelContentState extends State<_PanelContent> {
                 ],
               ),
               const SizedBox(height: 24),
+              // Engine selector (Nguồn nghe)
+              if (widget.handler.availableEngines.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Text('Nguồn nghe'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButton<String>(
+                        value: _selectedEngine,
+                        hint: const Text('Mặc định'),
+                        isExpanded: true,
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('Mặc định hệ thống'),
+                          ),
+                          for (final e in widget.handler.availableEngines)
+                            DropdownMenuItem(
+                              value: e,
+                              child: Text(e),
+                            ),
+                        ],
+                        onChanged: (name) async {
+                          final newVoices =
+                              await widget.handler.setEngine(name);
+                          setState(() {
+                            _selectedEngine = name;
+                            _voices = newVoices;
+                            _selectedVoice = null;
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+              // Voice selector (Giọng đọc)
+              if (_voices.isNotEmpty) ...[
+                Row(
+                  children: [
+                    const Text('Giọng đọc'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButton<String>(
+                        value: _selectedVoice,
+                        hint: const Text('Mặc định'),
+                        isExpanded: true,
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('Mặc định'),
+                          ),
+                          for (final v in _voices)
+                            DropdownMenuItem(
+                              value: v['name'],
+                              child: Text(
+                                _voiceLabel(v),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (name) async {
+                          await widget.handler.setVoice(name);
+                          setState(() => _selectedVoice = name);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ] else ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Không tìm thấy giọng đọc nào.\n'
+                    'Cài đặt → Ngôn ngữ & nhập → Văn bản thành giọng nói '
+                    '→ Cài đặt TTS để thêm engine / giọng.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
               // Speed selector
               Row(
                 children: [
@@ -169,52 +258,21 @@ class _PanelContentState extends State<_PanelContent> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              // Voice selector
-              if (widget.handler.availableVoices.isNotEmpty) ...[
-                Row(
-                  children: [
-                    const Text('Giọng đọc'),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButton<String>(
-                        value: _selectedVoice,
-                        hint: const Text('Mặc định'),
-                        isExpanded: true,
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text('Mặc định'),
-                          ),
-                          for (final v in widget.handler.availableVoices)
-                            DropdownMenuItem(
-                              value: v['name'],
-                              child: Text(v['name'] ?? ''),
-                            ),
-                        ],
-                        onChanged: (name) async {
-                          await widget.handler.setVoice(name);
-                          setState(() => _selectedVoice = name);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ] else ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Không tìm thấy giọng đọc tiếng Việt.\n'
-                    'Cài đặt Google TTS → Thêm giọng → Vietnamese.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
             ],
           ),
         );
       },
     );
+  }
+
+  /// Build a readable label for a voice map. Format:
+  ///   `[name] ([locale])`
+  /// e.g. `vi-vn-language (vi-VN)`
+  /// Falls back to just the name if locale is missing.
+  String _voiceLabel(Map<String, String> v) {
+    final name = v['name'] ?? '';
+    final locale = v['locale'] ?? v['language'] ?? '';
+    if (locale.isEmpty) return name;
+    return '$name ($locale)';
   }
 }

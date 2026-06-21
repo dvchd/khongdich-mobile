@@ -196,13 +196,13 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                       itemCount: items.length,
                       itemBuilder: (_, i) {
                         final s = items[i];
-                        // In the "Downloaded" tab we hide the
-                        // StoryCard's auto-badge (every story already
-                        // shows up here because it's downloaded).
-                        final hideDownloadedBadge = isDownloadedTab;
+                        // Always show the green downloaded badge on every
+                        // tab — it provides consistent visual feedback
+                        // that the story is available offline, matching
+                        // the user's mental model across home/search/
+                        // bookshelf screens.
                         return StoryCard(
                           story: s,
-                          hideDownloadedBadge: hideDownloadedBadge,
                           onTap: () {
                             if (isDownloadedTab) {
                               // Navigate to offline story detail instead of
