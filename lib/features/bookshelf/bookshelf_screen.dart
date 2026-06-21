@@ -70,9 +70,14 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     final downloadsAsync = ref.watch(offlineLibraryStreamProvider);
 
     final chapters = downloadsAsync.valueOrNull ?? [];
-    // `downloadedStoryIds` is implicitly tracked via [StoryCard]'s
-    // own `downloadedStoryIdsProvider` watch — here we only need the
-    // list of StorySummary rows for the Downloaded tab.
+    // Set of story IDs that have at least one chapter downloaded —
+    // used for two things:
+    //   1. Auto-routing bookshelf cards to the offline story detail
+    //      when tapped (so the user can keep browsing offline).
+    //   2. StoryCard already auto-renders the green downloaded badge
+    //      via its own `downloadedStoryIdsProvider` watch — that
+    //      part doesn't need this local set.
+    final downloadedStoryIds = chapters.map((d) => d.storyId).toSet();
 
     // Build StorySummary list for downloaded stories (one entry per story).
     final downloadedStories = <StorySummary>[];
@@ -201,6 +206,8 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                         // that the story is available offline, matching
                         // the user's mental model across home/search/
                         // bookshelf screens.
+                        final isDownloaded =
+                            downloadedStoryIds.contains(s.id);
                         return StoryCard(
                           story: s,
                           onTap: () {
@@ -211,10 +218,15 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                               return;
                             }
                             // For "All" tab and bookshelf tabs, prefer
-                            // the online story detail. If the device is
-                            // offline, the story detail screen shows
-                            // its own error state and the user can
-                            // fall back to the Downloaded tab.
+                            // the offline story detail when the story
+                            // has been downloaded — this way the user
+                            // can keep browsing even when the device is
+                            // offline. Falls back to the online detail
+                            // for stories that haven't been downloaded.
+                            if (isDownloaded) {
+                              context.push('/offline-story/${s.id}');
+                              return;
+                            }
                             context.push('/story/${s.slug}');
                           },
                         );

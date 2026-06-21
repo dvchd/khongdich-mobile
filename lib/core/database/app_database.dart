@@ -218,6 +218,35 @@ class AppDatabase extends _$AppDatabase {
     ));
   }
 
+  // ---- Downloaded chapter images (manga offline) ----
+
+  /// Insert / replace a row mapping a remote image URL to its local
+  /// file path for a downloaded manga chapter.
+  Future<void> upsertDownloadedImage(
+      DownloadedChapterImagesCompanion entry) {
+    return into(downloadedChapterImages).insertOnConflictUpdate(entry);
+  }
+
+  /// Stream of locally-downloaded image mappings for a chapter.
+  /// Used by the offline manga reader to swap remote URLs → local
+  /// file paths before rendering.
+  Future<List<DownloadedChapterImage>> getDownloadedImagesForChapter(
+      String chapterId) {
+    return (select(downloadedChapterImages)
+          ..where((t) => t.chapterId.equals(chapterId))
+          ..orderBy([(t) => OrderingTerm.asc(t.sortOrder)]))
+        .get();
+  }
+
+  /// Delete all locally-downloaded image mappings for a chapter.
+  /// Called when the user deletes a downloaded chapter so we don't
+  /// leave orphaned image files on disk.
+  Future<void> deleteDownloadedImagesForChapter(String chapterId) {
+    return (delete(downloadedChapterImages)
+          ..where((t) => t.chapterId.equals(chapterId)))
+        .go();
+  }
+
   // ---- Reading progress ----
 
   Future<ReadingProgressTableData?> getReadingProgress(String storyId) {

@@ -41,6 +41,7 @@ class ReaderBody extends ConsumerStatefulWidget {
     this.onNext,
     this.onToggleTts,
     this.onChapterNearEnd,
+    this.mangaLocalImagePaths = const {},
   });
 
   final ChapterContent chapter;
@@ -51,6 +52,13 @@ class ReaderBody extends ConsumerStatefulWidget {
   final VoidCallback onOpenChapterList;
   final VoidCallback? onToggleTts;
   final VoidCallback? onChapterNearEnd;
+
+  /// For manga chapters, this maps `imageUrl → localFilePath` so the
+  /// reader can render images from disk instead of the network. The
+  /// offline reader populates this from the `downloaded_chapter_images`
+  /// table; the online reader leaves it empty (falls back to
+  /// `CachedNetworkImage`).
+  final Map<String, String> mangaLocalImagePaths;
 
   @override
   ConsumerState<ReaderBody> createState() => _ReaderBodyState();
@@ -147,6 +155,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         pageController: _pageController,
         onNext: widget.onNext,
         onPrev: widget.onPrev,
+        mangaLocalImagePaths: widget.mangaLocalImagePaths,
       ),
     );
 

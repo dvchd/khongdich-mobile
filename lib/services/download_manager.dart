@@ -10,6 +10,7 @@ import '../core/observability/app_logger.dart';
 import '../models/chapter_content.dart';
 import '../models/story.dart';
 import '../repositories/story_repository.dart';
+import 'manga_image_downloader.dart';
 
 /// Offline download manager. Plan §8.
 ///
@@ -25,12 +26,13 @@ import '../repositories/story_repository.dart';
 /// time so we don't overwhelm the backend. Failures are recorded on the
 /// queue row and the user can retry.
 class DownloadManager {
-  DownloadManager(this._db, this._repo, this._api);
+  DownloadManager(this._db, this._repo, this._api, this._mangaImageDownloader);
 
   final AppDatabase _db;
   final StoryRepository _repo;
   // ignore: unused_field
   final ApiClient _api;
+  final MangaImageDownloader _mangaImageDownloader;
   StreamController<List<DownloadQueueData>>? _controller;
 
   /// Stream of queue state — emits the latest snapshot on every change.
@@ -180,6 +182,25 @@ class DownloadManager {
       storyAuthor: Value(row.storyAuthor),
       storySynopsis: Value(row.storySynopsis),
     ));
+    // For manga chapters, also download every image to local storage
+    // so the reader can render them 100% offline. Without this, the
+    // reader's `CachedNetworkImage` would try to fetch from the
+    // remote URL and fail when the device is offline.
+    if (chapter is MangaChapterContent) {
+      try {
+        await _mangaImageDownloader.downloadImages(
+          chapterId: chapter.id,
+          imageUrls: [for (final p in chapter.images) p.url],
+        );
+      } catch (e, s) {
+        // Don't fail the whole download if image fetch fails — the
+        // chapter content is still saved and text chapters work
+        // regardless. The reader will fall back to remote URLs for
+        // any images not present locally.
+        AppLogger.warning(
+            'DownloadManager: manga image fetch failed for chapter ${chapter.id}', e, s);
+      }
+    }
     await _db.updateDownloadQueueRow(
         row.id,
         DownloadQueueCompanion(
@@ -278,5 +299,6 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
         orElse: () => throw StateError('ApiClient not ready'),
       );
   final repo = ref.watch(storyRepositoryProvider);
-  return DownloadManager(db, repo, api);
+  final mangaImageDownloader = ref.watch(mangaImageDownloaderProvider);
+  return DownloadManager(db, repo, api, mangaImageDownloader);
 });

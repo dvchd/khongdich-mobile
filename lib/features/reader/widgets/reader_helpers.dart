@@ -97,6 +97,10 @@ Brightness readerBrightness(ReaderSettings settings, BuildContext context) {
 /// and offline readers so the rendering pipeline is identical — the
 /// only thing that differs between online/offline is where the
 /// `ChapterContent` came from (API vs local Drift DB).
+///
+/// For manga chapters, [mangaLocalImagePaths] lets the offline reader
+/// pass the `imageUrl → localFilePath` mapping so the view can render
+/// images from disk instead of hitting the network.
 Widget buildChapterContent(
   ChapterContent chapter,
   ReaderTheme theme,
@@ -105,6 +109,7 @@ Widget buildChapterContent(
   PageController? pageController,
   VoidCallback? onNext,
   VoidCallback? onPrev,
+  Map<String, String> mangaLocalImagePaths = const {},
 }) {
   return switch (chapter) {
     TextChapterContent(:final contentMarkdown) => TextChapterView(
@@ -117,6 +122,7 @@ Widget buildChapterContent(
     MangaChapterContent(:final images) => MangaChapterView(
         images: [for (final p in images) p.url],
         scrollController: scrollController,
+        localImagePaths: mangaLocalImagePaths,
       ),
     ChatChapterContent(:final participants, :final messages) =>
       ChatChapterView(

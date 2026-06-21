@@ -26,6 +26,7 @@ import '../../features/tts/tts_audio_handler.dart';
 import '../../features/tts/tts_control_panel.dart';
 import '../../core/database/app_database.dart';
 import '../../models/chapter_content.dart';
+import '../../services/manga_image_downloader.dart';
 import '../shell/main_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -161,6 +162,7 @@ class OfflineChapterReader extends ConsumerStatefulWidget {
 class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   ChapterContent? _chapter;
   List<DownloadedChapter> _siblings = [];
+  Map<String, String> _mangaLocalImagePaths = {};
   bool _loading = true;
   String? _loadError;
 
@@ -200,10 +202,44 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         'chapter_number': row.chapterNumber,
         'title': row.chapterTitle,
       };
+      // For manga chapters, load the local image path mappings so the
+      // reader can render images 100% offline.
+      Map<String, String> localPaths = {};
+      if (row.contentType == 'manga') {
+        final downloader = ref.read(mangaImageDownloaderProvider);
+        final images = await db.getDownloadedImagesForChapter(widget.chapterId);
+        for (final img in images) {
+          localPaths[img.imageUrl] = img.localPath;
+        }
+        // Best-effort: if the chapter is manga but image rows are
+        // missing (e.g. user downloaded before the manga-image
+        // feature shipped), don't crash — the view will fall back
+        // to CachedNetworkImage which may still hit OS cache.
+        if (localPaths.isEmpty) {
+          // Try to extract image URLs from the chapter JSON and
+          // download them on-demand. This is a migration path for
+          // chapters downloaded before image caching existed.
+          try {
+            final chapterObj = ChapterContent.fromJson(fullJson);
+            if (chapterObj is MangaChapterContent) {
+              await downloader.downloadImages(
+                chapterId: widget.chapterId,
+                imageUrls: [for (final p in chapterObj.images) p.url],
+              );
+              final freshImages = await db.getDownloadedImagesForChapter(
+                  widget.chapterId);
+              for (final img in freshImages) {
+                localPaths[img.imageUrl] = img.localPath;
+              }
+            }
+          } catch (_) {/* best-effort */}
+        }
+      }
       if (mounted) {
         setState(() {
           _chapter = ChapterContent.fromJson(fullJson);
           _siblings = all;
+          _mangaLocalImagePaths = localPaths;
           _loading = false;
         });
       }
@@ -325,6 +361,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         onOpenChapterList: _openChapterList,
         onToggleTts:
             chapter is TextChapterContent ? () => _toggleTts(chapter) : null,
+        mangaLocalImagePaths: _mangaLocalImagePaths,
         onChapterNearEnd: () async {
           // Mark the chapter as read in the local Drift DB. No API
           // call — this is offline-only.
