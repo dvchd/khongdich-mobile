@@ -112,6 +112,37 @@ class StoryRepository {
     );
   }
 
+  /// VIP status for a story — is_vip flag + locked chapter IDs +
+  /// whether the current user can download offline (only story-wide
+  /// VIP grants allow offline download).
+  ///
+  /// Hits `GET /api/v1/mobile/stories/{id}/vip-status`.
+  Future<VipStatus> fetchVipStatus(String storyId) async {
+    try {
+      final r = await _dio.get('/api/v1/mobile/stories/$storyId/vip-status');
+      return VipStatus.fromJson(r.data as Map<String, dynamic>);
+    } on DioException catch (_) {
+      // Best-effort — if the endpoint 404s (older backend), assume no VIP.
+      return const VipStatus(isVip: false, lockedChapterIds: [], canDownloadOffline: true);
+    }
+  }
+
+  /// Check whether the current user can read a chapter. Used by the
+  /// chapter reader to decide whether to render content or show a
+  /// "VIP locked" page.
+  ///
+  /// Hits `GET /api/v1/mobile/chapters/{id}/access`.
+  Future<ChapterAccess> fetchChapterAccess(String chapterId) async {
+    try {
+      final r = await _dio.get('/api/v1/mobile/chapters/$chapterId/access');
+      return ChapterAccess.fromJson(r.data as Map<String, dynamic>);
+    } on DioException catch (_) {
+      // Best-effort — if the endpoint 404s, assume access granted
+      // (older backend without VIP gate).
+      return const ChapterAccess(canRead: true, isLocked: false);
+    }
+  }
+
   /// Chapter content (discriminated union by content_type).
   /// Hits `GET /api/v1/mobile/chapters/{id}`.
   Future<ChapterContent> fetchChapter(String chapterId) async {
@@ -683,4 +714,56 @@ class SyncBookmarkItem {
   });
   final String storyId;
   final String listType;
+}
+
+// ─── VIP DTOs ────────────────────────────────────────────────────────
+
+/// VIP status of a story from the reader's perspective.
+///
+/// `is_vip` — story has been approved as VIP by an admin.
+/// `locked_chapter_ids` — chapters the author has marked as VIP-only.
+/// `can_download_offline` — reader has a story-wide VIP grant (only
+///   story-wide grants can download offline; per-chapter grants are
+///   online-only by policy).
+class VipStatus {
+  const VipStatus({
+    required this.isVip,
+    required this.lockedChapterIds,
+    required this.canDownloadOffline,
+  });
+  final bool isVip;
+  final List<String> lockedChapterIds;
+  final bool canDownloadOffline;
+
+  factory VipStatus.fromJson(Map<String, dynamic> json) => VipStatus(
+        isVip: json['is_vip'] as bool? ?? false,
+        lockedChapterIds: [
+          for (final id in (json['locked_chapter_ids'] as List? ?? const []))
+            id.toString(),
+        ],
+        canDownloadOffline: json['can_download_offline'] as bool? ?? true,
+      );
+
+  /// Convenience: is the given chapter VIP-locked?
+  bool isChapterLocked(String chapterId) =>
+      lockedChapterIds.contains(chapterId);
+}
+
+/// Result of a chapter access check.
+class ChapterAccess {
+  const ChapterAccess({
+    required this.canRead,
+    required this.isLocked,
+    this.reason,
+  });
+  final bool canRead;
+  final bool isLocked;
+  /// 'granted' | 'vip_locked' | 'not_found' | null
+  final String? reason;
+
+  factory ChapterAccess.fromJson(Map<String, dynamic> json) => ChapterAccess(
+        canRead: json['can_read'] as bool? ?? true,
+        isLocked: json['is_locked'] as bool? ?? false,
+        reason: json['reason'] as String?,
+      );
 }

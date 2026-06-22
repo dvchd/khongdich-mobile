@@ -71,26 +71,30 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           error: e,
           onRetry: () => ref.invalidate(chapterProvider(_ref)),
         ),
-        data: (c) => ReaderBody(
+        data: (c) => _AccessGate(
           chapter: c,
-          settings: settings,
-          onPrev: c.prevChapter == null
-              ? null
-              : () => context.replace(
-                  '/chapter/${widget.storyId}:${c.prevChapter}'),
-          onNext: c.nextChapter == null
-              ? null
-              : () => context.replace(
-                  '/chapter/${widget.storyId}:${c.nextChapter}'),
-          onOpenSettings: () => _openSettings(context),
-          onOpenChapterList: () => _openChapterList(context, c),
-          onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
-          onChapterNearEnd: () {
-            ref.read(readingProgressServiceProvider).markChapterRead(
-                  widget.storyId,
-                  c.chapterNumber,
-                );
-          },
+          storyId: widget.storyId,
+          child: ReaderBody(
+            chapter: c,
+            settings: settings,
+            onPrev: c.prevChapter == null
+                ? null
+                : () => context.replace(
+                    '/chapter/${widget.storyId}:${c.prevChapter}'),
+            onNext: c.nextChapter == null
+                ? null
+                : () => context.replace(
+                    '/chapter/${widget.storyId}:${c.nextChapter}'),
+            onOpenSettings: () => _openSettings(context),
+            onOpenChapterList: () => _openChapterList(context, c),
+            onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
+            onChapterNearEnd: () {
+              ref.read(readingProgressServiceProvider).markChapterRead(
+                    widget.storyId,
+                    c.chapterNumber,
+                  );
+            },
+          ),
         ),
       ),
     );
@@ -222,6 +226,123 @@ class _ReaderError extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             FilledButton(onPressed: onRetry, child: const Text('Thử lại')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── VIP access gate ─────────────────────────────────────────────────
+//
+// Wraps the chapter reader body. Calls `GET /api/v1/mobile/chapters/{id}/access`
+// to check whether the user can read the chapter. If the chapter is
+// VIP-locked and the user lacks a grant, shows the VipLockedScreen
+// instead of the chapter content.
+
+/// Provider that fetches the access status for a chapter.
+final chapterAccessProvider = FutureProvider.autoDispose
+    .family<ChapterAccess, String>((ref, chapterId) async {
+  final repo = ref.watch(storyRepositoryProvider);
+  return repo.fetchChapterAccess(chapterId);
+});
+
+class _AccessGate extends ConsumerWidget {
+  const _AccessGate({
+    required this.chapter,
+    required this.storyId,
+    required this.child,
+  });
+
+  final ChapterContent chapter;
+  final String storyId;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final accessAsync = ref.watch(chapterAccessProvider(chapter.id));
+    return accessAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => child, // Best-effort — show content on error
+      data: (access) {
+        if (access.canRead) return child;
+        return VipLockedScreen(
+          chapter: chapter,
+          storyId: storyId,
+        );
+      },
+    );
+  }
+}
+
+/// Shown when the user tries to read a VIP-locked chapter they don't
+/// have access to. Mirrors the web's `chapter/vip_locked.html` page.
+class VipLockedScreen extends StatelessWidget {
+  const VipLockedScreen({
+    super.key,
+    required this.chapter,
+    required this.storyId,
+  });
+
+  final ChapterContent chapter;
+  final String storyId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/story/$storyId');
+            }
+          },
+        ),
+        title: const Text('Chương VIP'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(
+              Icons.lock,
+              size: 80,
+              color: Color(0xFFD97706),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '🔒 Chương VIP',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: const Color(0xFFD97706),
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Chương ${chapter.chapterNumber}: ${chapter.title}',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Chương này là chương VIP — chỉ những đọc giả được tác giả '
+              'cấp quyền mới có thể đọc. Liên hệ tác giả để được cấp '
+              'quyền truy cập.',
+              textAlign: TextAlign.center,
+              style: TextStyle(height: 1.6),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => context.go('/story/$storyId'),
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('Về trang truyện'),
+            ),
           ],
         ),
       ),

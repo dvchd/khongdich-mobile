@@ -34,6 +34,15 @@ final downloadedChaptersForStoryProvider =
       .watch();
 });
 
+/// VIP status for a story — fetched once when the story detail loads.
+/// Provides `is_vip` flag, locked chapter IDs, and whether the user
+/// can download offline (only story-wide VIP grants allow offline).
+final vipStatusProvider =
+    FutureProvider.autoDispose.family<VipStatus, String>((ref, storyId) async {
+  final repo = ref.watch(storyRepositoryProvider);
+  return repo.fetchVipStatus(storyId);
+});
+
 /// Story detail screen. Plan §5.3.
 ///
 /// Hits:
@@ -77,6 +86,8 @@ class _StoryDetailBody extends ConsumerWidget {
     final chaptersAsync = ref.watch(chapterListProvider(story.id));
     final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
     final queueAsync = ref.watch(downloadQueueForStoryProvider(story.id));
+    final vipAsync = ref.watch(vipStatusProvider(story.id));
+    final vip = vipAsync.valueOrNull ?? const VipStatus(isVip: false, lockedChapterIds: [], canDownloadOffline: true);
     final queueItems = queueAsync.valueOrNull ?? [];
     final downloadedIds = downloadedAsync.valueOrNull?.map((d) => d.chapterId).toSet() ?? {};
     final downloadedCount = downloadedAsync.valueOrNull?.length ?? 0;
@@ -143,6 +154,17 @@ class _StoryDetailBody extends ConsumerWidget {
                         children: [
                           if (story.status != null)
                             _StatusChip(status: story.status!),
+                          if (vip.isVip)
+                            Chip(
+                              avatar: const Icon(Icons.workspace_premium,
+                                  size: 16, color: Color(0xFFD97706)),
+                              label: const Text('VIP',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFFD97706))),
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: const Color(0xFFFEF3C7),
+                            ),
                           if (_effectiveBookmark != null)
                             _BookmarkChip(listType: _effectiveBookmark!),
                           if (story.chapterCount != null)
@@ -269,9 +291,15 @@ class _StoryDetailBody extends ConsumerWidget {
                           : (downloadedCount > 0
                               ? const Icon(Icons.download_done, color: Colors.green)
                               : const Icon(Icons.download_outlined)),
-                      onPressed: activeDownloads > 0
+                      // Disable download for VIP stories the user can't
+                      // download offline (only story-wide VIP grants
+                      // allow offline download per project policy).
+                      onPressed: (activeDownloads > 0 || (vip.isVip && !vip.canDownloadOffline))
                           ? null
                           : () async {
+                        // For VIP stories, skip locked chapters
+                        // unless the user has a story-wide grant
+                        // (canDownloadOffline is true).
                         final repo = ref.read(storyRepositoryProvider);
                         final page = await repo.fetchChapterList(story.id, perPage: 200);
                         if (page.chapters.isEmpty) {
@@ -282,12 +310,26 @@ class _StoryDetailBody extends ConsumerWidget {
                           }
                           return;
                         }
+                        final chaptersToDownload = vip.isVip
+                            ? page.chapters.where((c) => !vip.isChapterLocked(c.id)).toList()
+                            : page.chapters;
+                        if (chaptersToDownload.isEmpty) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Truyện VIP — toàn bộ chương bị khóa. '
+                                      'Cần được tác giả cấp quyền để tải offline.')),
+                            );
+                          }
+                          return;
+                        }
                         final total = page.chapters.length;
                         final already = downloadedIds.length;
                         final enqueued = await ref.read(downloadManagerProvider).enqueueAllChapters(
                           storyId: story.id,
                           storySlug: story.slug,
-                          chapters: page.chapters,
+                          chapters: chaptersToDownload,
                           coverUrl: story.coverUrl,
                           storyAuthor: story.author,
                           storySynopsis: story.synopsis,
@@ -381,6 +423,12 @@ class _StoryDetailBody extends ConsumerWidget {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            if (vip.isChapterLocked(c.id))
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(Icons.lock,
+                                    size: 16, color: Color(0xFFD97706)),
+                              ),
                             if (queueState == 'pending')
                               const Padding(
                                 padding: EdgeInsets.only(right: 4),

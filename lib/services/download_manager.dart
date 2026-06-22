@@ -226,6 +226,23 @@ class DownloadManager {
         return;
       }
 
+      // VIP gate: check chapter access BEFORE marking as downloading.
+      // If the chapter is VIP-locked and the user lacks a grant, mark
+      // the queue row as 'failed' with a clear Vietnamese message
+      // rather than wasting a fetch round-trip that would 403 anyway.
+      final access = await _repo.fetchChapterAccess(row.chapterId);
+      if (!access.canRead) {
+        await _db.updateDownloadQueueRow(
+            row.id,
+            DownloadQueueCompanion(
+              status: const Value('failed'),
+              errorMessage: const Value(
+                  'Chương VIP — cần được tác giả cấp quyền để tải offline'),
+            ));
+        await _emit();
+        return;
+      }
+
       await _db.updateDownloadQueueRow(
           row.id,
           DownloadQueueCompanion(
@@ -250,10 +267,31 @@ class DownloadManager {
   }
 
   Future<void> _processBatch(List<DownloadQueueData> rows) async {
-    final chapterIds = rows.map((r) => r.chapterId).toList();
     try {
-      // Mark all as downloading.
+      // VIP gate: check access for all chapters in the batch before
+      // fetching. VIP-locked chapters the user can't read are marked
+      // failed immediately — they won't be in the batch fetch.
+      final accessibleRows = <DownloadQueueData>[];
       for (final row in rows) {
+        final access = await _repo.fetchChapterAccess(row.chapterId);
+        if (access.canRead) {
+          accessibleRows.add(row);
+        } else {
+          await _db.updateDownloadQueueRow(
+              row.id,
+              DownloadQueueCompanion(
+                status: const Value('failed'),
+                errorMessage: const Value(
+                    'Chương VIP — cần được tác giả cấp quyền để tải offline'),
+              ));
+        }
+      }
+      await _emit();
+      if (accessibleRows.isEmpty) return;
+      final accessibleIds = accessibleRows.map((r) => r.chapterId).toList();
+
+      // Mark all as downloading.
+      for (final row in accessibleRows) {
         await _db.updateDownloadQueueRow(
             row.id,
             DownloadQueueCompanion(
@@ -264,10 +302,10 @@ class DownloadManager {
       }
       await _emit();
 
-      final chapters = await _repo.fetchChaptersBatch(chapterIds);
+      final chapters = await _repo.fetchChaptersBatch(accessibleIds);
       final byId = {for (final c in chapters) c.id: c};
 
-      for (final row in rows) {
+      for (final row in accessibleRows) {
         final ch = byId[row.chapterId];
         if (ch != null) {
           await _saveChapter(row, ch);
