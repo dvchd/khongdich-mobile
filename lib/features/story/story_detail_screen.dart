@@ -87,7 +87,7 @@ class _StoryDetailBody extends ConsumerWidget {
     final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
     final queueAsync = ref.watch(downloadQueueForStoryProvider(story.id));
     final vipAsync = ref.watch(vipStatusProvider(story.id));
-    final vip = vipAsync.valueOrNull ?? const VipStatus(isVip: false, lockedChapterIds: [], canDownloadOffline: true);
+    final vip = vipAsync.valueOrNull ?? const VipStatus(isVip: false, lockedChapterIds: [], unlockedChapterIds: [], canDownloadOffline: true);
     final queueItems = queueAsync.valueOrNull ?? [];
     final downloadedIds = downloadedAsync.valueOrNull?.map((d) => d.chapterId).toSet() ?? {};
     final downloadedCount = downloadedAsync.valueOrNull?.length ?? 0;
@@ -424,10 +424,17 @@ class _StoryDetailBody extends ConsumerWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (vip.isChapterLocked(c.id))
-                              const Padding(
-                                padding: EdgeInsets.only(right: 4),
-                                child: Icon(Icons.lock,
-                                    size: 16, color: Color(0xFFD97706)),
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: Icon(
+                                  vip.isChapterUnlocked(c.id)
+                                      ? Icons.lock_open
+                                      : Icons.lock,
+                                  size: 16,
+                                  color: vip.isChapterUnlocked(c.id)
+                                      ? const Color(0xFF10B981) // xanh — đã mở khóa
+                                      : const Color(0xFFD97706), // vàng — chưa mở khóa
+                                ),
                               ),
                             if (queueState == 'pending')
                               const Padding(

@@ -123,7 +123,7 @@ class StoryRepository {
       return VipStatus.fromJson(r.data as Map<String, dynamic>);
     } on DioException catch (_) {
       // Best-effort — if the endpoint 404s (older backend), assume no VIP.
-      return const VipStatus(isVip: false, lockedChapterIds: [], canDownloadOffline: true);
+      return const VipStatus(isVip: false, lockedChapterIds: [], unlockedChapterIds: [], canDownloadOffline: true);
     }
   }
 
@@ -722,6 +722,8 @@ class SyncBookmarkItem {
 ///
 /// `is_vip` — story has been approved as VIP by an admin.
 /// `locked_chapter_ids` — chapters the author has marked as VIP-only.
+/// `unlocked_chapter_ids` — locked chapters the current user CAN read
+///   (has been granted access). Used to show 🔓 instead of 🔒.
 /// `can_download_offline` — reader has a story-wide VIP grant (only
 ///   story-wide grants can download offline; per-chapter grants are
 ///   online-only by policy).
@@ -729,10 +731,12 @@ class VipStatus {
   const VipStatus({
     required this.isVip,
     required this.lockedChapterIds,
+    required this.unlockedChapterIds,
     required this.canDownloadOffline,
   });
   final bool isVip;
   final List<String> lockedChapterIds;
+  final List<String> unlockedChapterIds;
   final bool canDownloadOffline;
 
   factory VipStatus.fromJson(Map<String, dynamic> json) => VipStatus(
@@ -741,12 +745,21 @@ class VipStatus {
           for (final id in (json['locked_chapter_ids'] as List? ?? const []))
             id.toString(),
         ],
+        unlockedChapterIds: [
+          for (final id in (json['unlocked_chapter_ids'] as List? ?? const []))
+            id.toString(),
+        ],
         canDownloadOffline: json['can_download_offline'] as bool? ?? true,
       );
 
   /// Convenience: is the given chapter VIP-locked?
   bool isChapterLocked(String chapterId) =>
       lockedChapterIds.contains(chapterId);
+
+  /// Convenience: is the given chapter VIP-locked AND the user has
+  /// been granted access to read it?
+  bool isChapterUnlocked(String chapterId) =>
+      unlockedChapterIds.contains(chapterId);
 }
 
 /// Result of a chapter access check.

@@ -19,6 +19,7 @@ class StorySummary {
     this.followers,
     this.viewCount,
     this.updatedAt,
+    this.isVip = false,
   });
 
   /// Construct from a `StoryCard` JSON row (backend `models::story::StoryCard`).
@@ -41,6 +42,7 @@ class StorySummary {
       viewCount: (json['view_count'] as num?)?.toInt(),
       rating: (json['avg_rating'] as num?)?.toDouble(),
       updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
+      isVip: json['is_vip'] as bool? ?? false,
     );
   }
 
@@ -64,6 +66,7 @@ class StorySummary {
       rating: double.tryParse(json['avg_rating']?.toString() ?? ''),
       followers: (json['bookmark_count'] as num?)?.toInt(),
       updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
+      isVip: json['is_vip'] as bool? ?? false,
     );
   }
 
@@ -83,6 +86,9 @@ class StorySummary {
   final int? followers;
   final int? viewCount;
   final DateTime? updatedAt;
+  /// True if the story is currently VIP (admin-approved). Parsed from
+  /// `is_vip` field in the backend's StoryCard JSON response.
+  final bool isVip;
 
   StorySummary copyWith({
     String? author,
@@ -107,6 +113,7 @@ class StorySummary {
         followers: followers,
         viewCount: viewCount,
         updatedAt: updatedAt,
+        isVip: isVip,
       );
 }
 

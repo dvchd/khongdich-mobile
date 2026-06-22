@@ -114,6 +114,34 @@ class StoryCard extends ConsumerWidget {
                         ),
                       ),
                     ),
+                  // VIP badge — top-right corner (below the optional
+                  // [badge] chip which also uses top-right). We stack
+                  // it below the badge chip so both can coexist.
+                  if (story.isVip)
+                    Positioned(
+                      top: badge != null ? 28 : 6,
+                      right: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'VIP',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
