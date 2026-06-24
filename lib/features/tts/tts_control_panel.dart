@@ -8,7 +8,7 @@ import 'tts_audio_handler.dart';
 ///   - Play/pause/stop buttons
 ///   - Engine selector (dropdown of installed TTS engines)
 ///   - Voice selector (dropdown of available voices)
-///   - Speed selector (0.5x – 2.5x)
+///   - Speed selector (0.5x, 0.75x, 1.0x, 1.25x, 1.5x, 1.75x, 2.0x, 2.5x)
 ///   - Progress bar showing chunk N/total
 ///   - Chapter title display
 ///
@@ -244,7 +244,7 @@ class _PanelContentState extends State<_PanelContent> {
                     child: Wrap(
                       spacing: 6,
                       children: [
-                        for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5])
+                        for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5])
                           ChoiceChip(
                             label: Text('${s}x'),
                             selected: (_speed - s).abs() < 0.01,

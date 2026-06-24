@@ -154,8 +154,11 @@ class MarkdownParser {
     final line = ctx.current;
     final m = _fenceRegExp.firstMatch(line);
     if (m == null) return null;
-    final fenceChar = m.group(1)!;
-    final lang = m.group(2)?.trim();
+    // Only backtick fences (```) are supported — tilde fences (`~~~`) are
+    // intentionally NOT recognised so that `~~~` typed by authors as a
+    // decorative separator stays as literal text. `fenceChar` is always '`'.
+    const fenceChar = '`';
+    final lang = m.group(1)?.trim();
     // Count leading fence characters to know the minimum close fence length.
     // The opening match guarantees fenceChar repeats at least 3 times at the
     // start (after up to 3 leading whitespace chars).
@@ -368,16 +371,10 @@ class MarkdownParser {
         }
       }
 
-      // Strikethrough ~~text~~ (GFM extension per plan §13.2)
-      if (c == '~' && i + 1 < text.length && text[i + 1] == '~') {
-        final close = text.indexOf('~~', i + 2);
-        if (close > i + 2) {
-          flushText();
-          spans.add(StrikethroughRun(_parseInline(text.substring(i + 2, close))));
-          i = close + 2;
-          continue;
-        }
-      }
+      // Note: ~~strikethrough~~ is intentionally NOT parsed. Vietnamese
+      // authors sometimes type `~~~` as a decorative separator (similar to
+      // `---` for scene break), and parsing `~~` as strikethrough produced
+      // malformed output. Both `~~` and `~~~` fall through to literal text.
 
       buf.write(c);
       i++;
@@ -419,8 +416,12 @@ class MarkdownParser {
   static const String _escapableChars = r'\`*_{}[]()#+-.!|~>';
 
   static final RegExp _headingRegExp = RegExp(r'^\s{0,3}(#{1,6})\s+(.*)$');
+  // Fence regex: only backtick fences (```), NOT `~~~` (tilde fences).
+  // Vietnamese authors sometimes type `~~~` as a decorative separator
+  // (similar to `---`), so we deliberately don't recognise it as a code
+  // fence to keep it as literal text.
   static final RegExp _fenceRegExp =
-      RegExp(r'^\s{0,3}([`~])\1{2,}\s*([\w\-+#.]*)\s*$');
+      RegExp(r'^\s{0,3}`{3,}\s*([\w\-+#.]*)\s*$');
   static final RegExp _orderedListStartRegExp = RegExp(r'^(\d{1,9})[.)]\s+');
 
   static final RegExp _codeSpanRegExp =

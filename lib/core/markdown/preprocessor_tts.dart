@@ -13,9 +13,11 @@ class TtsMarkdownPreprocessor {
   static List<String> process(String markdown) {
     var text = markdown;
 
-    // 1. Remove fenced code blocks entirely.
+    // 1. Remove backtick fenced code blocks entirely.
+    //    Note: `~~~` (tilde fences) are intentionally NOT stripped — they
+    //    are no longer treated as code fences (Vietnamese authors type `~~~`
+    //    as a decorative separator), so we keep them as literal text.
     text = text.replaceAll(RegExp(r'```[\s\S]*?```'), '');
-    text = text.replaceAll(RegExp(r'~~~[\s\S]*?~~~'), '');
 
     // 2. Inline code: keep the inner text.
     text = text.replaceAllMapped(RegExp(r'`([^`]+)`'), (m) => m.group(1)!);
@@ -32,36 +34,37 @@ class TtsMarkdownPreprocessor {
     text = text.replaceAllMapped(RegExp(r'\*([^*]+)\*'), (m) => m.group(1)!);
     text = text.replaceAllMapped(RegExp(r'_([^_]+)_'), (m) => m.group(1)!);
 
-    // 5. Strikethrough.
-    text = text.replaceAllMapped(RegExp(r'~~([^~]+)~~'), (m) => m.group(1)!);
+    // Note: ~~strikethrough~~ is intentionally NOT stripped — `~~` and `~~~`
+    // are no longer treated as Markdown syntax in chapter content, so the
+    // TTS preprocessor leaves them as literal text to match the renderer.
 
-    // 6. Links: keep the label, drop the URL.
+    // 5. Links: keep the label, drop the URL.
     text = text.replaceAllMapped(
       RegExp(r'\[([^\]]+)\]\([^)]+\)'),
       (m) => m.group(1)!,
     );
 
-    // 7. Images: drop entirely.
+    // 6. Images: drop entirely.
     text = text.replaceAll(RegExp(r'!\[[^\]]*\]\([^)]+\)'), '');
 
-    // 8. Blockquote markers.
+    // 7. Blockquote markers.
     text = text.replaceAll(RegExp(r'^>\s*', multiLine: true), '');
 
-    // 9. List markers.
+    // 8. List markers.
     text = text.replaceAll(RegExp(r'^[\-\*\+]\s+', multiLine: true), '');
     text = text.replaceAll(RegExp(r'^\d+\.\s+', multiLine: true), '');
 
-    // 10. Horizontal rule → pause.
+    // 9. Horizontal rule → pause.
     text = text.replaceAll(RegExp(r'^[\-\*_]{3,}$', multiLine: true), '\n\n');
 
-    // 11. Hard breaks.
+    // 10. Hard breaks.
     text = text.replaceAll(RegExp(r'  \n'), '\n\n');
     text = text.replaceAll(RegExp(r'\\\n'), '\n\n');
 
-    // 12. Collapse 3+ newlines, then trim.
+    // 11. Collapse 3+ newlines, then trim.
     text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
 
-    // 13. Split into chunks at paragraph boundaries, max ~500 chars each.
+    // 12. Split into chunks at paragraph boundaries, max ~500 chars each.
     //     Long paragraphs with no blank-line breaks fall back to sentence
     //     boundaries (. ! ?) so we still get multiple TTS-sized chunks.
     final paragraphs = text.split(RegExp(r'\n\n+'));

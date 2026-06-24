@@ -87,6 +87,15 @@
     ]
   },
   {
+    "name": "tilde_fence_not_parsed",
+    "input": "Trước\n\n~~~\nnot code\n~~~\n\nSau",
+    "expected": [
+      {"type": "paragraph", "children": [{"type": "text", "text": "Trước"}]},
+      {"type": "paragraph", "children": [{"type": "text", "text": "~~~"}, {"type": "line_break", "hard": false}, {"type": "text", "text": "not code"}, {"type": "line_break", "hard": false}, {"type": "text", "text": "~~~"}]},
+      {"type": "paragraph", "children": [{"type": "text", "text": "Sau"}]}
+    ]
+  },
+  {
     "name": "inline_strong_emphasis",
     "input": "Đây là **bold** và *italic* và ~~strike~~.",
     "expected": [
@@ -97,9 +106,7 @@
           {"type": "strong", "children": [{"type": "text", "text": "bold"}]},
           {"type": "text", "text": " và "},
           {"type": "emphasis", "children": [{"type": "text", "text": "italic"}]},
-          {"type": "text", "text": " và "},
-          {"type": "strikethrough", "children": [{"type": "text", "text": "strike"}]},
-          {"type": "text", "text": "."}
+          {"type": "text", "text": " và ~~strike~~."}
         ]
       }
     ]
