@@ -48,6 +48,36 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   }
 
   @override
+  void didUpdateWidget(covariant TextChapterView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // When the chapter changes (parent navigates to next/prev chapter),
+    // the markdown content changes. We must:
+    //   1. Re-parse the new markdown into blocks.
+    //   2. Force a re-compute of page splits (clear _lastSize).
+    //   3. Reset the PageController to page 0 — otherwise the
+    //      controller keeps the old chapter's page index (e.g. 5/5)
+    //      which is out of bounds for the new chapter (which may
+    //      only have 3 pages). This was the root cause of the bug
+    //      "sang chương mới, ấn vào cạnh không chuyển được trang cũng
+    //      không chuyển được chương, bị đơ" — the PageView was stuck
+    //      because its current page index exceeded the new itemCount.
+    if (oldWidget.markdown != widget.markdown) {
+      _blocks = MarkdownParser().parse(widget.markdown);
+      _lastSize = null;
+      // Reset to page 0 on the next frame, after _pageBlockIndices
+      // has been re-computed by _computePages() during the next
+      // LayoutBuilder pass. Using WidgetsBinding.addPostFrameCallback
+      // ensures the controller has clients attached before we call
+      // jumpToPage.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pageController.hasClients) {
+          _pageController.jumpToPage(0);
+        }
+      });
+    }
+  }
+
+  @override
   void dispose() {
     // Only dispose if we created the controller internally
     if (widget.pageController == null) {
