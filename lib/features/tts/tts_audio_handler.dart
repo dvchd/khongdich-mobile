@@ -139,17 +139,40 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         AppLogger.warning('TTS: engine enumeration failed', e, s);
       }
 
-      // Set language FIRST — this is critical. If the language is not
-      // available, speak() will silently fail.
-      final langResult = await _tts.setLanguage('vi-VN');
-      AppLogger.info('TTS: setLanguage(vi-VN) → $langResult');
+      // Set language — thử nhiều format vì các engine trả về kết quả khác nhau:
+      //   - Engine cũ (Google TTS `com.google.android.tts`): chấp nhận 'vi-VN'
+      //   - Engine mới (Speech Recognition and Synthesis from Google): có thể
+      //     chỉ chấp nhận 'vi_VN' hoặc 'vi'
+      //   - Samsung/Huawei: format riêng
+      // Thử lần lượt: vi-VN → vi_VN → vi. Dừng lại ở format đầu tiên trả về
+      // 0 (success) hoặc 1 (already set). Nếu tất cả fail (-1/-2), vẫn giữ
+      // format cuối — user có thể chọn voice tiếng Việt thủ công qua dropdown.
+      final langCandidates = ['vi-VN', 'vi_VN', 'vi'];
+      int langResult = -2;
+      for (final lang in langCandidates) {
+        langResult = await _tts.setLanguage(lang);
+        AppLogger.info('TTS: setLanguage($lang) → $langResult');
+        if (langResult == 0 || langResult == 1) break;
+      }
 
-      // If setLanguage returned 0 (success) or 1 (already set), we're good.
-      // If it returned -1 (not available) or -2 (language missing), try
-      // falling back to English so at least something is heard.
+      // Log available languages để debug (nếu setLanguage fail, user có thể
+      // xem log biết engine có support tiếng Việt không).
       if (langResult == -1 || langResult == -2) {
-        AppLogger.warning('TTS: vi-VN not available, trying en-US fallback');
-        await _tts.setLanguage('en-US');
+        AppLogger.warning(
+            'TTS: vi-* not available (result=$langResult). User có thể chọn '
+            'voice tiếng Việt thủ công qua dropdown nếu engine support.');
+        try {
+          final langs = await _tts.getLanguages;
+          if (langs != null) {
+            final langList = (langs as List)
+                .map((l) => l?.toString() ?? '')
+                .where((s) => s.isNotEmpty)
+                .toList();
+            AppLogger.info('TTS: available languages = $langList');
+          }
+        } catch (e) {
+          AppLogger.warning('TTS: getLanguages failed', e);
+        }
       }
 
       await _tts.setPitch(1.0);
@@ -185,13 +208,37 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
           });
           AppLogger.info(
               'TTS: ${_availableVoices.length} voices available');
+          // Log first 5 Vietnamese voices để debug.
+          final viVoices = _availableVoices
+              .where((v) => (v['locale'] ?? v['language'] ?? '')
+                  .toLowerCase()
+                  .startsWith('vi'))
+              .toList();
+          AppLogger.info(
+              'TTS: ${viVoices.length} Vietnamese voices: ${viVoices.take(3).map((v) => "${v['name']} (${v['locale'] ?? v['language']})").toList()}');
           if (_selectedVoiceName != null) {
             final voice = _availableVoices
                 .where((v) => v['name'] == _selectedVoiceName)
                 .firstOrNull;
             if (voice != null) {
               await _tts.setVoice(voice);
+              AppLogger.info('TTS: setVoice(${voice['name']}) → ok');
+            } else {
+              AppLogger.warning(
+                  'TTS: saved voice "$_selectedVoiceName" not found in current engine');
             }
+          } else if (viVoices.isNotEmpty) {
+            // Auto-select first Vietnamese voice if user hasn't picked one.
+            // This helps when setLanguage() failed but the engine still has
+            // Vietnamese voices available (common with Google's new
+            // "Speech Recognition and Synthesis" engine).
+            final voice = viVoices.first;
+            await _tts.setVoice(voice);
+            _selectedVoiceName = voice['name'];
+            AppLogger.info(
+                'TTS: auto-selected Vietnamese voice ${voice['name']} (${voice['locale'] ?? voice['language']})');
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('tts.voice', _selectedVoiceName!);
           }
         }
       } catch (e) {
