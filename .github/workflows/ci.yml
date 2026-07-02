@@ -83,31 +83,17 @@ jobs:
           echo "$KHONGDICH_KEYSTORE_BASE64" | base64 -d > /tmp/khongdich-release.jks
           echo "Keystore decoded: $(ls -la /tmp/khongdich-release.jks)"
 
-      - name: Decode Firebase google-services.json (demo)
-        env:
-          FIREBASE_CONFIG_DEMO_BASE64: ${{ secrets.FIREBASE_CONFIG_DEMO_BASE64 }}
-        run: |
-          if [ -n "$FIREBASE_CONFIG_DEMO_BASE64" ]; then
-            echo "$FIREBASE_CONFIG_DEMO_BASE64" | base64 -d > android/app/google-services.json
-            echo "Firebase demo config decoded"
-          else
-            cp android/app/google-services.placeholder.json android/app/google-services.json
-            echo "No FIREBASE_CONFIG_DEMO_BASE64 secret — using placeholder (push notifications will be disabled)"
-          fi
-
-      - name: Decode Firebase google-services.json (prod)
-        if: matrix.flavor.name == 'prod'
-        env:
-          FIREBASE_CONFIG_PROD_BASE64: ${{ secrets.FIREBASE_CONFIG_PROD_BASE64 }}
-        run: |
-          if [ -n "$FIREBASE_CONFIG_PROD_BASE64" ]; then
-            echo "$FIREBASE_CONFIG_PROD_BASE64" | base64 -d > android/app/google-services.json
-            echo "Firebase prod config decoded"
-          fi
+      # Firebase google-services.json decoding đã bị bỏ — app không còn
+      # dùng Firebase. google_sign_in hoạt động độc lập.
+      # GOOGLE_WEB_CLIENT_ID là Web Application OAuth Client ID (cùng giá
+      # trị với GOOGLE_CLIENT_ID trên backend) — bắt buộc để mint idToken
+      # có aud đúng. Lấy từ Google Cloud Console → APIs & Services →
+      # Credentials → OAuth 2.0 Client IDs (Web application).
 
       - name: Build APK
         env:
           APP_ENV: ${{ matrix.flavor.app_env }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
@@ -116,6 +102,7 @@ jobs:
         run: |
           flutter build apk --release --no-tree-shake-icons \
             --dart-define=APP_ENV=${APP_ENV} \
+            --dart-define=GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID} \
             --flavor=${APP_ENV}
 
       - name: Rename artifacts with build sha + flavor

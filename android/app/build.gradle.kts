@@ -4,11 +4,8 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
-    // Google Services plugin — reads `android/app/google-services.json`
-    // (decoded from a CI secret) and injects the Firebase config into
-    // the build. The plugin is a no-op when the file is absent, so
-    // local `flutter run` still works without Firebase setup.
-    id("com.google.gms.google-services")
+    // Google Services plugin đã bị bỏ — app không còn dùng Firebase.
+    // google_sign_in hoạt động độc lập với Firebase (không cần plugin này).
 }
 
 // Decode a base64-encoded keystore (passed via env in CI) into a temp file.

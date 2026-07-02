@@ -1,4 +1,3 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/scheduler.dart';
@@ -17,12 +16,10 @@ Future<void> main() async {
   // ensure the refresh rate is not throttled by the framework.
   timeDilation = 1.0;
 
-  // Initialise Firebase — required by firebase_messaging for push.
-  try {
-    await Firebase.initializeApp();
-  } catch (e, s) {
-    AppLogger.warning('Firebase init failed (push will be disabled)', e, s);
-  }
+  // Firebase đã bị bỏ — app dùng in-app notifications (GET /api/v1/mobile/
+  // notifications) thay vì FCM push. Khi cần push lại: re-add firebase_core
+  // + firebase_messaging, populate google-services.json, xây backend
+  // push_devices table + FCM sender. Xem README mục "Tính năng thông báo".
   runApp(
     const ProviderScope(
       child: KhongdichApp(),

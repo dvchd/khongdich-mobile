@@ -12,7 +12,7 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 
 - **Auth:** `google_sign_in` trên thiết bị → exchange id_token qua `POST /api/v1/mobile/auth/token` → JWT server lưu trong `flutter_secure_storage` → gửi qua `Authorization: Bearer <jwt>` trên mọi request.
 - **Đọc truyện:** mọi list/detail/chapter content đi qua JSON endpoint (`/api/v1/mobile/stories`, `/api/v1/mobile/chapters/{id}`, ...).
-- **Ghi dữ liệu:** bookmark toggle, reading progress, sync, push register — tất cả JSON.
+- **Ghi dữ liệu:** bookmark toggle, reading progress, sync — tất cả JSON.
 - **Đa môi trường:** app build 2 flavor:
   - **demo** → `https://demo.khongdich.com` (test nội bộ, package `com.khongdich.app.demo`)
   - **prod** → `https://khongdich.com` (chính thức, package `com.khongdich.app`)
@@ -52,7 +52,8 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 | TTS text highlighting (bôi đoạn đang đọc) | ✅ |
 | Drift on-disk SQLite store (7 bảng, schema v4) | ✅ |
 | Batch sync (`POST /api/v1/mobile/sync`) | ✅ |
-| FCM push (`firebase_messaging`) | ✅ |
+| FCM push (`firebase_messaging`) | ❌ đã bỏ — dùng in-app notifications |
+| In-app notifications (GET /api/v1/mobile/notifications) | ✅ |
 | Launcher icons (từ web OG image) | ✅ |
 | Multi-env flavor build (demo / prod) | ✅ |
 | GitHub Actions CI/CD → APK → Releases | ✅ |
@@ -73,9 +74,10 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 
 ```
 lib/
-├── main.dart                            # Khởi tạo Firebase + Riverpod + 120fps
+├── main.dart                            # Khởi tạo Riverpod + 120fps (không còn Firebase)
 ├── app.dart                             # MaterialApp.router + splash khi ApiClient loading
 ├── core/
+│   ├── auth/auth_service.dart           # Google Sign-In → server JWT (single source of truth)
 │   ├── database/app_database.dart       # Drift schema (7 bảng, v4)
 │   ├── markdown/                        # AST + parser + renderer + TTS preprocessor
 │   ├── network/api_client.dart          # Dio + Bearer JWT + env từ dart-define
@@ -164,10 +166,11 @@ flutter run --flavor=prod --dart-define=APP_ENV=prod
 | `KHONGDICH_KEYSTORE_PASSWORD` | Password keystore |
 | `KHONGDICH_KEY_ALIAS` | Key alias |
 | `KHONGDICH_KEY_PASSWORD` | Password key |
-| `FIREBASE_CONFIG_DEMO_BASE64` | google-services.json cho demo |
-| `FIREBASE_CONFIG_PROD_BASE64` | google-services.json cho prod |
+| `GOOGLE_WEB_CLIENT_ID` | Web OAuth Client ID — bắt buộc cho Google Sign-In (mint idToken có aud đúng) |
 
-Nếu thiếu secrets → fallback debug signing + placeholder Firebase (push disabled).
+Nếu thiếu secrets → fallback debug signing + Google Sign-In không mint được idToken (login fail).
+
+> **Lưu ý**: `FIREBASE_CONFIG_*` secrets đã bị bỏ — app không còn dùng Firebase.
 
 ### Tạo keystore
 
@@ -279,45 +282,52 @@ GOOGLE_MOBILE_CLIENT_IDS=\
 
 Restart backend sau khi set env.
 
-### Bước 4 — Cấu hình Firebase (google-services.json)
+### Bước 4 — Cấu hình GOOGLE_WEB_CLIENT_ID (GitHub secret)
 
-`google-services.json` chứa Firebase config + `oauth_client` section. Mobile app đọc file này khi khởi tạo Firebase.
+App KHÔNG dùng Firebase nữa. Thay vào đó, `GoogleSignIn` cần `serverClientId`
+(Web Application OAuth Client ID) để mint `idToken` có `aud` đúng với backend.
 
-1. Vào **[Firebase Console](https://console.firebase.google.com/)** → chọn project.
-2. Menu **Project settings** (icon gear) → tab **General**.
-3. Cuối trang, mục **Your apps** — chọn Android app có package `com.khongdich.app.demo` → **Download google-services.json**. Đây là file cho demo.
-4. Tương tự với Android app có package `com.khongdich.app` → **Download google-services.json**. Đây là file cho prod.
-5. File `google-services.json` từ Firebase **đã tự động chứa** cả 2 OAuth Client ID ở bước 2 (Firebase sync với Google Cloud). Nếu bạn thêm Client ID mới, có thể cần bấm **Download lại** để Firebase cập nhật `oauth_client` section.
-6. Base64 encode 2 file và set làm GitHub secrets:
+`serverClientId` được truyền qua `--dart-define=GOOGLE_WEB_CLIENT_ID=...` lúc
+build. CI đọc từ GitHub secret `GOOGLE_WEB_CLIENT_ID`.
 
-```bash
-# Demo
-base64 -w 0 google-services-demo.json
-# Paste vào GitHub secret FIREBASE_CONFIG_DEMO_BASE64
-
-# Prod
-base64 -w 0 google-services-prod.json
-# Paste vào GitHub secret FIREBASE_CONFIG_PROD_BASE64
-```
+1. Lấy Web Application OAuth Client ID từ **Bước 1** (cùng giá trị với
+   `GOOGLE_CLIENT_ID` trên backend).
+2. Vào GitHub repo → **Settings** → **Secrets and variables** → **Actions**
+   → **New repository secret**:
+   - Name: `GOOGLE_WEB_CLIENT_ID`
+   - Value: `<web-client-id>.apps.googleusercontent.com`
+3. Local dev: thêm `--dart-define=GOOGLE_WEB_CLIENT_ID=<id>` khi `flutter run`.
 
 ### Bước 5 — Verify
 
 ```bash
 # Build demo APK, cài lên thiết bị, đăng nhập Google → phải thành công
-flutter run --flavor=demo --dart-define=APP_ENV=demo
+flutter run --flavor=demo \
+  --dart-define=APP_ENV=demo \
+  --dart-define=GOOGLE_WEB_CLIENT_ID=<web-client-id>.apps.googleusercontent.com
 
 # Build prod APK, cài lên thiết bị (cài song song với demo), đăng nhập Google → phải thành công
-flutter run --flavor=prod --dart-define=APP_ENV=prod
+flutter run --flavor=prod \
+  --dart-define=APP_ENV=prod \
+  --dart-define=GOOGLE_WEB_CLIENT_ID=<web-client-id>.apps.googleusercontent.com
 ```
 
 Nếu đăng nhập báo lỗi `DEVELOPER_ERROR` → thường là do:
 - SHA-1 chưa thêm vào Client ID (hoặc thêm sai).
 - Package name trong Client ID không khớp `applicationId` của flavor.
-- File `google-services.json` cũ (chưa có Client ID mới) — download lại từ Firebase.
+- `GOOGLE_WEB_CLIENT_ID` chưa set (hoặc set sai) → `idToken` trả về `null`.
 
-### Kiểm tra nhanh trên Firebase
+### Kiểm tra nhanh trên Google Cloud Console
 
-Trong Firebase Console → **Authentication** → **Sign-in method** → **Google** → đảm bảo **Enabled**. Mục **Authorized domains** không cần cấu hình cho mobile (chỉ áp dụng cho web OAuth).
+Vào **Google Cloud Console** → **APIs & Services** → **Credentials** →
+đảm bảo có 3 OAuth 2.0 Client ID:
+1. **Web application** — dùng làm `GOOGLE_WEB_CLIENT_ID` (mobile) + `GOOGLE_CLIENT_ID` (backend).
+2. **Android** (`com.khongdich.app.demo`) — có SHA-1 debug + release.
+3. **Android** (`com.khongdich.app`) — có SHA-1 debug + release.
+
+> **Lưu ý**: Firebase KHÔNG còn được dùng. App đăng nhập qua `google_sign_in`
+> trực tiếp (không cần `firebase_auth`). Push notifications dùng in-app
+> notifications (GET `/api/v1/mobile/notifications`) thay vì FCM.
 
 ---
 

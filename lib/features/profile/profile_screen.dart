@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import '../../core/network/api_client.dart';
+import '../../core/auth/auth_service.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
@@ -28,40 +27,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _busy = true);
     try {
-      final googleSignIn =
-          GoogleSignIn(scopes: ['email', 'profile', 'openid']);
-      final account = await googleSignIn.signIn();
-      if (account == null) return;
-      final auth = await account.authentication;
-      final idToken = auth.idToken;
-      if (idToken == null) {
-        _toast('Không lấy được idToken từ Google.');
-        return;
-      }
-      final repo = ref.read(storyRepositoryProvider);
-      final resp = await repo.exchangeGoogleIdToken(idToken);
-      AppLogger.info('Logged in as ${resp.user.username}');
+      final auth = ref.read(authServiceProvider);
+      final result = await auth.signInWithGoogle();
+      AppLogger.info('Logged in as ${result.user.username}');
       ref.invalidate(currentUserProvider);
       if (mounted) {
-        _toast('Đăng nhập thành công. Xin chào ${resp.user.displayName}!');
+        _toast('Đăng nhập thành công. Xin chào ${result.user.displayName}!');
+      }
+    } on AuthError catch (e) {
+      if (mounted && e.hint.isNotEmpty) {
+        _toast('${e.message} ${e.hint}');
       }
     } catch (e, s) {
       AppLogger.error('Google Sign-In failed', e, s);
-      if (mounted) _toast('Đăng nhập thất bại: $e');
+      if (mounted) {
+        final err = translateSignInError(e);
+        _toast(err.hint.isEmpty ? err.message : '${err.message} ${err.hint}');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _signOut() async {
-    try {
-      await GoogleSignIn().signOut();
-    } catch (_) {}
-    final api = ref.read(apiClientProvider).maybeWhen(
-          data: (c) => c,
-          orElse: () => null,
-        );
-    if (api != null) await api.clearJwt();
+    final auth = ref.read(authServiceProvider);
+    await auth.signOut();
     ref.invalidate(currentUserProvider);
     if (mounted) _toast('Đã đăng xuất.');
   }

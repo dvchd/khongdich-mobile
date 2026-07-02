@@ -377,17 +377,9 @@ class StoryRepository {
   }
 
   // ─── Push ───────────────────────────────────────────────────────
-
-  /// Register an FCM token with the server (currently a no-op on the
-  /// backend — the token is logged but not persisted until the
-  /// `push_devices` migration + FCM crate ship).
-  /// Hits `POST /api/v1/mobile/push/register`.
-  Future<void> registerPushToken(String token, {String platform = 'android'}) async {
-    await _dio.post(
-      '/api/v1/mobile/push/register',
-      data: {'token': token, 'platform': platform},
-    );
-  }
+  // FCM push đã bị bỏ — app dùng in-app notifications (GET /api/v1/mobile/
+  // notifications) thay vì FCM. Khi cần push lại: re-add firebase_messaging,
+  // registerPushToken() method, và backend push_devices table + FCM sender.
 }
 
 final storyRepositoryProvider = Provider<StoryRepository>((ref) {

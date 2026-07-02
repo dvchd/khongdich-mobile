@@ -49,9 +49,10 @@ dependencies:
   # Auth — Google Sign-In → exchange idToken for server JWT
   google_sign_in: ^6.2.1
 
-  # Push notifications
-  firebase_core: ^3.4.0
-  firebase_messaging: ^15.1.0
+  # Push notifications: KHÔNG dùng Firebase. App dùng in-app notifications
+  # (GET /api/v1/mobile/notifications) + flutter_local_notifications cho
+  # download completion. Khi cần FCM push: re-add firebase_core +
+  # firebase_messaging + google-services.json + backend push_devices.
 
   # Utils
   logger: ^2.4.0

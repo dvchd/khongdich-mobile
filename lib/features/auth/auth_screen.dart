@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
+import '../../core/auth/auth_service.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
-import '../../repositories/story_repository.dart';
 
 /// Auth screen. Plan §5.1 + §10.1.
 ///
@@ -36,77 +35,33 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _busy = true);
     try {
-      final googleSignIn = GoogleSignIn(scopes: ['email', 'profile', 'openid']);
-      final account = await googleSignIn.signIn();
-      if (account == null) {
-        // User cancelled the picker.
-        return;
-      }
-      final auth = await account.authentication;
-      final idToken = auth.idToken;
-      if (idToken == null) {
-        _showError(
-            'Không lấy được idToken từ Google.',
-            'Thiếu `openid` scope hoặc google-services.json chưa cấu hình '
-                'đúng. Kiểm tra lại Firebase + OAuth Client ID.');
-        return;
-      }
-
-      final repo = ref.read(storyRepositoryProvider);
-      final resp = await repo.exchangeGoogleIdToken(idToken);
-      AppLogger.info('Logged in as ${resp.user.username} '
-          '(jwt expires ${resp.expiresAt.toIso8601String()})');
+      final auth = ref.read(authServiceProvider);
+      final result = await auth.signInWithGoogle();
       if (mounted) {
-        _toast('Đăng nhập thành công. Xin chào ${resp.user.displayName}!');
+        _toast('Đăng nhập thành công. Xin chào ${result.user.displayName}!');
         context.go('/home');
       }
+    } on AuthError catch (e) {
+      if (!mounted) return;
+      if (e.hint.isEmpty) {
+        // Cancelled — không hiện error, chỉ tắt busy.
+        return;
+      }
+      _showError(e.message, e.hint);
     } catch (e, s) {
       AppLogger.error('Google Sign-In failed', e, s);
       if (!mounted) return;
-      _showSignInError(e);
+      final err = translateSignInError(e);
+      if (err.hint.isEmpty) return;
+      _showError(err.message, err.hint);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   /// Translate raw Google Sign-In exceptions into user-friendly
-  /// Vietnamese messages. The raw exception text is rarely actionable
-  /// for end-users (e.g. `PlatformException(sign_in_failed, ..., 10: , null, null)`)
-  /// — we extract the GMS status code and map to a hint.
-  void _showSignInError(Object e) {
-    final msg = e.toString();
-    // Google Play Services ApiException codes:
-    //   10  = DEVELOPER_ERROR  → SHA-1 / package name not registered in
-    //                            Google Cloud Console OAuth Client ID
-    //   12500 = SIGN_IN_CANCELLED
-    //   7   = NETWORK_ERROR
-    //   8   = INTERNAL_ERROR
-    //   13  = ERROR
-    //   4   = SIGN_IN_REQUIRED
-    //   5   = INVALID_ACCOUNT
-    //   6   = RESOLUTION_REQUIRED
-    String userMessage;
-    String hint;
-    if (msg.contains('10:') || msg.contains('ApiException: 10')) {
-      userMessage = 'Lỗi cấu hình Google Sign-In (DEVELOPER_ERROR).';
-      hint = 'SHA-1 của APK chưa được thêm vào OAuth Client ID trên Google '
-          'Cloud Console, hoặc package name không khớp. Xem hướng dẫn '
-          'trong README → "Thiết lập đăng nhập Google".';
-    } else if (msg.contains('12500') || msg.contains('SIGN_IN_CANCELLED')) {
-      userMessage = 'Đăng nhập đã bị huỷ.';
-      hint = '';
-    } else if (msg.contains('7:') || msg.contains('NETWORK_ERROR')) {
-      userMessage = 'Lỗi mạng khi đăng nhập.';
-      hint = 'Kiểm tra kết nối Internet và thử lại.';
-    } else if (msg.contains('8:') || msg.contains('INTERNAL_ERROR')) {
-      userMessage = 'Lỗi nội bộ Google Play Services.';
-      hint = 'Thử cập nhật Google Play Services trên thiết bị rồi đăng nhập lại.';
-    } else {
-      userMessage = 'Đăng nhập thất bại.';
-      hint = 'Chi tiết: $msg';
-    }
-    _showError(userMessage, hint);
-  }
+  /// Vietnamese messages. (Logic đã chuyển sang `translateSignInError`
+  /// trong auth_service.dart — giữ lại ở đây để backward compat.)
 
   void _showError(String title, String hint) {
     ScaffoldMessenger.of(context).showSnackBar(
