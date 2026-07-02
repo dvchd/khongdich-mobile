@@ -412,9 +412,27 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   Future<void> play() async {
     if (_currentChapterId == null || _chunks.isEmpty) {
       AppLogger.warning('TTS: play() called but no chapter loaded');
+      // Surface error để user biết thay vì silent return.
+      playbackState.add(playbackState.value.copyWith(
+        processingState: AudioProcessingState.error,
+        errorMessage: 'Chưa load được chương để đọc. '
+            'Thử mở lại chương rồi bấm headphone.',
+      ));
       return;
     }
     await _init();
+    // Nếu init vẫn fail (vd: engine không có giọng tiếng Việt), _initialised
+    // sẽ false. Surface error thay vì cố play → fail silently.
+    if (!_initialised) {
+      AppLogger.error('TTS: play() aborted — init failed, _initialised=false');
+      playbackState.add(playbackState.value.copyWith(
+        processingState: AudioProcessingState.error,
+        errorMessage: 'Không khởi tạo được TTS engine. '
+            'Kiểm tra Google TTS engine + giọng tiếng Việt trong Android '
+            'Settings → Text-to-speech. Sau đó bấm "Thử lại".',
+      ));
+      return;
+    }
     _isSpeaking = true;
     playbackState.add(playbackState.value.copyWith(
       controls: [MediaControl.pause, MediaControl.skipToNext, MediaControl.stop],
