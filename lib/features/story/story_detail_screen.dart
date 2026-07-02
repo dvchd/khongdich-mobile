@@ -291,15 +291,16 @@ class _StoryDetailBody extends ConsumerWidget {
                           : (downloadedCount > 0
                               ? const Icon(Icons.download_done, color: Colors.green)
                               : const Icon(Icons.download_outlined)),
-                      // Disable download for VIP stories the user can't
-                      // download offline (only story-wide VIP grants
-                      // allow offline download per project policy).
-                      onPressed: (activeDownloads > 0 || (vip.isVip && !vip.canDownloadOffline))
+                      // Download luôn enable — download manager sẽ check
+                      // per-chapter access (fetchChapterAccess) và mark
+                      // failed cho chapter user không có quyền. Trước đây
+                      // disable nút khi vip.isVip && !canDownloadOffline
+                      // (chỉ story-wide grant mới cho download) — quá
+                      // strict, user có per-chapter grant vẫn không tải
+                      // được dù có quyền đọc chapter đó.
+                      onPressed: activeDownloads > 0
                           ? null
                           : () async {
-                        // For VIP stories, skip locked chapters
-                        // unless the user has a story-wide grant
-                        // (canDownloadOffline is true).
                         final repo = ref.read(storyRepositoryProvider);
                         final page = await repo.fetchChapterList(story.id, perPage: 200);
                         if (page.chapters.isEmpty) {
@@ -310,20 +311,11 @@ class _StoryDetailBody extends ConsumerWidget {
                           }
                           return;
                         }
-                        final chaptersToDownload = vip.isVip
-                            ? page.chapters.where((c) => !vip.isChapterLocked(c.id)).toList()
-                            : page.chapters;
-                        if (chaptersToDownload.isEmpty) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text(
-                                      'Truyện VIP — toàn bộ chương bị khóa. '
-                                      'Cần được tác giả cấp quyền để tải offline.')),
-                            );
-                          }
-                          return;
-                        }
+                        // Download tất cả chapters — download manager
+                        // sẽ check access per-chapter. Chapter nào user
+                        // không có quyền → mark failed với message rõ
+                        // ràng, các chapter khác vẫn tải bình thường.
+                        final chaptersToDownload = page.chapters;
                         final total = page.chapters.length;
                         final already = downloadedIds.length;
                         final enqueued = await ref.read(downloadManagerProvider).enqueueAllChapters(
