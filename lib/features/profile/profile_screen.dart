@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/auth/auth_service.dart';
+import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
