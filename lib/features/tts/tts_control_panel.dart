@@ -66,6 +66,8 @@ class _PanelContentState extends State<_PanelContent> {
       builder: (context, snapshot) {
         final state = snapshot.data;
         final playing = state?.playing ?? false;
+        final isError = state?.processingState == AudioProcessingState.error;
+        final errorMsg = state?.errorMessage;
         final mediaItem = widget.handler.mediaItem.value;
 
         return Padding(
@@ -83,6 +85,50 @@ class _PanelContentState extends State<_PanelContent> {
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
+              // Error banner — hiện khi TTS error (vd: chưa cài giọng
+              // tiếng Việt, engine reject speak). Có nút "Thử lại" gọi
+              // handler.reinit() để retry init.
+              if (isError) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    border: Border.all(color: Colors.red.shade200),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              errorMsg ?? 'TTS gặp lỗi',
+                              style: TextStyle(color: Colors.red.shade900, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () async {
+                            await widget.handler.reinit();
+                            if (widget.handler.currentChapterId != null) {
+                              await widget.handler.play();
+                            }
+                          },
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Thử lại'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               // Chapter title
               if (mediaItem != null) ...[
                 Text(

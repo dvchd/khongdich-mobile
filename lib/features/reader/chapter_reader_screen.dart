@@ -122,10 +122,14 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   void _toggleTts(TextChapterContent chapter) async {
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      // If currently playing this chapter → open control panel.
-      // Otherwise → load + play + open panel.
-      final state = handler.playbackState.value;
-      if (!state.playing || state.processingState == AudioProcessingState.idle) {
+      // Nếu đang play/pause chương KHÁC chương user vừa tap → stop + load
+      // chương mới. Trước đây chỉ load khi `!state.playing`, nên nếu TTS
+      // đang chạy chương A mà user tap headphone ở chương B → không gì
+      // xảy ra (bug "TTS không chuyển chương").
+      // Nếu ĐANG play đúng chương này → chỉ mở control panel (pause/play
+      // từ panel), không reload.
+      if (handler.currentChapterId != chapter.id) {
+        await handler.stop();
         await handler.loadChapter(
           chapterId: chapter.id,
           storyId: chapter.storyId,
@@ -135,6 +139,13 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           contentMarkdown: chapter.contentMarkdown,
         );
         await handler.play();
+      } else {
+        // Cùng chương — nếu đang pause thì play, nếu đang play thì chỉ
+        // mở panel (user dùng panel để pause).
+        final state = handler.playbackState.value;
+        if (!state.playing && state.processingState != AudioProcessingState.error) {
+          await handler.play();
+        }
       }
       // Open the full TTS control panel as a bottom sheet.
       if (mounted) {

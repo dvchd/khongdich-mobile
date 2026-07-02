@@ -323,6 +323,12 @@ Trong Firebase Console → **Authentication** → **Sign-in method** → **Googl
 
 ## Tính năng TTS offline
 
+**Định hướng: 100% on-device TTS offline.** App mobile KHÔNG tải file audio
+từ server. Toàn bộ text-to-speech được thực hiện on-device qua `flutter_tts`
+(Android system TTS). Chương được tải về (text content) → chia thành các
+chunk ~500 ký tự → `flutter_tts.speak()` đọc tuần tự. Không cần mạng, không
+tải MP3, không phụ thuộc backend.
+
 - **100% on-device** qua `flutter_tts` + `audio_service`
 - **Engine selector**: dropdown chọn TTS engine (`com.google.android.tts` mặc định, hoặc Samsung/Huawei nếu có)
 - **Voice selector**: dropdown giọng đọc — hiện cả locale, vd: `vi-vn-language (vi-VN)`. Tự sort tiếng Việt lên đầu.
@@ -331,6 +337,37 @@ Trong Firebase Console → **Authentication** → **Sign-in method** → **Googl
 - **Control panel**: bottom sheet với play/pause/stop/skip + progress bar
 - **Mini player**: hiển thị trong reader khi TTS active
 - **Foreground service**: phát nền, notification shade, MediaSession
+- **Error recovery**: nếu init fail, tự retry lần sau. Control panel có
+  nút "Thử lại" để retry thủ công + hiển thị lỗi (vd: chưa cài giọng tiếng Việt).
+
+### Các bug đã fix (lịch sử)
+
+Trước đây TTS offline bị several bugs khiến "sửa mấy lần vẫn không hoạt động":
+
+1. **`_init()` đánh dấu initialised quá sớm** — nếu init fail (setEngine
+   throw trên Samsung, getVoices malformed), handler bị broken vĩnh viễn,
+   restart app cũng fail. Fix: `_initialised` chỉ set `true` ở cuối try
+   block; provider vẫn return handler nhưng `_initialised` false → retry
+   tự động lần sau; UI có nút "Thử lại" gọi `reinit()`.
+
+2. **Re-entrancy race** — completion handler gọi `_speakCurrentChunk()`
+   fire-and-forget TRƯỚC khi `speak()` Future resolve → trên Samsung/Huawei
+   engine, speak() re-entrant bị drop → "TTS đọc 1 chunk rồi dừng". Fix:
+   bỏ completion handler, dùng while-loop trong `_speakLoop()` với
+   `awaitSpeakCompletion(true)`.
+
+3. **Không chuyển chương khi tap headphone** — nếu TTS đang play/pause
+   chương A, tap headphone ở chương B → `loadChapter` bị skip → user thấy
+   "TTS không hoạt động". Fix: so sánh `handler.currentChapterId != chapter.id`
+   → luôn stop + loadChapter + play khi chuyển chương.
+
+4. **`speak()` return value bị ignore** — nếu engine reject (no Vietnamese
+   voice), TTS hang silently ở chunk 0. Fix: check `result != 1` → surface
+   error qua `processingState: error` + `errorMessage`. Control panel hiện
+   banner lỗi với nút "Thử lại".
+
+5. **`_savePlaybackState` block hot path** — DB write awaited giữa các
+   chunk gây gap nghe được. Fix: fire-and-forget via `unawaited()`.
 
 ### Tại sao TTS offline có thể không có giọng tiếng Việt?
 
@@ -340,6 +377,10 @@ Một số thiết bị (đặc biệt ROM custom, ROM Trung Quốc) không cài
 2. Chọn engine `Google` (`com.google.android.tts`).
 3. Bấm **Cài đặt** → **Cài đặt giọng nói** → cài giọng `Vietnamese (Vietnam)`.
 4. Quay lại app → mở TTS control panel → giọng tiếng Việt giờ sẽ xuất hiện trong dropdown.
+
+Nếu TTS vẫn không đọc được, mở TTS control panel → xem banner lỗi → bấm
+"Thử lại". Nếu vẫn lỗi, kiểm tra engine selector ở dropdown — thử đổi sang
+engine khác (Google thay vì Samsung, hoặc ngược lại).
 
 ## Tính năng tải offline
 

@@ -310,8 +310,11 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   void _toggleTts(TextChapterContent chapter) async {
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      final state = handler.playbackState.value;
-      if (!state.playing || state.processingState == AudioProcessingState.idle) {
+      // Nếu đang play/pause chương KHÁC chương user vừa tap → stop + load
+      // chương mới (fix bug "TTS không chuyển chương"). Nếu cùng chương →
+      // chỉ play nếu đang pause.
+      if (handler.currentChapterId != chapter.id) {
+        await handler.stop();
         await handler.loadChapter(
           chapterId: chapter.id,
           storyId: chapter.storyId,
@@ -321,6 +324,11 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           contentMarkdown: chapter.contentMarkdown,
         );
         await handler.play();
+      } else {
+        final state = handler.playbackState.value;
+        if (!state.playing && state.processingState != AudioProcessingState.error) {
+          await handler.play();
+        }
       }
       if (mounted) {
         showModalBottomSheet(

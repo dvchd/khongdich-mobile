@@ -13,25 +13,45 @@ import '../reader/services/reading_progress_service.dart';
 
 /// Foreground-service-backed TTS player for Không Dịch.
 ///
-/// Plan §9 — 100% on-device. Wraps `flutter_tts` inside `audio_service`.
+/// **Định hướng: 100% on-device TTS offline.**
+///
+/// App mobile KHÔNG tải file audio từ server. Toàn bộ text-to-speech
+/// được thực hiện on-device qua `flutter_tts` (Android system TTS).
+/// Chương được tải về (text content) → `TtsMarkdownPreprocessor` chia
+/// thành các chunk ~500 ký tự → `flutter_tts.speak()` đọc tuần tự.
 ///
 /// **Key architecture notes:**
 ///
-/// 1. `flutter_tts` is a **fire-and-forget** API on Android. `speak()`
-///    returns immediately — the completion is reported via the
-///    `setCompletionHandler` callback, NOT via the Future. We must
-///    NOT await `speak()` expecting it to block until speech is done.
-///    Instead, we use `awaitSpeakCompletion(true)` which makes the
-///    Future resolve on completion, but the completion handler still
-///    fires regardless.
+/// 1. `flutter_tts` với `awaitSpeakCompletion(true)`: `speak()` Future
+///    resolve khi utterance hoàn tất. Chúng ta dùng **while-loop** trong
+///    `_speakLoop()` để chain các chunk — KHÔNG dùng completion handler
+///    (xem bug #2 bên dưới). Completion handler được set thành no-op
+///    để tránh re-entrancy race.
 ///
-/// 2. `audio_service` wraps our handler so Android treats it as a
-///    foreground media service. The `playbackState` stream drives
-///    the notification shade + the mini player UI.
+/// 2. `audio_service` wrap handler để Android treat như foreground media
+///    service. `playbackState` stream drive notification shade + mini
+///    player UI.
 ///
-/// 3. Chunks: `TtsMarkdownPreprocessor.process()` splits markdown into
-///    ~500-char plain-text chunks. We speak them sequentially. The
-///    completion handler advances to the next chunk.
+/// 3. Chunks: `TtsMarkdownPreprocessor.process()` split markdown thành
+///    ~500-char plain-text chunks. Đọc tuần tự qua while-loop.
+///
+/// **Các bug đã fix (so với phiên bản trước):**
+///
+/// - **#1 Init failure recovery**: `_initialised` chỉ set `true` ở CUỐI
+///   try block. Nếu init fail, lần sau gọi `_init()` sẽ retry. Provider
+///   cũng cho phép retry qua `reinit()`.
+///
+/// - **#2 Re-entrancy race**: completion handler trước đây gọi
+///   `_speakCurrentChunk()` fire-and-forget TRƯỚC khi `speak()` Future
+///   resolve → trên Samsung/Huawei engine, speak() re-entrant bị drop →
+///   "TTS đọc 1 chunk rồi dừng". Fix: bỏ completion handler, dùng
+///   while-loop trong `_speakLoop()` với `awaitSpeakCompletion(true)`.
+///
+/// - **#5 speak() return value**: check `result != 1` → surface error
+///   thay vì hang silently.
+///
+/// - **#6 _savePlaybackState fire-and-forget**: không block hot path
+///   giữa các chunk.
 class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   TtsAudioHandler(this._db, this._progressService);
 
@@ -46,6 +66,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   int? _currentChapterNumber;
   bool _initialised = false;
   bool _isSpeaking = false; // Guard against re-entrant completion handlers
+  // Future của speak loop hiện tại — dùng để cancel khi stop/pause.
+  Future<void>? _speakLoopFuture;
 
   // User settings (persisted)
   double _speed = 1.0;
@@ -67,10 +89,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   List<String> get availableEngines => _availableEngines;
   String? get selectedVoiceName => _selectedVoiceName;
   String? get selectedEngine => _selectedEngine;
+  /// ID của chương hiện đang load (hoặc đang play). Dùng cho UI quyết định
+  /// có cần stop + reload khi user tap headphone ở chương khác.
+  String? get currentChapterId => _currentChapterId;
 
   Future<void> _init() async {
     if (_initialised) return;
-    _initialised = true;
     try {
       AppLogger.info('TTS: starting init...');
 
@@ -133,8 +157,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       await _applySpeed();
 
       // CRITICAL: awaitSpeakCompletion(true) makes the speak() Future
-      // resolve when the utterance is done. Without this, speak()
-      // resolves immediately and our chunk chaining breaks.
+      // resolve when the utterance is done. We use this + a while-loop
+      // in _speakLoop() to chain chunks — see _speakLoop for details.
       await _tts.awaitSpeakCompletion(true);
 
       // ── Load voices ─────────────────────────────────────────────
@@ -174,22 +198,15 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         AppLogger.warning('TTS: getVoices failed', e);
       }
 
-      // Completion handler — fires when a chunk finishes speaking.
-      // This is the main driver of chunk chaining.
+      // ── Handlers ────────────────────────────────────────────────
+      // Completion handler: NO-OP. Chunk chaining được drive bởi while-loop
+      // trong _speakLoop(), KHÔNG phải bởi completion handler. Trước đây
+      // completion handler gọi _speakCurrentChunk() fire-and-forget gây
+      // re-entrancy race (speak() re-entrant bị drop trên Samsung/Huawei).
+      // Với awaitSpeakCompletion(true), while-loop đợi speak() resolve
+      // (khi chunk xong) rồi mới advance → không race.
       _tts.setCompletionHandler(() {
-        AppLogger.info('TTS: completion handler fired (chunk $_currentChunk)');
-        if (!_isSpeaking) return; // Guard: ignore if we've stopped
-        _currentChunk++;
-        _chunkProgressController.add(TtsChunkProgress(
-          chapterId: _currentChapterId ?? '',
-          chunkIndex: _currentChunk,
-          totalChunks: _chunks.length,
-        ));
-        if (_currentChunk < _chunks.length) {
-          _speakCurrentChunk(); // Fire-and-forget — don't await
-        } else {
-          _onChapterComplete(); // Fire-and-forget
-        }
+        // Intentionally empty — see comment above.
       });
 
       _tts.setErrorHandler((msg) {
@@ -210,10 +227,21 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         ));
       });
 
+      // Chỉ set _initialised = true ở CUỐI try block. Nếu bất kỳ bước
+      // nào throw, _initialised vẫn false → lần sau _init() sẽ retry.
+      _initialised = true;
       AppLogger.info('TTS: init complete');
     } catch (e, s) {
-      AppLogger.error('TtsAudioHandler._init failed', e, s);
+      // Init failed — _initialised vẫn false, retry sẽ chạy lại lần sau.
+      AppLogger.error('TtsAudioHandler._init failed (will retry on next call)', e, s);
     }
+  }
+
+  /// Retry init từ UI (vd: user bấm "Thử lại" khi TTS fail).
+  /// Reset _initialised = false rồi gọi _init().
+  Future<void> reinit() async {
+    _initialised = false;
+    await _init();
   }
 
   Future<void> _applySpeed() async {
@@ -303,6 +331,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     required String contentMarkdown,
   }) async {
     await _init();
+    // Stop mọi playback đang chạy của chương cũ trước khi load chương mới.
+    // Trước đây không có bước này → completion handler của chương cũ có
+    // thể fire sau khi chương mới đã load, gây _currentChunk sai.
+    if (_isSpeaking) {
+      _isSpeaking = false;
+      await _tts.stop();
+    }
     _chunks = TtsMarkdownPreprocessor.process(contentMarkdown);
     AppLogger.info(
         'TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
@@ -341,66 +376,123 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       chunkIndex: _currentChunk,
       totalChunks: _chunks.length,
     ));
-    // Start speaking — don't await. The completion handler will chain
-    // to the next chunk.
-    await _speakCurrentChunk();
+    // Start the speak loop. Nếu loop cũ vẫn đang chạy (vd: user press play
+    // nhanh 2 lần), đợi nó kết thúc trước. Thực tế _isSpeaking guard trong
+    // loop sẽ khiến loop cũ exit sớm.
+    if (_speakLoopFuture != null) {
+      // Loop cũ đang chạy — _isSpeaking đã true, không cần start lại.
+      return;
+    }
+    _speakLoopFuture = _speakLoop();
+    // Fire-and-forget — loop tự kết thúc khi chapter complete hoặc stop.
+    unawaited(_speakLoopFuture!.then((_) {
+      _speakLoopFuture = null;
+    }));
   }
 
   @override
   Future<void> pause() async {
     _isSpeaking = false;
     await _tts.stop();
+    // Đợi loop hiện tại exit (nó sẽ exit do _isSpeaking = false).
+    if (_speakLoopFuture != null) {
+      await _speakLoopFuture;
+    }
     playbackState.add(playbackState.value.copyWith(
       controls: [MediaControl.play, MediaControl.skipToNext, MediaControl.stop],
       playing: false,
     ));
-    await _savePlaybackState(isPlaying: false);
+    unawaited(_savePlaybackState(isPlaying: false));
   }
 
   @override
   Future<void> stop() async {
     _isSpeaking = false;
     await _tts.stop();
+    // Đợi loop hiện tại exit.
+    if (_speakLoopFuture != null) {
+      await _speakLoopFuture;
+    }
     _currentChunk = 0;
     playbackState.add(playbackState.value.copyWith(
       controls: const [],
       playing: false,
       processingState: AudioProcessingState.idle,
     ));
-    await _savePlaybackState(isPlaying: false);
+    unawaited(_savePlaybackState(isPlaying: false));
   }
 
   @override
   Future<void> skipToNext() => _onChapterComplete();
 
-  Future<void> _speakCurrentChunk() async {
-    if (_currentChunk >= _chunks.length) return;
-    if (!_isSpeaking) return;
-    await _savePlaybackState(isPlaying: true);
-    _chunkProgressController.add(TtsChunkProgress(
-      chapterId: _currentChapterId!,
-      chunkIndex: _currentChunk,
-      totalChunks: _chunks.length,
-    ));
-    final chunk = _chunks[_currentChunk];
-    AppLogger.info(
-        'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.length} chars)');
-    // speak() with awaitSpeakCompletion(true) will resolve when done.
-    // The completion handler also fires. Both are safe — the handler
-    // has a _isSpeaking guard.
-    await _tts.speak(chunk);
+  /// Speak loop — drive chunk chaining qua while-loop với
+  /// `awaitSpeakCompletion(true)`. Mỗi iteration:
+  ///   1. Check _isSpeaking + bounds
+  ///   2. Fire-and-forget save state (không block hot path)
+  ///   3. Emit chunk progress
+  ///   4. await _tts.speak(chunk) — resolve khi chunk xong
+  ///   5. Check speak() return value — nếu != 1, surface error
+  ///   6. Advance _currentChunk
+  /// Loop exit khi: _isSpeaking = false (pause/stop), hoặc hết chunks
+  /// (chapter complete → gọi _onChapterComplete).
+  Future<void> _speakLoop() async {
+    while (_isSpeaking && _currentChunk < _chunks.length) {
+      final chunk = _chunks[_currentChunk];
+      // Fire-and-forget — không block hot path giữa các chunk.
+      unawaited(_savePlaybackState(isPlaying: true));
+      _chunkProgressController.add(TtsChunkProgress(
+        chapterId: _currentChapterId!,
+        chunkIndex: _currentChunk,
+        totalChunks: _chunks.length,
+      ));
+      AppLogger.info(
+          'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.length} chars)');
+      // speak() với awaitSpeakCompletion(true) resolve khi chunk xong.
+      final result = await _tts.speak(chunk);
+      // Check return value: 1 = success, 0 = failure (no voice, engine
+      // not ready, text too long...). Trước đây ignore → TTS hang silently.
+      if (result != 1) {
+        AppLogger.error(
+            'TTS: speak() returned $result for chunk $_currentChunk — engine rejected');
+        _isSpeaking = false;
+        playbackState.add(playbackState.value.copyWith(
+          processingState: AudioProcessingState.error,
+          errorMessage: 'TTS engine từ chối phát (result=$result). '
+              'Có thể chưa cài giọng tiếng Việt — xem README mục TTS.',
+        ));
+        return;
+      }
+      // Stopped/paused trong lúc await speak() → exit.
+      if (!_isSpeaking) return;
+      _currentChunk++;
+    }
+    // Loop exit tự nhiên = hết chunks = chapter complete.
+    if (_isSpeaking) {
+      await _onChapterComplete();
+    }
   }
 
   Future<void> _onChapterComplete() async {
     AppLogger.info('TTS: chapter complete');
     _isSpeaking = false;
+    // Save state với chunk index cuối TRƯỚC khi stop() reset _currentChunk = 0.
+    unawaited(_savePlaybackState(isPlaying: false));
     if (_currentStoryId != null && _currentChapterNumber != null) {
       await _progressService.markChapterRead(
         _currentStoryId!,
         _currentChapterNumber!,
       );
     }
-    await stop();
+    // Reset chunk index cho lần play tiếp theo.
+    _currentChunk = 0;
+    if (_speakLoopFuture != null) {
+      await _speakLoopFuture;
+    }
+    playbackState.add(playbackState.value.copyWith(
+      controls: const [],
+      playing: false,
+      processingState: AudioProcessingState.idle,
+    ));
   }
 
   Future<void> _savePlaybackState({required bool isPlaying}) async {
@@ -431,6 +523,9 @@ class TtsChunkProgress {
   final int totalChunks;
 }
 
+/// Provider cho TtsAudioHandler. Nếu init fail, vẫn return handler nhưng
+/// `_initialised` sẽ false → lần sau `loadChapter`/`play` gọi `_init()`
+/// sẽ retry. UI có thể gọi `handler.reinit()` để retry thủ công.
 final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
   final db = ref.watch(appDatabaseProvider);
   final progress = ref.watch(readingProgressServiceProvider);
@@ -447,7 +542,10 @@ final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
     );
     await handler._init();
   } catch (e, s) {
-    AppLogger.warning('ttsHandlerProvider: AudioService.init failed', e, s);
+    // Log warning nhưng vẫn return handler. _initialised vẫn false →
+    // retry tự động khi user tap play lần tiếp theo. UI có thể gọi
+    // handler.reinit() để retry thủ công.
+    AppLogger.warning('ttsHandlerProvider: init failed (will retry on next use)', e, s);
   }
   return handler;
 });
