@@ -150,7 +150,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       final langCandidates = ['vi-VN', 'vi_VN', 'vi'];
       int langResult = -2;
       for (final lang in langCandidates) {
-        langResult = await _tts.setLanguage(lang);
+        // flutter_tts.setLanguage returns dynamic (1 on Android, possibly
+        // different on iOS). Cast to int — the plugin contract is int.
+        final raw = await _tts.setLanguage(lang);
+        langResult = (raw is int) ? raw : int.tryParse('$raw') ?? -2;
         AppLogger.info('TTS: setLanguage($lang) → $langResult');
         if (langResult == 0 || langResult == 1) break;
       }
