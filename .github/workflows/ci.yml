@@ -85,15 +85,12 @@ jobs:
 
       # Firebase google-services.json decoding đã bị bỏ — app không còn
       # dùng Firebase. google_sign_in hoạt động độc lập.
-      # GOOGLE_WEB_CLIENT_ID là Web Application OAuth Client ID (cùng giá
-      # trị với GOOGLE_CLIENT_ID trên backend) — bắt buộc để mint idToken
-      # có aud đúng. Lấy từ Google Cloud Console → APIs & Services →
-      # Credentials → OAuth 2.0 Client IDs (Web application).
+      # GOOGLE_WEB_CLIENT_ID đã được hardcode trong lib/core/auth/auth_service.dart
+      # (public identifier, không phải secret).
 
       - name: Build APK
         env:
           APP_ENV: ${{ matrix.flavor.app_env }}
-          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
@@ -102,7 +99,6 @@ jobs:
         run: |
           flutter build apk --release --no-tree-shake-icons \
             --dart-define=APP_ENV=${APP_ENV} \
-            --dart-define=GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID} \
             --flavor=${APP_ENV}
 
       - name: Rename artifacts with build sha + flavor

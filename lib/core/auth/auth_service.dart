@@ -12,26 +12,40 @@ import '../../repositories/story_repository.dart';
 /// `firebase_auth` — Firebase đã được bỏ khỏi app (xem README mục
 /// "Tính năng thông báo").
 ///
-/// **`serverClientId`**: đây là Web Application OAuth Client ID (cùng giá
-/// trị với `GOOGLE_CLIENT_ID` trên backend). Phải được truyền vào
-/// `GoogleSignIn` để plugin mint được `idToken` có `aud` = web client ID.
-/// Nếu bỏ qua, `idToken` trả về `null` → "Không lấy được idToken từ Google".
+/// **`serverClientId`** = Web Application OAuth Client ID, hardcode trong
+/// code (xem `_googleWebClientId` bên dưới). Đây là **public identifier**
+/// theo thiết kế OAuth 2.0 — không phải secret:
+///   - Nó nằm trong HTML/meta của web app khongdich.com (view-source thấy)
+///   - Backend cũng có cùng giá trị trong `GOOGLE_CLIENT_ID` env
+///   - Google docs: "Client IDs are public identifiers. They are not secrets."
+///   - Bảo mật thực sự nằm ở SHA-1 fingerprint của keystore (chỉ dev có)
+///     + GOOGLE_CLIENT_SECRET (chỉ backend có, dùng cho server-side flow)
 ///
-/// Cung cấp qua `--dart-define=GOOGLE_WEB_CLIENT_ID=<id>.apps.googleusercontent.com`
-/// lúc build (xem `.github/workflows/ci.yml`).
+/// Hardcode giúp local dev chỉ cần `flutter run` (không cần --dart-define),
+/// CI không phụ thuộc secret, code self-contained.
 class AuthService {
   AuthService(this._api, this._repo);
 
   final ApiClient _api;
   final StoryRepository _repo;
 
+  /// Web Application OAuth Client ID từ Google Cloud Console.
+  /// Cùng giá trị với `GOOGLE_CLIENT_ID` trên backend (xem
+  /// `docker-compose.demo.yml` / `docker-compose.prod.yml`).
+  ///
+  /// Đây là public identifier (không phải secret) — hardcode an toàn.
+  /// Đổi Client ID = tạo project Google Cloud mới (sự kiện hiếm), lúc đó
+  /// sửa 1 dòng này là xong.
+  static const String _googleWebClientId =
+      '637160959223-vepeilkvd1i8rl9ul800civ3vm5q8rd8.apps.googleusercontent.com';
+
   /// Singleton `GoogleSignIn` instance — dùng cho cả sign-in và sign-out
   /// để tránh tạo 2 instance riêng (Bug 6 trong audit).
   late final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: const ['email', 'profile', 'openid'],
     // Web Application OAuth Client ID — bắt buộc để mint idToken có aud
-    // đúng với backend. Lấy từ --dart-define lúc build.
-    serverClientId: const String.fromEnvironment('GOOGLE_WEB_CLIENT_ID'),
+    // đúng với backend.
+    serverClientId: _googleWebClientId,
   );
 
   /// Đăng nhập Google → đổi idToken lấy server JWT.

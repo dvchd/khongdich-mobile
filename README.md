@@ -166,11 +166,13 @@ flutter run --flavor=prod --dart-define=APP_ENV=prod
 | `KHONGDICH_KEYSTORE_PASSWORD` | Password keystore |
 | `KHONGDICH_KEY_ALIAS` | Key alias |
 | `KHONGDICH_KEY_PASSWORD` | Password key |
-| `GOOGLE_WEB_CLIENT_ID` | Web OAuth Client ID — bắt buộc cho Google Sign-In (mint idToken có aud đúng) |
 
-Nếu thiếu secrets → fallback debug signing + Google Sign-In không mint được idToken (login fail).
+Nếu thiếu secrets → fallback debug signing.
 
-> **Lưu ý**: `FIREBASE_CONFIG_*` secrets đã bị bỏ — app không còn dùng Firebase.
+> **Lưu ý**: `GOOGLE_WEB_CLIENT_ID` đã được **hardcode** trong
+> `lib/core/auth/auth_service.dart` — đây là public identifier (không phải
+> secret), nên không cần GitHub secret. `FIREBASE_CONFIG_*` cũng đã bỏ —
+> app không còn dùng Firebase.
 
 ### Tạo keystore
 
@@ -282,40 +284,37 @@ GOOGLE_MOBILE_CLIENT_IDS=\
 
 Restart backend sau khi set env.
 
-### Bước 4 — Cấu hình GOOGLE_WEB_CLIENT_ID (GitHub secret)
+### Bước 4 — Client ID đã hardcode (không cần cấu hình thêm)
 
-App KHÔNG dùng Firebase nữa. Thay vào đó, `GoogleSignIn` cần `serverClientId`
-(Web Application OAuth Client ID) để mint `idToken` có `aud` đúng với backend.
+Web Application OAuth Client ID đã được **hardcode** trong
+`lib/core/auth/auth_service.dart`:
 
-`serverClientId` được truyền qua `--dart-define=GOOGLE_WEB_CLIENT_ID=...` lúc
-build. CI đọc từ GitHub secret `GOOGLE_WEB_CLIENT_ID`.
+```dart
+static const String _googleWebClientId =
+    '637160959223-vepeilkvd1i8rl9ul800civ3vm5q8rd8.apps.googleusercontent.com';
+```
 
-1. Lấy Web Application OAuth Client ID từ **Bước 1** (cùng giá trị với
-   `GOOGLE_CLIENT_ID` trên backend).
-2. Vào GitHub repo → **Settings** → **Secrets and variables** → **Actions**
-   → **New repository secret**:
-   - Name: `GOOGLE_WEB_CLIENT_ID`
-   - Value: `<web-client-id>.apps.googleusercontent.com`
-3. Local dev: thêm `--dart-define=GOOGLE_WEB_CLIENT_ID=<id>` khi `flutter run`.
+Đây là **public identifier** (không phải secret) — cùng giá trị với
+`GOOGLE_CLIENT_ID` trên backend. Hardcode an toàn vì:
+- Client ID vốn dĩ public (nằm trong HTML/meta của web app, view-source thấy được)
+- Bảo mật thực sự nằm ở SHA-1 fingerprint của keystore + `GOOGLE_CLIENT_SECRET` (backend)
+- Google docs: "Client IDs are public identifiers. They are not secrets."
+
+Không cần GitHub secret, không cần `--dart-define`. CI build APK trực tiếp.
 
 ### Bước 5 — Verify
 
 ```bash
 # Build demo APK, cài lên thiết bị, đăng nhập Google → phải thành công
-flutter run --flavor=demo \
-  --dart-define=APP_ENV=demo \
-  --dart-define=GOOGLE_WEB_CLIENT_ID=<web-client-id>.apps.googleusercontent.com
+flutter run --flavor=demo --dart-define=APP_ENV=demo
 
 # Build prod APK, cài lên thiết bị (cài song song với demo), đăng nhập Google → phải thành công
-flutter run --flavor=prod \
-  --dart-define=APP_ENV=prod \
-  --dart-define=GOOGLE_WEB_CLIENT_ID=<web-client-id>.apps.googleusercontent.com
+flutter run --flavor=prod --dart-define=APP_ENV=prod
 ```
 
 Nếu đăng nhập báo lỗi `DEVELOPER_ERROR` → thường là do:
 - SHA-1 chưa thêm vào Client ID (hoặc thêm sai).
 - Package name trong Client ID không khớp `applicationId` của flavor.
-- `GOOGLE_WEB_CLIENT_ID` chưa set (hoặc set sai) → `idToken` trả về `null`.
 
 ### Kiểm tra nhanh trên Google Cloud Console
 
