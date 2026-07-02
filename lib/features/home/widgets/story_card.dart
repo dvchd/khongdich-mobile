@@ -42,7 +42,12 @@ class StoryCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
+            // Cover dùng AspectRatio 2:3 (chuẩn bìa truyện) thay vì
+            // Expanded — Expanded khiến cover bị co khi title/author dài,
+            // làm các card cùng grid có chiều cao cover khác nhau.
+            // AspectRatio cố định tỷ lệ → mọi cover đồng đều.
+            AspectRatio(
+              aspectRatio: 2 / 3,
               child: Stack(
                 fit: StackFit.expand,
                 children: [

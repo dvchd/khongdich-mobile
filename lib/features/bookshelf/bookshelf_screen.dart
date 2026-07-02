@@ -195,7 +195,9 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                         crossAxisCount: 2,
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        childAspectRatio: 0.62,
+                        // Cover AspectRatio 2:3 + title 2 dòng + author 1 dòng.
+                        // Trước đây 0.62 gây cover bị co khi text dài.
+                        childAspectRatio: 0.52,
                       ),
                       padding: const EdgeInsets.all(16),
                       itemCount: items.length,

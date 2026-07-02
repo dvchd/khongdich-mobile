@@ -137,7 +137,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 crossAxisCount: 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: 0.62,
+                // Cover AspectRatio 2:3 + title 2 dòng + author 1 dòng.
+                childAspectRatio: 0.52,
               ),
               itemCount: result.stories.length,
               itemBuilder: (_, i) => StoryCard(
@@ -173,7 +174,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               crossAxisCount: 2,
               mainAxisSpacing: 12,
               crossAxisSpacing: 12,
-              childAspectRatio: 0.62,
+              // Cover AspectRatio 2:3 + title 2 dòng + author 1 dòng.
+              childAspectRatio: 0.52,
             ),
             delegate: SliverChildBuilderDelegate(
               (context, i) => StoryCard(

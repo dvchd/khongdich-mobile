@@ -152,6 +152,9 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
+          isDismissible: true,      // cho phép tap ngoài / back để tắt
+          enableDrag: true,         // cho phép swipe down để tắt
+          showDragHandle: true,     // vẽ handle + nút X góc phải
           builder: (_) => const TtsControlPanel(),
         );
       }

@@ -45,18 +45,27 @@ class _PanelContentState extends State<_PanelContent> {
   String? _selectedVoice;
   String? _selectedEngine;
   List<Map<String, String>> _voices = const [];
+  List<String> _engines = const [];
   TtsChunkProgress? _progress;
 
   @override
   void initState() {
     super.initState();
+    _refreshFromHandler();
+    widget.handler.chunkProgress.listen((p) {
+      if (mounted) setState(() => _progress = p);
+    });
+  }
+
+  /// Sync local state from handler. Gọi sau reinit() để dropdown cập nhật
+  /// danh sách engine/voice mới (trước đây capture 1 lần trong initState
+  /// → sau "Thử lại" dropdown không refresh).
+  void _refreshFromHandler() {
     _speed = widget.handler.speed;
     _selectedVoice = widget.handler.selectedVoiceName;
     _selectedEngine = widget.handler.selectedEngine;
     _voices = widget.handler.availableVoices;
-    widget.handler.chunkProgress.listen((p) {
-      if (mounted) setState(() => _progress = p);
-    });
+    _engines = widget.handler.availableEngines;
   }
 
   @override
@@ -70,241 +79,265 @@ class _PanelContentState extends State<_PanelContent> {
         final errorMsg = state?.errorMessage;
         final mediaItem = widget.handler.mediaItem.value;
 
-        return Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade400,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              // Error banner — hiện khi TTS error (vd: chưa cài giọng
-              // tiếng Việt, engine reject speak). Có nút "Thử lại" gọi
-              // handler.reinit() để retry init.
-              if (isError) ...[
+        // Bọc trong SingleChildScrollView + ConstrainedBox để panel không
+        // tràn màn khi nhiều thành phần (error + title + progress + buttons
+        // + 2 dropdown + speed). Trước đây không có scroll → handle bị đẩy
+        // ra khỏi viewport, swipe-down khó bắt đầu → user không tắt được.
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Drag handle (giữ lại — showDragHandle của framework cũng OK
+                // nhưng handle tự vẽ nhìn gọn hơn trên một số device).
                 Container(
-                  padding: const EdgeInsets.all(12),
-                  margin: const EdgeInsets.only(bottom: 12),
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
-                    color: Colors.red.shade50,
-                    border: Border.all(color: Colors.red.shade200),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              errorMsg ?? 'TTS gặp lỗi',
-                              style: TextStyle(color: Colors.red.shade900, fontSize: 13),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () async {
-                            await widget.handler.reinit();
-                            if (widget.handler.currentChapterId != null) {
-                              await widget.handler.play();
-                            }
-                          },
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('Thử lại'),
-                        ),
-                      ),
-                    ],
+                    color: Colors.grey.shade400,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-              ],
-              // Chapter title
-              if (mediaItem != null) ...[
-                Text(
-                  mediaItem.title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  mediaItem.album ?? '',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-              ],
-              // Progress bar
-              if (_progress != null) ...[
-                LinearProgressIndicator(
-                  value: _progress!.totalChunks > 0
-                      ? _progress!.chunkIndex / _progress!.totalChunks
-                      : 0,
-                  minHeight: 6,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Đoạn ${_progress!.chunkIndex + 1}/${_progress!.totalChunks}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-              ],
-              // Play/pause/stop buttons
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.stop, size: 32),
-                    onPressed: () => widget.handler.stop(),
-                  ),
-                  const SizedBox(width: 16),
+                // Error banner — hiện khi TTS error. Có 2 nút: "Thử lại"
+                // (reinit + play) và "Đóng" (đóng panel). Trước đây chỉ có
+                // "Thử lại" → user không có lối thoát khi lỗi.
+                if (isError) ...[
                   Container(
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE11D48),
-                      shape: BoxShape.circle,
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      border: Border.all(color: Colors.red.shade200),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    child: IconButton(
-                      icon: Icon(
-                        playing ? Icons.pause : Icons.play_arrow,
-                        color: Colors.white,
-                        size: 36,
-                      ),
-                      iconSize: 36,
-                      onPressed: () {
-                        if (playing) {
-                          widget.handler.pause();
-                        } else {
-                          widget.handler.play();
-                        }
-                      },
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                errorMsg ?? 'TTS gặp lỗi',
+                                style: TextStyle(color: Colors.red.shade900, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              child: const Text('Đóng'),
+                            ),
+                            const SizedBox(width: 8),
+                            TextButton.icon(
+                              onPressed: () async {
+                                await widget.handler.reinit();
+                                // Refresh dropdowns với danh sách engine/voice mới.
+                                setState(_refreshFromHandler);
+                                if (widget.handler.currentChapterId != null) {
+                                  await widget.handler.play();
+                                }
+                              },
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text('Thử lại'),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  IconButton(
-                    icon: const Icon(Icons.skip_next, size: 32),
-                    onPressed: () => widget.handler.skipToNext(),
                   ),
                 ],
-              ),
-              const SizedBox(height: 24),
-              // Engine selector (Nguồn nghe)
-              if (widget.handler.availableEngines.isNotEmpty) ...[
+                // Chapter title
+                if (mediaItem != null) ...[
+                  Text(
+                    mediaItem.title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    mediaItem.album ?? '',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                // Progress bar
+                if (_progress != null) ...[
+                  LinearProgressIndicator(
+                    value: _progress!.totalChunks > 0
+                        ? _progress!.chunkIndex / _progress!.totalChunks
+                        : 0,
+                    minHeight: 6,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Đoạn ${_progress!.chunkIndex + 1}/${_progress!.totalChunks}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                // Play/pause/stop buttons
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.stop, size: 32),
+                      onPressed: () => widget.handler.stop(),
+                    ),
+                    const SizedBox(width: 16),
+                    Container(
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFE11D48),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: Icon(
+                          playing ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 36,
+                        ),
+                        iconSize: 36,
+                        onPressed: () {
+                          if (playing) {
+                            widget.handler.pause();
+                          } else {
+                            widget.handler.play();
+                          }
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    IconButton(
+                      icon: const Icon(Icons.skip_next, size: 32),
+                      onPressed: () => widget.handler.skipToNext(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                // Engine selector (Nguồn nghe) — LUÔN hiện.
+                // Trước đây ẩn khi _engines rỗng → user không thấy dropdown
+                // → không biết chọn engine. Giờ luôn hiện, nếu rỗng thì hiện
+                // hint text hướng dẫn cài engine.
                 Row(
                   children: [
                     const Text('Nguồn nghe'),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: DropdownButton<String>(
-                        value: _selectedEngine,
-                        hint: const Text('Mặc định'),
-                        isExpanded: true,
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text('Mặc định hệ thống'),
-                          ),
-                          for (final e in widget.handler.availableEngines)
-                            DropdownMenuItem(
-                              value: e,
-                              child: Text(e),
+                      child: _engines.isEmpty
+                          ? const Text(
+                              'Không có engine TTS. Mở Cài đặt → Text-to-speech.',
+                              style: TextStyle(
+                                fontStyle: FontStyle.italic,
+                                fontSize: 12,
+                              ),
+                            )
+                          : DropdownButton<String>(
+                              value: _selectedEngine,
+                              hint: const Text('Mặc định hệ thống'),
+                              isExpanded: true,
+                              items: [
+                                const DropdownMenuItem(
+                                  value: null,
+                                  child: Text('Mặc định hệ thống'),
+                                ),
+                                for (final e in _engines)
+                                  DropdownMenuItem(
+                                    value: e,
+                                    child: Text(e),
+                                  ),
+                              ],
+                              onChanged: (name) async {
+                                final newVoices =
+                                    await widget.handler.setEngine(name);
+                                setState(() {
+                                  _selectedEngine = name;
+                                  _voices = newVoices;
+                                  _selectedVoice = null;
+                                });
+                              },
                             ),
-                        ],
-                        onChanged: (name) async {
-                          final newVoices =
-                              await widget.handler.setEngine(name);
-                          setState(() {
-                            _selectedEngine = name;
-                            _voices = newVoices;
-                            _selectedVoice = null;
-                          });
-                        },
-                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-              ],
-              // Voice selector (Giọng đọc)
-              if (_voices.isNotEmpty) ...[
+                // Voice selector (Giọng đọc) — LUÔN hiện.
+                // Trước đây ẩn khi _voices rỗng → user không thấy dropdown
+                // giọng đọc. Giờ luôn hiện, nếu rỗng thì hiện hint.
                 Row(
                   children: [
                     const Text('Giọng đọc'),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: DropdownButton<String>(
-                        value: _selectedVoice,
-                        hint: const Text('Mặc định'),
-                        isExpanded: true,
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text('Mặc định'),
-                          ),
-                          for (final v in _voices)
-                            DropdownMenuItem(
-                              value: v['name'],
-                              child: Text(
-                                _voiceLabel(v),
-                                overflow: TextOverflow.ellipsis,
+                      child: _voices.isEmpty
+                          ? const Text(
+                              'Không có giọng đọc. Cài engine có hỗ trợ tiếng Việt.',
+                              style: TextStyle(
+                                fontStyle: FontStyle.italic,
+                                fontSize: 12,
                               ),
+                            )
+                          : DropdownButton<String>(
+                              value: _selectedVoice,
+                              hint: const Text('Mặc định'),
+                              isExpanded: true,
+                              items: [
+                                const DropdownMenuItem(
+                                  value: null,
+                                  child: Text('Mặc định'),
+                                ),
+                                for (final v in _voices)
+                                  DropdownMenuItem(
+                                    value: v['name'],
+                                    child: Text(
+                                      _voiceLabel(v),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                              ],
+                              onChanged: (name) async {
+                                await widget.handler.setVoice(name);
+                                setState(() => _selectedVoice = name);
+                              },
                             ),
-                        ],
-                        onChanged: (name) async {
-                          await widget.handler.setVoice(name);
-                          setState(() => _selectedVoice = name);
-                        },
-                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-              ] else ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Không tìm thấy giọng đọc nào.\n'
-                    'Cài đặt → Ngôn ngữ & nhập → Văn bản thành giọng nói '
-                    '→ Cài đặt TTS để thêm engine / giọng.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                    textAlign: TextAlign.center,
-                  ),
+                // Speed selector
+                Row(
+                  children: [
+                    const Text('Tốc độ'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 6,
+                        children: [
+                          for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5])
+                            ChoiceChip(
+                              label: Text('${s}x'),
+                              selected: (_speed - s).abs() < 0.01,
+                              onSelected: (_) async {
+                                await widget.handler.setSpeed(s);
+                                setState(() => _speed = s);
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ],
-              const SizedBox(height: 12),
-              // Speed selector
-              Row(
-                children: [
-                  const Text('Tốc độ'),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Wrap(
-                      spacing: 6,
-                      children: [
-                        for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5])
-                          ChoiceChip(
-                            label: Text('${s}x'),
-                            selected: (_speed - s).abs() < 0.01,
-                            onSelected: (_) async {
-                              await widget.handler.setSpeed(s);
-                              setState(() => _speed = s);
-                            },
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         );
       },

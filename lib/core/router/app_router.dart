@@ -334,6 +334,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
+          isDismissible: true,
+          enableDrag: true,
+          showDragHandle: true,
           builder: (_) => const TtsControlPanel(),
         );
       }
