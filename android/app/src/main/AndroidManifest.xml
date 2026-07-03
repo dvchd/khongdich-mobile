@@ -85,5 +85,15 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
         </intent>
+        <!-- Required for flutter_tts on Android 11+ (API 30+).
+             Without this, getEngines()/getVoices() return empty and
+             speak() fails silently — Android package visibility hides
+             the TTS engine from the app. This is the ROOT CAUSE of
+             "engine không tìm thấy" on Xiaomi Redmi Note 12 Turbo
+             (Android 13). See flutter_tts README and
+             https://github.com/dlutton/flutter_tts/issues/172 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 </manifest>

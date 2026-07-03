@@ -40,7 +40,7 @@ dependencies:
 
   # Audio (on-device TTS)
   audio_service: ^0.18.15
-  flutter_tts: ^4.1.0
+  flutter_tts: ^4.2.5
   audio_session: ^0.1.21
 
   # Local notifications (for download completion + fallback when FCM absent)

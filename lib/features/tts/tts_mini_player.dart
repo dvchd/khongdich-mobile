@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/chapter_content.dart';
 import 'tts_audio_handler.dart';
+import 'tts_control_panel.dart';
 
 /// Mini player bar pinned above the chapter chrome while TTS is active.
 ///
@@ -84,46 +85,62 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(
-                children: [
-                  Icon(_stateIcon(state.processingState),
-                      color: const Color(0xFFE11D48)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _stateLabel(state.processingState, playing),
-                      style: Theme.of(context).textTheme.bodySmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (_loading)
-                    const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+              // Tap vào mini player → mở lại control panel (để user có
+              // thể đổi engine/giọng/tốc độ, hoặc dismiss).
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    isDismissible: true,
+                    enableDrag: true,
+                    showDragHandle: true,
+                    builder: (_) => const TtsControlPanel(),
+                  );
+                },
+                child: Row(
+                  children: [
+                    Icon(_stateIcon(state.processingState),
+                        color: const Color(0xFFE11D48)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _stateLabel(state.processingState, playing),
+                        style: Theme.of(context).textTheme.bodySmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    )
-                  else if (playing)
+                    ),
+                    if (_loading)
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else if (playing)
+                      IconButton(
+                        icon: const Icon(Icons.pause),
+                        onPressed: _pause,
+                        visualDensity: VisualDensity.compact,
+                      )
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.play_arrow),
+                        onPressed: _play,
+                        visualDensity: VisualDensity.compact,
+                      ),
                     IconButton(
-                      icon: const Icon(Icons.pause),
-                      onPressed: _pause,
-                      visualDensity: VisualDensity.compact,
-                    )
-                  else
-                    IconButton(
-                      icon: const Icon(Icons.play_arrow),
-                      onPressed: _play,
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Tắt',
+                      onPressed: _stop,
                       visualDensity: VisualDensity.compact,
                     ),
-                  IconButton(
-                    icon: const Icon(Icons.stop),
-                    onPressed: _stop,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
+                  ],
+                ),
               ),
             );
           },

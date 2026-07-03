@@ -349,8 +349,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // Re-fetch voices for the new engine. Reset the selected voice
     // because the previous voice name likely doesn't exist on the
     // new engine.
+    // ⚠️ Issue #331: setEngine() re-instantiates native TextToSpeech
+    // which initializes ASYNC. getVoices returns empty if called too
+    // soon. Delay 500ms to let native TTS finish init.
     _selectedVoiceName = null;
     await prefs.remove('tts.voice');
+    await Future.delayed(const Duration(milliseconds: 500));
     try {
       final voices = await _tts.getVoices;
       if (voices != null) {
