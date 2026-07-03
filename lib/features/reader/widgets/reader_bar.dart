@@ -6,12 +6,16 @@ import '../../../models/chapter_content.dart';
 /// Shared chrome around the polymorphic chapter views: app bar with the
 /// chapter title, a bottom progress bar with prev/next navigation, and a
 /// reading-settings entry point. Plan §5.4 + §14.4.
+///
+/// The chrome (AppBar) is always visible — tap-center opens the settings
+/// sheet instead of toggling the AppBar. The previous `chromeVisible`
+/// parameter was always `true` in practice, so it has been removed to
+/// avoid dead code.
 class ReaderBar extends StatelessWidget {
   const ReaderBar({
     super.key,
     required this.chapter,
     required this.child,
-    this.chromeVisible = true,
     this.onPrev,
     this.onNext,
     this.onOpenSettings,
@@ -21,7 +25,6 @@ class ReaderBar extends StatelessWidget {
 
   final ChapterContent chapter;
   final Widget child;
-  final bool chromeVisible;
   final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final VoidCallback? onOpenSettings;
@@ -39,48 +42,41 @@ class ReaderBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: chromeVisible
-          ? AppBar(
-              toolbarHeight: 44,
-              centerTitle: false,
-              titleSpacing: 4,
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => _onBack(context),
-              ),
-              title: Text(
-                chapter.title.isEmpty
-                    ? '${chapter.chapterNumber}'
-                    : '${chapter.chapterNumber}: ${chapter.title}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              actions: [
-                if (chapter is TextChapterContent && onToggleTts != null)
-                  IconButton(
-                    icon: const Icon(Icons.headphones),
-                    tooltip: 'Nghe audio',
-                    onPressed: onToggleTts,
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.list),
-                  tooltip: 'Danh sách chương',
-                  onPressed: onOpenChapterList,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.text_fields),
-                  onPressed: onOpenSettings,
-                ),
-              ],
-            )
-          : null,
-      body: chromeVisible
-          ? child
-          : Padding(
-              padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
-              child: child,
+      appBar: AppBar(
+        toolbarHeight: 44,
+        centerTitle: false,
+        titleSpacing: 4,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => _onBack(context),
+        ),
+        title: Text(
+          chapter.title.isEmpty
+              ? '${chapter.chapterNumber}'
+              : '${chapter.chapterNumber}: ${chapter.title}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        actions: [
+          if (chapter is TextChapterContent && onToggleTts != null)
+            IconButton(
+              icon: const Icon(Icons.headphones),
+              tooltip: 'Nghe audio',
+              onPressed: onToggleTts,
             ),
+          IconButton(
+            icon: const Icon(Icons.list),
+            tooltip: 'Danh sách chương',
+            onPressed: onOpenChapterList,
+          ),
+          IconButton(
+            icon: const Icon(Icons.text_fields),
+            onPressed: onOpenSettings,
+          ),
+        ],
+      ),
+      body: child,
     );
   }
 }

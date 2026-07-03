@@ -500,6 +500,21 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       final blockText = _blockPlainTextCache[i];
       if (blockText.contains(short)) return i;
     }
+
+    // Pass 3 (fallback): search backward up to 3 blocks. Handles the
+    // edge case where a null match advanced the chunk but not the
+    // cursor, and the next chunk legitimately belongs to an earlier
+    // block (e.g. code blocks stripped from TTS, horizontal rules with
+    // empty plain text). Without this fallback the highlight would be
+    // lost for those blocks.
+    final backStart = (_searchFromBlock - 3).clamp(
+      0,
+      _blockPlainTextCache.length,
+    );
+    for (var i = _searchFromBlock - 1; i >= backStart; i--) {
+      final blockText = _blockPlainTextCache[i];
+      if (blockText.isNotEmpty && blockText.contains(short)) return i;
+    }
     return null;
   }
 

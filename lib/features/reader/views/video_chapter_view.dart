@@ -35,14 +35,19 @@ class VideoChapterView extends StatefulWidget {
 class _VideoChapterViewState extends State<VideoChapterView> {
   YoutubePlayerController? _controller;
 
+  /// YouTube video IDs are exactly 11 characters from `[A-Za-z0-9_-]`.
+  /// Validate before passing to the controller — a compromised backend
+  /// could return a malformed ID that constructs a non-YouTube URL.
+  static final RegExp _youtubeIdRe = RegExp(r'^[A-Za-z0-9_-]{11}$');
+
   @override
   void initState() {
     super.initState();
-    if (widget.videoId.isNotEmpty) {
+    if (widget.videoId.isNotEmpty && _youtubeIdRe.hasMatch(widget.videoId)) {
       _controller = YoutubePlayerController.fromVideoId(
         videoId: widget.videoId,
         params: const YoutubePlayerParams(
-          showControls: true,       // YouTube native controls ON
+          showControls: true, // YouTube native controls ON
           showFullscreenButton: true,
           mute: false,
           enableCaption: true,

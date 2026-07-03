@@ -78,9 +78,6 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   late final ScrollController _scrollController;
   final PageController _pageController = PageController();
   bool _progressSaved = false;
-  // Chrome is always visible — tap-center opens the settings sheet
-  // instead of toggling the AppBar.
-  final bool _chromeVisible = true;
 
   @override
   void initState() {
@@ -201,7 +198,6 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       onOpenSettings: widget.onOpenSettings,
       onOpenChapterList: widget.onOpenChapterList,
       onToggleTts: widget.onToggleTts,
-      chromeVisible: _chromeVisible,
       child: ColoredBox(
         color: bgColor,
         child: Stack(

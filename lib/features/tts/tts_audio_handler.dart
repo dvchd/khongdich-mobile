@@ -475,6 +475,16 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       );
       return;
     }
+    // Check if the loop is already running BEFORE setting _isSpeaking.
+    // If we set _isSpeaking first and then return, the guard works but
+    // the ordering is confusing — _isSpeaking would be true even though
+    // we didn't actually start anything new. Checking the loop future
+    // first makes the intent clear: if a loop is running, play() is a
+    // no-op regardless of _isSpeaking.
+    if (_speakLoopFuture != null) {
+      // Loop cũ đang chạy — không cần start lại.
+      return;
+    }
     _isSpeaking = true;
     playbackState.add(
       playbackState.value.copyWith(
@@ -494,13 +504,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         totalChunks: _chunks.length,
       ),
     );
-    // Start the speak loop. Nếu loop cũ vẫn đang chạy (vd: user press play
-    // nhanh 2 lần), đợi nó kết thúc trước. Thực tế _isSpeaking guard trong
-    // loop sẽ khiến loop cũ exit sớm.
-    if (_speakLoopFuture != null) {
-      // Loop cũ đang chạy — _isSpeaking đã true, không cần start lại.
-      return;
-    }
     _speakLoopFuture = _speakLoop();
     // Fire-and-forget — loop tự kết thúc khi chapter complete hoặc stop.
     unawaited(

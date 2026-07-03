@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:logger/logger.dart';
 
 /// Lightweight singleton logger used across the app.
@@ -5,6 +6,11 @@ import 'package:logger/logger.dart';
 /// Plan §3 (Tech Stack → logger) and §16 (Observability). In Phase 2,
 /// errors tagged with [Level.error] are forwarded to Firebase Crashlytics
 /// in addition to the local console sink.
+///
+/// Log level is `debug` in debug builds (verbose — useful during dev)
+/// and `warning` in release builds (only warnings + errors ship to
+/// production logcat, avoiding information disclosure of chapter IDs,
+/// story IDs, TTS engine names, etc.).
 class AppLogger {
   AppLogger._();
 
@@ -20,7 +26,7 @@ class AppLogger {
         printEmojis: false,
         dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
       ),
-      level: Level.debug,
+      level: kDebugMode ? Level.debug : Level.warning,
     );
   }
 

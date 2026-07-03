@@ -73,9 +73,9 @@ class AuthService {
     }
 
     final resp = await _repo.exchangeGoogleIdToken(idToken);
+    // Log without username (PII) — only the JWT expiry timestamp.
     AppLogger.info(
-      'Logged in as ${resp.user.username} '
-      '(jwt expires ${resp.expiresAt.toIso8601String()})',
+      'Login successful (jwt expires ${resp.expiresAt.toIso8601String()})',
     );
     return AuthResult(user: resp.user, expiresAt: resp.expiresAt);
   }
