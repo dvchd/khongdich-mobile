@@ -106,10 +106,15 @@ class OfflineLibraryScreen extends ConsumerWidget {
 
 /// Shared stream provider — watches downloaded_chapters via Drift's
 /// `watch()`. Auto-updates when a new chapter finishes downloading.
+///
+/// **Filter**: chỉ hiện `manual_download` (user chủ động bấm download).
+/// `auto_cache` (prefetch ngầm khi đọc online) bị ẩn — user không thấy
+/// "đã download" chương họ chưa bao giờ bấm download.
 final offlineLibraryStreamProvider =
     StreamProvider<List<DownloadedChapter>>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return (db.select(db.downloadedChapters)
+        ..where((t) => t.source.equals('manual_download'))
         ..orderBy([(t) => OrderingTerm.desc(t.downloadedAt)]))
       .watch();
 });

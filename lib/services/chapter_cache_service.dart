@@ -1,39 +1,50 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/database/app_database.dart';
 import '../core/observability/app_logger.dart';
 import '../models/chapter_content.dart';
 import '../repositories/story_repository.dart';
 
-/// Memory cache + prefetch service cho chapter content.
+/// Storage + memory cache + prefetch service cho chapter content.
 ///
-/// **Mục đích**: khi user đang đọc chương N, prefetch chương N+1 ngầm
-/// vào memory cache. Khi user bấm "Next", chapterProvider check cache
-/// trước → nếu có → render ngay không loading spinner.
+/// **Mục đích**: khi user đang đọc chương N, prefetch chương N+1 và N+2
+/// ngầm vào Drift DB (storage). Khi user bấm "Next", chapterProvider
+/// check DB cache trước → nếu có → render ngay không loading spinner.
+/// Cache persist qua app restart → user đọc lại không cần refetch.
 ///
 /// **Cache strategy**:
-/// - Memory LRU map `{chapterId → ChapterContent}` (không persist qua
-///   app restart — đủ cho session đọc truyện).
-/// - Cache chapter list per story (TTL 5 phút) để tránh refetch list
-///   mỗi lần next/prev.
+/// - Storage (Drift DB, bảng `downloaded_chapters`): persist qua app
+///   restart. Có 2 source:
+///   - `manual_download`: user chủ động bấm download → hiện trong Offline
+///     Library, không bị LRU evict.
+///   - `auto_cache`: prefetch ngầm khi đọc online → ẩn khỏi Offline
+///     Library, LRU evict (giữ 20 chương gần nhất per story).
+/// - Memory cache (Riverpod): Map<chapterId, ChapterContent> cho tốc độ
+///   truy cập instant trong session. Không persist.
+/// - Chapter list cache: Map<storyId, _ChapterListCache> TTL 5 phút.
 ///
-/// **Prefetch trigger**:
-/// - Khi `chapterProvider` resolve thành công → gọi `prefetchNext(c)`
-///   fire-and-forget.
-/// - Idempotent: nếu chapter kế tiếp đã có trong cache hoặc đang fetch
-///   → skip.
+/// **Prefetch**:
+/// - Khi `chapterProvider` resolve → prefetch N+1 và N+2 fire-and-forget.
+/// - Retry khi user scroll gần cuối (onChapterNearEnd).
+/// - Idempotent: skip nếu đã cache/đang fetch.
+/// - VIP gate: skip nếu chương thuộc lockedChapterIds (user không có
+///   quyền đọc → fetch vô nghĩa).
 ///
-/// **VIP gate**: nếu chapter N có `nextChapter` thuộc `lockedChapterIds`
-/// (lấy từ VipStatus đã cache ở story detail), skip prefetch để tránh
-/// spam API (user không có quyền đọc thì fetch vô nghĩa).
+/// **Cập nhật chương**: cache có thể cũ khi tác giả sửa chương. MVP:
+/// user xóa truyện cũ + tải lại nếu muốn cập nhật. Phase 2: check
+/// `updated_at` từ server → refetch nếu cache cũ.
 class ChapterCacheService {
-  ChapterCacheService(this._repo);
+  ChapterCacheService(this._repo, this._db);
 
   final StoryRepository _repo;
+  final AppDatabase _db;
 
   /// Memory cache cho chapter content. Key = chapterId.
-  /// Không persist qua app restart — đủ cho session đọc truyện.
+  /// Phục vụ tốc độ truy cập instant trong session.
   final Map<String, ChapterContent> _chapterCache = {};
 
   /// Cache chapter list per story. Key = storyId. Value = (chapters, cachedAt).
@@ -43,9 +54,21 @@ class ChapterCacheService {
   /// In-flight guard: chapterId đang được fetch → skip duplicate.
   final Set<String> _inFlight = {};
 
-  static const Duration _chapterListTtl = Duration(minutes: 5);
+  /// Locked chapter IDs (từ VipStatus) — skip prefetch để tránh spam API.
+  Set<String> _lockedChapterIds = {};
 
-  /// Lấy chapter content. Check memory cache trước, fallback API.
+  static const Duration _chapterListTtl = Duration(minutes: 5);
+  static const int _maxAutoCachePerStory = 20;
+  /// Prefetch bao nhiêu chương kế tiếp. 2 = N+1 + N+2.
+  static const int _prefetchCount = 2;
+
+  /// Cập nhật locked chapter IDs từ VipStatus. Gọi khi user mở story
+  /// detail → prefetch skip các chương locked.
+  void setLockedChapterIds(Set<String> ids) {
+    _lockedChapterIds = ids;
+  }
+
+  /// Lấy chapter content. Check memory → DB → API.
   /// Nếu cache hit → return ngay (instant, không loading).
   Future<ChapterContent> getChapter({
     required String storyId,
@@ -58,53 +81,118 @@ class ChapterCacheService {
       throw StateError(
           'Chapter $chapterNumber not found in story $storyId');
     }
+    final chapterId = match.id;
 
     // 2. Check memory cache → instant return.
-    final cached = _chapterCache[match.id];
-    if (cached != null) {
-      AppLogger.info('ChapterCache: cache HIT for chapter ${match.id} '
-          '(N$chapterNumber, story $storyId)');
-      return cached;
+    final memCached = _chapterCache[chapterId];
+    if (memCached != null) {
+      AppLogger.info('ChapterCache: memory HIT for N$chapterNumber');
+      return memCached;
     }
 
-    // 3. Cache miss → fetch API + write cache.
-    final chapter = await _repo.fetchChapter(match.id);
-    _chapterCache[match.id] = chapter;
-    AppLogger.info('ChapterCache: cache MISS → fetched chapter ${match.id} '
-        '(N$chapterNumber, ${_chapterCache.length} cached total)');
+    // 3. Check DB cache (downloaded_chapters) → parse JSON → return.
+    final dbCached = await _db.getDownloadedChapter(chapterId);
+    if (dbCached != null) {
+      try {
+        final chapter = ChapterContent.fromJson(
+          jsonDecode(dbCached.contentRaw) as Map<String, dynamic>,
+        );
+        _chapterCache[chapterId] = chapter;
+        AppLogger.info('ChapterCache: DB HIT for N$chapterNumber '
+            '(source: ${dbCached.source})');
+        // Update lastReadAt để LRU evict biết chương này được đọc gần đây.
+        await _db.markChapterRead(chapterId);
+        return chapter;
+      } catch (e) {
+        AppLogger.warning('ChapterCache: DB parse failed for N$chapterNumber, refetching', e);
+      }
+    }
+
+    // 4. Cache miss → fetch API + write DB + memory cache.
+    final chapter = await _repo.fetchChapter(chapterId);
+    _chapterCache[chapterId] = chapter;
+    await _saveToDb(chapter, source: 'auto_cache');
+    AppLogger.info('ChapterCache: MISS → fetched N$chapterNumber '
+        '(${_chapterCache.length} memory, DB saved)');
     return chapter;
   }
 
-  /// Prefetch chương kế tiếp ngầm (fire-and-forget).
-  /// Idempotent — skip nếu đã cache hoặc đang fetch.
-  /// Không throw — error chỉ log, không surface cho user.
+  /// Prefetch N+1 và N+2 ngầm (fire-and-forget). Idempotent.
+  /// VIP gate: skip nếu chương thuộc lockedChapterIds.
   Future<void> prefetchNext(ChapterContent currentChapter) async {
     final nextNum = currentChapter.nextChapter;
-    if (nextNum == null) return; // không có chương tiếp theo
+    if (nextNum == null) return;
 
-    // Resolve nextChapterId từ chapter list cache.
+    // Resolve chapter list để lấy ID của N+1, N+2.
     final chapters = await _getChapterList(currentChapter.storyId);
-    final nextMatch = chapters.where((c) => c.chapterNumber == nextNum).firstOrNull;
-    if (nextMatch == null) return;
 
-    final nextId = nextMatch.id;
-    if (_chapterCache.containsKey(nextId)) return; // đã cache
-    if (_inFlight.contains(nextId)) return; // đang fetch
-    _inFlight.add(nextId);
+    // Prefetch N+1, N+2 (nếu có).
+    final futures = <Future<void>>[];
+    int nextNumIter = nextNum;
+    for (int i = 0; i < _prefetchCount; i++) {
+      final match = chapters.where((c) => c.chapterNumber == nextNumIter).firstOrNull;
+      if (match == null) break;
+
+      // VIP gate: skip nếu chương locked.
+      if (_lockedChapterIds.contains(match.id)) {
+        AppLogger.info('ChapterCache: skip prefetch N$nextNumIter (VIP locked)');
+        break; // Nếu N+1 locked, N+2 cũng có thể locked → stop.
+      }
+
+      futures.add(_prefetchOne(match.id, nextNumIter, currentChapter.storyId));
+      // Tìm chương kế tiếp cho vòng lặp.
+      final next = chapters.where((c) => c.chapterNumber == nextNumIter + 1).firstOrNull;
+      if (next == null) break;
+      nextNumIter = next.chapterNumber;
+    }
+
+    // Fire-and-forget tất cả prefetch.
+    await Future.wait(futures);
+  }
+
+  Future<void> _prefetchOne(String chapterId, int chapterNum, String storyId) async {
+    if (_chapterCache.containsKey(chapterId)) return;
+    if (_inFlight.contains(chapterId)) return;
+    final dbCached = await _db.getDownloadedChapter(chapterId);
+    if (dbCached != null) return; // đã có trong DB
+    _inFlight.add(chapterId);
 
     try {
-      AppLogger.info('ChapterCache: prefetching next chapter $nextId '
-          '(N$nextNum) while reading N${currentChapter.chapterNumber}');
-      final next = await _repo.fetchChapter(nextId);
-      _chapterCache[nextId] = next;
-      AppLogger.info('ChapterCache: prefetch done for N$nextNum '
-          '(${_chapterCache.length} cached total)');
+      AppLogger.info('ChapterCache: prefetching N$chapterNum');
+      final chapter = await _repo.fetchChapter(chapterId);
+      _chapterCache[chapterId] = chapter;
+      await _saveToDb(chapter, source: 'auto_cache');
+      // LRU evict: giữ tối đa _maxAutoCachePerStory auto-cache per story.
+      await _db.evictOldAutoCache(storyId, keep: _maxAutoCachePerStory);
+      AppLogger.info('ChapterCache: prefetch done N$chapterNum');
     } catch (e, s) {
-      // Prefetch fail không surface error — user vẫn đọc chương hiện tại OK.
-      // Nếu user next và cache miss → chapterProvider sẽ fetch lại.
-      AppLogger.warning('ChapterCache: prefetch failed for N$nextNum (ignored)', e, s);
+      AppLogger.warning('ChapterCache: prefetch failed N$chapterNum (ignored)', e, s);
     } finally {
-      _inFlight.remove(nextId);
+      _inFlight.remove(chapterId);
+    }
+  }
+
+  /// Lưu chapter vào DB (downloaded_chapters) với source = auto_cache
+  /// hoặc manual_download.
+  Future<void> _saveToDb(ChapterContent chapter, {required String source}) async {
+    try {
+      final json = chapter.toJson();
+      await _db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
+        chapterId: chapter.id,
+        storyId: chapter.storyId,
+        storyTitle: chapter.storyTitle,
+        storySlug: chapter.storySlug,
+        chapterNumber: chapter.chapterNumber,
+        chapterTitle: chapter.title,
+        contentType: chapter.contentType,
+        contentRaw: jsonEncode(json),
+        contentVersion: Value(chapter.contentVersion),
+        wordCount: Value(chapter.wordCount),
+        downloadedAt: DateTime.now().toIso8601String(),
+        source: Value(source),
+      ));
+    } catch (e, s) {
+      AppLogger.warning('ChapterCache: _saveToDb failed for ${chapter.id}', e, s);
     }
   }
 
@@ -122,17 +210,21 @@ class ChapterCacheService {
     return page.chapters;
   }
 
-  /// Clear cache cho 1 story (khi user rời story detail).
-  void clearStoryCache(String storyId) {
-    _chapterListCache.remove(storyId);
-    // Không clear chapter content cache — user có thể quay lại đọc tiếp.
-  }
-
-  /// Clear toàn bộ cache (khi app memory pressure).
-  void clearAll() {
+  /// Clear memory cache (DB cache vẫn giữ). Gọi khi memory pressure.
+  void clearMemoryCache() {
     _chapterCache.clear();
     _chapterListCache.clear();
     _inFlight.clear();
+  }
+
+  /// Clear toàn bộ auto_cache trong DB (manual_download vẫn giữ).
+  /// Gọi khi user muốn dọn dẹp storage.
+  Future<void> clearAutoCache() async {
+    await _db.customStatement(
+      "DELETE FROM downloaded_chapters WHERE source = 'auto_cache'",
+    );
+    _chapterCache.clear();
+    AppLogger.info('ChapterCache: cleared all auto_cache from DB');
   }
 }
 
@@ -146,5 +238,6 @@ class _ChapterListCache {
 /// (cache tồn tại xuyên suốt session).
 final chapterCacheServiceProvider = Provider<ChapterCacheService>((ref) {
   final repo = ref.watch(storyRepositoryProvider);
-  return ChapterCacheService(repo);
+  final db = ref.watch(appDatabaseProvider);
+  return ChapterCacheService(repo, db);
 });

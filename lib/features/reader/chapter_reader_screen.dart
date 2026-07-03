@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/chapter_content.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/chapter_cache_service.dart';
+import '../story/story_detail_screen.dart' show vipStatusProvider;
 import '../tts/tts_audio_handler.dart';
 import '../tts/tts_control_panel.dart';
 import 'chapter_provider.dart';
@@ -60,6 +61,14 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       ref
           .read(readingProgressServiceProvider)
           .markChapterOpened(widget.storyId, widget.chapterNumber);
+      // Set locked chapter IDs từ VipStatus → ChapterCacheService skip
+      // prefetch các chương VIP-locked (tránh spam API vô nghĩa).
+      final vip = ref.read(vipStatusProvider(widget.storyId)).valueOrNull;
+      if (vip != null) {
+        ref.read(chapterCacheServiceProvider).setLockedChapterIds(
+              vip.lockedChapterIds.toSet(),
+            );
+      }
     });
   }
 

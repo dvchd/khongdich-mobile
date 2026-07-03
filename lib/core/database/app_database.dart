@@ -40,6 +40,10 @@ class DownloadedChapters extends Table {
   TextColumn get coverUrl => text().nullable()();
   TextColumn get storyAuthor => text().nullable()();
   TextColumn get storySynopsis => text().nullable()();
+  /// 'manual_download' (user bấm download) hoặc 'auto_cache' (prefetch
+  /// ngầm khi đọc online). Auto-cache bị LRU evict (giữ 20 chương gần
+  /// nhất per story) và bị filter khỏi Offline Library UI.
+  TextColumn get source => text().withDefault(const Constant('manual_download'))();
 
   @override
   Set<Column> get primaryKey => {chapterId};
@@ -142,7 +146,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_open());
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -170,6 +174,13 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(downloadQueue, downloadQueue.storyAuthor);
             await m.addColumn(downloadQueue, downloadQueue.storySynopsis);
           }
+          if (from < 5) {
+            // v5: added 'source' column to downloaded_chapters.
+            // 'manual_download' (user bấm download) hoặc 'auto_cache'
+            // (prefetch ngầm khi đọc online). Auto-cache bị LRU evict
+            // và filter khỏi Offline Library UI.
+            await m.addColumn(downloadedChapters, downloadedChapters.source);
+          }
         },
       );
 
@@ -179,6 +190,40 @@ class AppDatabase extends _$AppDatabase {
     return (select(downloadedChapters)
           ..where((t) => t.chapterId.equals(chapterId)))
         .getSingleOrNull();
+  }
+
+  /// Lấy chapter đã download/cache. Nếu `manualOnly = true`, chỉ trả
+  /// manual_download (filter auto_cache khỏi Offline Library UI).
+  Future<DownloadedChapter?> getDownloadedChapterFiltered(
+      String chapterId, {bool manualOnly = false}) {
+    final q = select(downloadedChapters)
+      ..where((t) => t.chapterId.equals(chapterId));
+    if (manualOnly) {
+      q.where((t) => t.source.equals('manual_download'));
+    }
+    return q.getSingleOrNull();
+  }
+
+  /// LRU evict: xóa auto_cache cũ nhất per story, giữ tối đa `keep`
+  /// chương gần nhất. Gọi sau khi insert auto-cache mới.
+  Future<int> evictOldAutoCache(String storyId, {int keep = 20}) {
+    return customUpdate(
+      'DELETE FROM downloaded_chapters WHERE story_id = ? AND source = ? '
+      'AND chapter_id NOT IN ('
+      '  SELECT chapter_id FROM downloaded_chapters '
+      '  WHERE story_id = ? AND source = ? '
+      '  ORDER BY COALESCE(last_read_at, downloaded_at) DESC '
+      '  LIMIT ?'
+      ')',
+      variables: [
+        Variable.withString(storyId),
+        const Variable.withString('auto_cache'),
+        Variable.withString(storyId),
+        const Variable.withString('auto_cache'),
+        Variable.withInt(keep),
+      ],
+      updates: {downloadedChapters},
+    );
   }
 
   Future<List<DownloadedChapter>> getDownloadedChaptersForStory(

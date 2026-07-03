@@ -181,6 +181,9 @@ class DownloadManager {
       coverUrl: Value(row.coverUrl),
       storyAuthor: Value(row.storyAuthor),
       storySynopsis: Value(row.storySynopsis),
+      // source = 'manual_download' — user chủ động bấm download → hiện
+      // trong Offline Library, không bị LRU evict.
+      source: const Value('manual_download'),
     ));
     // For manga chapters, also download every image to local storage
     // so the reader can render them 100% offline. Without this, the

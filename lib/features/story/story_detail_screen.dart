@@ -24,12 +24,17 @@ final downloadQueueForStoryProvider =
 
 /// Stream of downloaded chapters for a specific story — auto-updates
 /// via Drift's `watch()`.
+///
+/// **Filter**: chỉ hiện `manual_download` (user chủ động bấm download).
+/// `auto_cache` (prefetch ngầm) bị ẩn — story detail chỉ count chương
+/// user thực sự bấm download, không count auto-cache.
 final downloadedChaptersForStoryProvider =
     StreamProvider.autoDispose.family<List<DownloadedChapter>, String>(
         (ref, storyId) {
   final db = ref.watch(appDatabaseProvider);
   return (db.select(db.downloadedChapters)
         ..where((t) => t.storyId.equals(storyId))
+        ..where((t) => t.source.equals('manual_download'))
         ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
       .watch();
 });
