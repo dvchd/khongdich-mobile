@@ -82,8 +82,8 @@ class ChapterCacheService {
       throw StateError(
           'Chapter $chapterNumber not found in story $storyId');
     }
-    final chapter = match;
-    final chapterId = chapter.id;
+    final chapterMeta = match;
+    final chapterId = chapterMeta.id;
 
     // 2. Check memory cache → instant return.
     final memCached = _chapterCache[chapterId];
