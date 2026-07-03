@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -53,10 +54,19 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
   // TTS highlight state.
   StreamSubscription<TtsChunkProgress>? _ttsSub;
+  StreamSubscription<PlaybackState>? _playbackSub;
   int? _activeBlockIndex;
   // Cache of normalized plain text per block — computing it on every chunk
   // event would be wasteful since blocks don't change between chunks.
   late List<String> _blockPlainTextCache;
+  // Monotonic cursor: _findBlockForChunk only searches from this index
+  // forward, so the highlight never jumps backwards. Reset in
+  // didUpdateWidget when the chapter changes.
+  int _searchFromBlock = 0;
+  // Content width captured from LayoutBuilder in scroll mode — needed
+  // by _measureBlockHeight for accurate scroll offset calculation.
+  // In page mode, _lastSize.width is used instead.
+  double? _scrollModeWidth;
 
   @override
   void initState() {
@@ -73,6 +83,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         final handler = await ref.read(ttsHandlerProvider.future);
         if (!mounted) return;
         _ttsSub = handler.chunkProgress.listen(_onChunkProgress);
+        // Also listen to playbackState so we can clear the highlight
+        // when TTS stops, completes, or errors. Without this, the yellow
+        // tint stays on the last block forever after TTS finishes.
+        _playbackSub = handler.playbackState.listen(_onPlaybackState);
         // If TTS is already mid-chapter for THIS chapter when we mount,
         // highlight the current block immediately.
         if (handler.currentChapterId == widget.chapterId &&
@@ -104,9 +118,11 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       _blocks = MarkdownParser().parse(widget.markdown);
       _blockPlainTextCache = [for (final b in _blocks) _normalize(b.plainText)];
       _lastSize = null;
-      // Clear highlight when chapter changes — the new chunk event for
-      // the new chapter will set a fresh highlight.
+      // Clear highlight + reset monotonic cursor when chapter changes —
+      // the new chunk event for the new chapter will set a fresh
+      // highlight starting from block 0.
       _activeBlockIndex = null;
+      _searchFromBlock = 0;
       // Reset to page 0 on the next frame, after _pageBlockIndices
       // has been re-computed by _computePages() during the next
       // LayoutBuilder pass. Using WidgetsBinding.addPostFrameCallback
@@ -123,6 +139,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   @override
   void dispose() {
     _ttsSub?.cancel();
+    _playbackSub?.cancel();
     // Only dispose if we created the controller internally
     if (widget.pageController == null) {
       _pageController.dispose();
@@ -279,14 +296,24 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   }
 
   Widget _buildScrollMode() {
-    return SingleChildScrollView(
-      controller: widget.scrollController,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 48),
-      child: MarkdownRenderer(
-        blocks: _blocks,
-        theme: widget.theme,
-        activeBlockIndex: _activeBlockIndex,
-      ),
+    // Wrap in LayoutBuilder to capture the content width so
+    // _scrollOrFlipToActive can measure block heights accurately.
+    // Without this, we'd have no way to compute the correct scroll
+    // offset (ScrollController.position.viewportDimension returns
+    // the HEIGHT for a vertical scroll, not the width).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _scrollModeWidth = constraints.maxWidth;
+        return SingleChildScrollView(
+          controller: widget.scrollController,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 48),
+          child: MarkdownRenderer(
+            blocks: _blocks,
+            theme: widget.theme,
+            activeBlockIndex: _activeBlockIndex,
+          ),
+        );
+      },
     );
   }
 
@@ -390,11 +417,36 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     _applyChunk(p.chunkIndex, handler.chunks);
   }
 
+  /// Listen to playbackState changes so we can clear the highlight when
+  /// TTS stops, completes, or errors. Without this, the yellow tint
+  /// stays on the last block forever after TTS finishes — the user
+  /// would think TTS is still reading.
+  void _onPlaybackState(PlaybackState state) {
+    if (!mounted) return;
+    final s = state.processingState;
+    if (s == AudioProcessingState.idle ||
+        s == AudioProcessingState.error ||
+        s == AudioProcessingState.completed) {
+      if (_activeBlockIndex != null) {
+        setState(() {
+          _activeBlockIndex = null;
+          _searchFromBlock = 0;
+        });
+      }
+    }
+  }
+
   void _applyChunk(int chunkIndex, List<String> chunks) {
     if (chunkIndex < 0 || chunkIndex >= chunks.length) return;
     final chunkText = chunks[chunkIndex];
     final newActive = _findBlockForChunk(chunkText);
     if (newActive == _activeBlockIndex) return;
+    // Advance the monotonic cursor so future chunk searches only look
+    // forward — prevents the highlight from jumping backwards if a
+    // later chunk's text happens to match an earlier block.
+    if (newActive != null) {
+      _searchFromBlock = newActive;
+    }
     setState(() => _activeBlockIndex = newActive);
     // After the next frame (so the renderer has laid out the new
     // highlighted block), scroll or page-flip to keep it in view.
@@ -421,7 +473,11 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     // Pass 1: prefix match — chunk's first chars match block's first chars.
     // This handles the common case where the chunk starts at a block
     // boundary (paragraph, heading, list item, etc.).
-    for (var i = 0; i < _blockPlainTextCache.length; i++) {
+    //
+    // Monotonic: search from _searchFromBlock forward so the highlight
+    // never jumps backwards. This prevents a false match when a later
+    // chunk's text coincidentally matches an earlier block.
+    for (var i = _searchFromBlock; i < _blockPlainTextCache.length; i++) {
       final blockText = _blockPlainTextCache[i];
       if (blockText.isEmpty) continue;
       final cmpLen = fingerprint.length < blockText.length
@@ -437,9 +493,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     // block. This handles the case where the chunk starts mid-block
     // (rare — happens when a long paragraph is split into multiple chunks
     // by the preprocessor's 500-char limit).
+    // Also monotonic — search from _searchFromBlock forward.
     final short = fingerprint.substring(0, fingerprint.length.clamp(0, 20));
     if (short.length < 5) return null;
-    for (var i = 0; i < _blockPlainTextCache.length; i++) {
+    for (var i = _searchFromBlock; i < _blockPlainTextCache.length; i++) {
       final blockText = _blockPlainTextCache[i];
       if (blockText.contains(short)) return i;
     }
@@ -486,10 +543,18 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       // function that powers page splitting so the offsets match.
       final controller = widget.scrollController;
       if (controller == null || !controller.hasClients) return;
-      final viewportWidth = controller.position.viewportDimension;
+      // Use the content width captured by LayoutBuilder in
+      // _buildScrollMode. Falls back to MediaQuery screen width if
+      // not yet captured (e.g. auto-scroll fires before the first
+      // LayoutBuilder pass). Previously this used
+      // `controller.position.viewportDimension` which returns the
+      // HEIGHT for a vertical scroll — causing text to wrap at the
+      // wrong width and block heights to be completely wrong.
+      final contentWidth =
+          _scrollModeWidth ?? MediaQuery.of(context).size.width;
       double offset = 0;
       for (var i = 0; i < active && i < _blocks.length; i++) {
-        offset += _measureBlockHeight(_blocks[i], viewportWidth);
+        offset += _measureBlockHeight(_blocks[i], contentWidth);
       }
       // Subtract a small top padding so the highlighted block isn't
       // flush against the AppBar — bring it to roughly the upper third.

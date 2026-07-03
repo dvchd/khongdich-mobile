@@ -90,6 +90,19 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   }
 
   @override
+  void didUpdateWidget(covariant ReaderBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset the one-shot progress flag when the chapter changes so the
+    // new chapter can fire onChapterNearEnd again. Without this, if the
+    // ReaderBody is ever reused with a different chapter (e.g. via
+    // didUpdateWidget in a parent), _progressSaved stays true and the
+    // new chapter's reading progress is never marked.
+    if (oldWidget.chapter.id != widget.chapter.id) {
+      _progressSaved = false;
+    }
+  }
+
+  @override
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
