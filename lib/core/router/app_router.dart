@@ -16,6 +16,7 @@ import '../../features/notifications/notifications_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/reader/chapter_reader_screen.dart';
 import '../../features/reader/reader_settings_provider.dart';
+import '../../features/reader/services/reading_progress_service.dart';
 import '../../features/reader/widgets/chapter_list_sheet.dart';
 import '../../features/reader/widgets/reader_body.dart';
 import '../../features/reader/widgets/reader_settings_sheet.dart';
@@ -377,11 +378,24 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
             chapter is TextChapterContent ? () => _toggleTts(chapter) : null,
         mangaLocalImagePaths: _mangaLocalImagePaths,
         onChapterNearEnd: () async {
-          // Mark the chapter as read in the local Drift DB. No API
-          // call — this is offline-only.
+          // Mark chapter as read in local Drift DB (cho LRU evict +
+          // is_read flag).
           try {
             final db = ref.read(appDatabaseProvider);
             await db.markChapterRead(widget.chapterId);
+          } catch (_) {/* best-effort */}
+
+          // Sync reading progress lên server (best-effort). Nếu offline,
+          // _saveToServer fail silently và để lại row synced=0 —
+          // flushPending() sẽ retry khi online lại (app resume / login).
+          // Trước đây offline reader không ghi reading_progress → tiến
+          // trình đọc offline bị "quên" khi online lại.
+          try {
+            final progress = ref.read(readingProgressServiceProvider);
+            await progress.markChapterRead(
+              chapter.storyId,
+              chapter.chapterNumber,
+            );
           } catch (_) {/* best-effort */}
         },
       ),

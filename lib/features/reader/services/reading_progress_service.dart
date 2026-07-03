@@ -88,6 +88,62 @@ class ReadingProgressService {
     }
   }
 
+  /// Flush pending reading progress (synced=0) lên server.
+  /// Gọi khi:
+  /// - App resume (từ background → foreground)
+  /// - Sau login thành công
+  /// - Sau khi online lại (connectivity change)
+  ///
+  /// Backend lưu 1 row/user/story (last-write-wins), nên chỉ cần push
+  /// row mới nhất per story. Fail silently — retry ở lần flush tiếp theo.
+  Future<void> flushPending() async {
+    if (!await _api.isAuthenticated()) return;
+    try {
+      final all = await _db.getAllReadingProgress();
+      final pending = all.where((p) => p.synced == 0).toList();
+      if (pending.isEmpty) return;
+      AppLogger.info('ReadingProgress: flushing ${pending.length} pending rows');
+
+      // Group by storyId, lấy row mới nhất per story (last-write-wins).
+      final Map<String, ReadingProgressTableData> latestPerStory = {};
+      for (final p in pending) {
+        final existing = latestPerStory[p.storyId];
+        if (existing == null || p.updatedAt.compareTo(existing.updatedAt) > 0) {
+          latestPerStory[p.storyId] = p;
+        }
+      }
+
+      // Push từng story lên server. Fail 1 row không block các row khác.
+      for (final entry in latestPerStory.entries) {
+        try {
+          await _repo.saveReadingProgress(
+            storyId: entry.key,
+            chapter: entry.value.lastChapter,
+            scrollRatio: entry.value.scrollRatio,
+            anchor: entry.value.anchor,
+          );
+          // Mark synced=1 cho story này (tất cả row cũ cũng mark, vì
+          // backend chỉ giữ 1 row/user/story).
+          await _db.upsertReadingProgress(ReadingProgressTableCompanion.insert(
+            storyId: entry.key,
+            lastChapter: entry.value.lastChapter,
+            scrollRatio: Value(entry.value.scrollRatio),
+            anchor: Value(entry.value.anchor),
+            updatedAt: DateTime.now().toIso8601String(),
+            synced: const Value(1),
+          ));
+          AppLogger.info('ReadingProgress: synced story ${entry.key} '
+              'chapter ${entry.value.lastChapter}');
+        } catch (e, s) {
+          AppLogger.warning('ReadingProgress: flush failed for story '
+              '${entry.key} (will retry next flush)', e, s);
+        }
+      }
+    } catch (e, s) {
+      AppLogger.warning('ReadingProgress: flushPending failed', e, s);
+    }
+  }
+
   Future<List<ContinueReadingItem>> refreshContinueReading() async {
     if (!await _api.isAuthenticated()) return const [];
     try {

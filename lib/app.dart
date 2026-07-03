@@ -5,20 +5,48 @@ import 'package:go_router/go_router.dart';
 import 'core/network/api_client.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'features/reader/services/reading_progress_service.dart';
 
-class KhongdichApp extends ConsumerWidget {
+class KhongdichApp extends ConsumerStatefulWidget {
   const KhongdichApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<KhongdichApp> createState() => _KhongdichAppState();
+}
+
+class _KhongdichAppState extends ConsumerState<KhongdichApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    // Observe app lifecycle state changes để flush pending reading
+    // progress khi app resume (từ background → foreground).
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // App resume → flush pending reading progress (synced=0) lên
+      // server. Đọc offline để lại row synced=0, retry khi online lại.
+      Future.microtask(() {
+        ref.read(readingProgressServiceProvider).flushPending();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
 
     // Wait for ApiClient to be ready before rendering the router.
-    // The ApiClient is a FutureProvider (async init: loads JWT from
-    // secure storage, resolves env). If we render the router before
-    // it's ready, every screen that reads storyRepositoryProvider will
-    // throw "ApiClient not ready" — this is the cold-start crash the
-    // user saw.
     final apiAsync = ref.watch(apiClientProvider);
 
     return MaterialApp.router(
@@ -31,11 +59,14 @@ class KhongdichApp extends ConsumerWidget {
         loading: () => _splashRouter(),
         error: (e, _) => _splashRouter(),
         data: (api) {
-          // Sync the runtime AppEnv provider.
+          // Sync the runtime AppEnv provider + flush pending progress.
           Future.microtask(() {
             if (ref.read(appEnvProvider) != api.env) {
               ref.read(appEnvProvider.notifier).state = api.env;
             }
+            // Flush pending reading progress khi app khởi động (có thể
+            // có row synced=0 từ session trước).
+            ref.read(readingProgressServiceProvider).flushPending();
           });
           return ref.read(appRouterProvider);
         },
