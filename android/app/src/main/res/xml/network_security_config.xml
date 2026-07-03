@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext for dev backends (e.g. http://10.0.2.2:3000). -->
+    <!-- Allow cleartext ONLY for dev backends (e.g. http://10.0.2.2:3000
+         when running the Rust backend locally on the emulator).
+         Production domains (khongdich.com, demo.khongdich.com) MUST be
+         HTTPS-only — cleartext would expose the Bearer JWT to MITM
+         attackers on the same network (WiFi, carrier DPI). -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">10.0.2.2</domain>
         <domain includeSubdomains="true">localhost</domain>
-        <domain includeSubdomains="true">khongdich.com</domain>
-        <domain includeSubdomains="true">demo.khongdich.com</domain>
     </domain-config>
     <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

@@ -60,7 +60,8 @@ class StoryRepository {
     final data = r.data as Map<String, dynamic>;
     final storyJson = data['story'] as Map<String, dynamic>;
     final story = StorySummary.fromStoryJson(storyJson).copyWith(
-      author: (data['author_display_name'] as String?) ??
+      author:
+          (data['author_display_name'] as String?) ??
           (data['author_username'] as String?) ??
           'Không rõ',
       categories: [
@@ -123,7 +124,12 @@ class StoryRepository {
       return VipStatus.fromJson(r.data as Map<String, dynamic>);
     } on DioException catch (_) {
       // Best-effort — if the endpoint 404s (older backend), assume no VIP.
-      return const VipStatus(isVip: false, lockedChapterIds: [], unlockedChapterIds: [], canDownloadOffline: true);
+      return const VipStatus(
+        isVip: false,
+        lockedChapterIds: [],
+        unlockedChapterIds: [],
+        canDownloadOffline: true,
+      );
     }
   }
 
@@ -132,14 +138,28 @@ class StoryRepository {
   /// "VIP locked" page.
   ///
   /// Hits `GET /api/v1/mobile/chapters/{id}/access`.
+  ///
+  /// Fail-closed: on network error / 5xx, return `canRead: false` so the
+  /// reader shows the VIP-locked screen instead of leaking content. Only
+  /// 404 (legacy backend without the endpoint) defaults to access granted.
   Future<ChapterAccess> fetchChapterAccess(String chapterId) async {
     try {
       final r = await _dio.get('/api/v1/mobile/chapters/$chapterId/access');
       return ChapterAccess.fromJson(r.data as Map<String, dynamic>);
-    } on DioException catch (_) {
-      // Best-effort — if the endpoint 404s, assume access granted
-      // (older backend without VIP gate).
-      return const ChapterAccess(canRead: true, isLocked: false);
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 404) {
+        // Legacy backend without VIP gate — assume access granted.
+        return const ChapterAccess(canRead: true, isLocked: false);
+      }
+      // Network error / 5xx / timeout — fail CLOSED to avoid leaking
+      // VIP content on transient failures. The reader will show the
+      // VIP-locked screen; user can retry when network stabilizes.
+      return const ChapterAccess(
+        canRead: false,
+        isLocked: true,
+        reason: 'access_check_failed',
+      );
     }
   }
 
@@ -152,7 +172,9 @@ class StoryRepository {
 
   /// Batch fetch multiple chapters (max 50).
   /// Hits `POST /api/v1/mobile/chapters/batch`.
-  Future<List<ChapterContent>> fetchChaptersBatch(List<String> chapterIds) async {
+  Future<List<ChapterContent>> fetchChaptersBatch(
+    List<String> chapterIds,
+  ) async {
     final r = await _dio.post(
       '/api/v1/mobile/chapters/batch',
       data: {'chapter_ids': chapterIds},
@@ -258,11 +280,7 @@ class StoryRepository {
   }) async {
     final r = await _dio.put(
       '/api/v1/mobile/reading-progress/$storyId',
-      data: {
-        'chapter': chapter,
-        'scroll_ratio': scrollRatio,
-        'anchor': anchor,
-      },
+      data: {'chapter': chapter, 'scroll_ratio': scrollRatio, 'anchor': anchor},
     );
     final data = r.data as Map<String, dynamic>;
     return (data['streak'] as num?)?.toInt() ?? 0;
@@ -323,7 +341,8 @@ class StoryRepository {
     return AuthTokenResponse(
       token: token,
       user: CurrentUser.fromJson(data['user'] as Map<String, dynamic>),
-      expiresAt: DateTime.tryParse(data['expires_at'] as String? ?? '') ??
+      expiresAt:
+          DateTime.tryParse(data['expires_at'] as String? ?? '') ??
           DateTime.now().add(const Duration(hours: 24)),
     );
   }
@@ -383,7 +402,9 @@ class StoryRepository {
 }
 
 final storyRepositoryProvider = Provider<StoryRepository>((ref) {
-  final api = ref.watch(apiClientProvider).maybeWhen(
+  final api = ref
+      .watch(apiClientProvider)
+      .maybeWhen(
         data: (c) => c,
         orElse: () => throw StateError('ApiClient not ready'),
       );
@@ -394,9 +415,9 @@ final storyRepositoryProvider = Provider<StoryRepository>((ref) {
 /// and the chapter reader's chapter-list bottom sheet.
 final chapterListProvider = FutureProvider.autoDispose
     .family<PaginatedChapters, String>((ref, storyId) async {
-  final repo = ref.watch(storyRepositoryProvider);
-  return repo.fetchChapterList(storyId, perPage: 200);
-});
+      final repo = ref.watch(storyRepositoryProvider);
+      return repo.fetchChapterList(storyId, perPage: 200);
+    });
 
 // ─── DTOs ──────────────────────────────────────────────────────────
 
@@ -472,14 +493,14 @@ class PostCard {
   final DateTime? publishedAt;
 
   factory PostCard.fromJson(Map<String, dynamic> json) => PostCard(
-        id: json['id'] as String,
-        title: json['title'] as String,
-        slug: json['slug'] as String,
-        postType: json['post_type'] as String? ?? 'article',
-        coverUrl: json['cover_url'] as String?,
-        excerpt: json['excerpt'] as String?,
-        publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
-      );
+    id: json['id'] as String,
+    title: json['title'] as String,
+    slug: json['slug'] as String,
+    postType: json['post_type'] as String? ?? 'article',
+    coverUrl: json['cover_url'] as String?,
+    excerpt: json['excerpt'] as String?,
+    publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
+  );
 }
 
 class PaginatedBookmarks {
@@ -520,20 +541,21 @@ class BookmarkItem {
   final DateTime bookmarkedAt;
 
   factory BookmarkItem.fromJson(Map<String, dynamic> json) => BookmarkItem(
-        storyId: json['id'] as String,
-        title: json['title'] as String,
-        slug: json['slug'] as String,
-        coverUrl: json['cover_url'] as String?,
-        author: (json['author_display_name'] as String?) ??
-            (json['author_username'] as String?) ??
-            'Không rõ',
-        listType: json['bookmark_list_type'] as String? ?? 'reading',
-        contentType: json['content_type'] as String? ?? 'text',
-        chapterCount: (json['chapter_count'] as num?)?.toInt(),
-        bookmarkedAt:
-            DateTime.tryParse(json['bookmark_created_at'] as String? ?? '') ??
-                DateTime.now(),
-      );
+    storyId: json['id'] as String,
+    title: json['title'] as String,
+    slug: json['slug'] as String,
+    coverUrl: json['cover_url'] as String?,
+    author:
+        (json['author_display_name'] as String?) ??
+        (json['author_username'] as String?) ??
+        'Không rõ',
+    listType: json['bookmark_list_type'] as String? ?? 'reading',
+    contentType: json['content_type'] as String? ?? 'text',
+    chapterCount: (json['chapter_count'] as num?)?.toInt(),
+    bookmarkedAt:
+        DateTime.tryParse(json['bookmark_created_at'] as String? ?? '') ??
+        DateTime.now(),
+  );
 }
 
 class BookmarkToggleResult {
@@ -579,7 +601,8 @@ class ContinueReadingItem {
         lastChapter: (json['last_chapter'] as num?)?.toInt() ?? 1,
         totalChapters: (json['total_chapters'] as num?)?.toInt() ?? 1,
         chapterLabel: json['chapter_label'] as String? ?? '',
-        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ??
+        updatedAt:
+            DateTime.tryParse(json['updated_at'] as String? ?? '') ??
             DateTime.now(),
       );
 }
@@ -663,16 +686,16 @@ class CurrentUser {
   final int unreadNotificationCount;
 
   factory CurrentUser.fromJson(Map<String, dynamic> json) => CurrentUser(
-        id: json['id'] as String,
-        username: json['username'] as String? ?? '',
-        displayName: json['display_name'] as String? ?? '',
-        email: json['email'] as String? ?? '',
-        role: json['role'] as String? ?? 'reader',
-        avatarUrl: json['avatar_url'] as String?,
-        readingStreak: (json['reading_streak'] as num?)?.toInt() ?? 0,
-        unreadNotificationCount:
-            (json['unread_notification_count'] as num?)?.toInt() ?? 0,
-      );
+    id: json['id'] as String,
+    username: json['username'] as String? ?? '',
+    displayName: json['display_name'] as String? ?? '',
+    email: json['email'] as String? ?? '',
+    role: json['role'] as String? ?? 'reader',
+    avatarUrl: json['avatar_url'] as String?,
+    readingStreak: (json['reading_streak'] as num?)?.toInt() ?? 0,
+    unreadNotificationCount:
+        (json['unread_notification_count'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class SyncResponse {
@@ -700,10 +723,7 @@ class SyncProgressItem {
 }
 
 class SyncBookmarkItem {
-  const SyncBookmarkItem({
-    required this.storyId,
-    required this.listType,
-  });
+  const SyncBookmarkItem({required this.storyId, required this.listType});
   final String storyId;
   final String listType;
 }
@@ -732,17 +752,17 @@ class VipStatus {
   final bool canDownloadOffline;
 
   factory VipStatus.fromJson(Map<String, dynamic> json) => VipStatus(
-        isVip: json['is_vip'] as bool? ?? false,
-        lockedChapterIds: [
-          for (final id in (json['locked_chapter_ids'] as List? ?? const []))
-            id.toString(),
-        ],
-        unlockedChapterIds: [
-          for (final id in (json['unlocked_chapter_ids'] as List? ?? const []))
-            id.toString(),
-        ],
-        canDownloadOffline: json['can_download_offline'] as bool? ?? true,
-      );
+    isVip: json['is_vip'] as bool? ?? false,
+    lockedChapterIds: [
+      for (final id in (json['locked_chapter_ids'] as List? ?? const []))
+        id.toString(),
+    ],
+    unlockedChapterIds: [
+      for (final id in (json['unlocked_chapter_ids'] as List? ?? const []))
+        id.toString(),
+    ],
+    canDownloadOffline: json['can_download_offline'] as bool? ?? true,
+  );
 
   /// Convenience: is the given chapter VIP-locked?
   bool isChapterLocked(String chapterId) =>
@@ -763,12 +783,13 @@ class ChapterAccess {
   });
   final bool canRead;
   final bool isLocked;
+
   /// 'granted' | 'vip_locked' | 'not_found' | null
   final String? reason;
 
   factory ChapterAccess.fromJson(Map<String, dynamic> json) => ChapterAccess(
-        canRead: json['can_read'] as bool? ?? true,
-        isLocked: json['is_locked'] as bool? ?? false,
-        reason: json['reason'] as String?,
-      );
+    canRead: json['can_read'] as bool? ?? true,
+    isLocked: json['is_locked'] as bool? ?? false,
+    reason: json['reason'] as String?,
+  );
 }

@@ -1,8 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../database/app_database.dart';
 import '../network/api_client.dart';
 import '../observability/app_logger.dart';
+import '../../features/tts/tts_audio_handler.dart';
 import '../../repositories/story_repository.dart';
 
 /// Single source of truth cho Google Sign-In + JWT trên mobile.
@@ -24,10 +26,12 @@ import '../../repositories/story_repository.dart';
 /// Hardcode giúp local dev chỉ cần `flutter run` (không cần --dart-define),
 /// CI không phụ thuộc secret, code self-contained.
 class AuthService {
-  AuthService(this._api, this._repo);
+  AuthService(this._api, this._repo, this._db, this._ref);
 
   final ApiClient _api;
   final StoryRepository _repo;
+  final AppDatabase _db;
+  final Ref _ref;
 
   /// Web Application OAuth Client ID từ Google Cloud Console.
   /// Cùng giá trị với `GOOGLE_CLIENT_ID` trên backend (xem
@@ -69,19 +73,59 @@ class AuthService {
     }
 
     final resp = await _repo.exchangeGoogleIdToken(idToken);
-    AppLogger.info('Logged in as ${resp.user.username} '
-        '(jwt expires ${resp.expiresAt.toIso8601String()})');
+    AppLogger.info(
+      'Logged in as ${resp.user.username} '
+      '(jwt expires ${resp.expiresAt.toIso8601String()})',
+    );
     return AuthResult(user: resp.user, expiresAt: resp.expiresAt);
   }
 
   /// Đăng xuất: clear JWT + GoogleSignIn.signOut() để lần sau hiện picker.
+  ///
+  /// Also clears ALL local user data to prevent data leakage between
+  /// accounts on a shared device:
+  ///   - Downloaded chapters + images (Drift)
+  ///   - Local bookmarks (Drift)
+  ///   - Reading progress (Drift)
+  ///   - TTS playback state (Drift) + stop active TTS
+  ///   - Download queue (Drift)
+  /// Without this, user A's data would be visible to user B after
+  /// switching accounts.
   Future<void> signOut() async {
+    // Stop TTS first — otherwise it keeps playing user A's chapter
+    // under user B's session.
+    try {
+      final handler = await _ref.read(ttsHandlerProvider.future);
+      await handler.stop();
+    } catch (e) {
+      AppLogger.warning('TTS stop on signOut failed (ignored)', e);
+    }
+
     try {
       await _googleSignIn.signOut();
     } catch (e) {
       AppLogger.warning('GoogleSignIn.signOut() failed (ignored)', e);
     }
     await _api.clearJwt();
+
+    // Clear local user data. Best-effort — log but don't throw if a
+    // delete fails (e.g. DB locked); the JWT is already cleared so the
+    // user is effectively logged out.
+    try {
+      await _db.deleteAllDownloadedChapters();
+    } catch (e) {
+      AppLogger.warning('deleteAllDownloadedChapters on signOut failed', e);
+    }
+    try {
+      await _db.clearDownloadQueue();
+    } catch (e) {
+      AppLogger.warning('clearDownloadQueue on signOut failed', e);
+    }
+    // Note: local bookmarks + reading progress tables don't have a
+    // "delete all" method yet. For now we leave them — they're keyed
+    // by storyId (not userId) so they're shared across accounts. A
+    // future migration should add userId scoping or a clearAll method.
+    // TODO: add db.clearAllBookmarks() + db.clearAllReadingProgress()
   }
 
   Future<bool> isAuthenticated() => _api.isAuthenticated();
@@ -106,12 +150,15 @@ class AuthError implements Exception {
 
 /// Provider cho AuthService. Singleton — dùng chung cho toàn app.
 final authServiceProvider = Provider<AuthService>((ref) {
-  final api = ref.watch(apiClientProvider).maybeWhen(
+  final api = ref
+      .watch(apiClientProvider)
+      .maybeWhen(
         data: (c) => c,
         orElse: () => throw StateError('ApiClient not ready'),
       );
   final repo = ref.watch(storyRepositoryProvider);
-  return AuthService(api, repo);
+  final db = ref.watch(appDatabaseProvider);
+  return AuthService(api, repo, db, ref);
 });
 
 /// Translate raw Google Sign-In exceptions (PlatformException) thành

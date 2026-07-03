@@ -13,11 +13,33 @@ import 'ast.dart';
 class MarkdownParser {
   MarkdownParser();
 
+  /// Maximum nesting depth for blockquote / list recursion. Deeply
+  /// nested structures (`> > > > ...` × 1000) would overflow Dart's
+  /// ~1MB stack and crash the app with StackOverflowError. Since
+  /// chapter content comes from the server, a malicious or buggy
+  /// chapter could crash every client that opens it. 50 levels is
+  /// far beyond any legitimate chapter structure.
+  static const int _maxDepth = 50;
+  int _depth = 0;
+
   /// Parse [source] markdown into a list of top-level [Block]s.
   List<Block> parse(String source) {
-    final lines = source.replaceAll('\r\n', '\n').split('\n');
-    final ctx = _ParseContext(lines);
-    return _parseBlocks(ctx);
+    if (++_depth > _maxDepth) {
+      _depth--;
+      // Fallback: treat the entire source as a single paragraph of
+      // plain text. This prevents StackOverflowError on pathological
+      // nesting while still showing the user the raw content.
+      return [
+        Paragraph([TextRun(source)]),
+      ];
+    }
+    try {
+      final lines = source.replaceAll('\r\n', '\n').split('\n');
+      final ctx = _ParseContext(lines);
+      return _parseBlocks(ctx);
+    } finally {
+      _depth--;
+    }
   }
 
   // ---- Block parsing ----
@@ -114,9 +136,7 @@ class MarkdownParser {
     final items = <List<Block>>[];
     while (!ctx.isAtEnd && !ctx.currentIsBlank) {
       final line = ctx.current;
-      if (isBullet
-          ? !_isBulletListItem(line)
-          : !_isOrderedListItem(line)) {
+      if (isBullet ? !_isBulletListItem(line) : !_isOrderedListItem(line)) {
         break;
       }
       // Collect this item: first line + continuation lines (indented or blank+indented).
@@ -216,7 +236,9 @@ class MarkdownParser {
       ctx.advance();
     }
     final text = code.toString();
-    final trimmed = text.endsWith('\n') ? text.substring(0, text.length - 1) : text;
+    final trimmed = text.endsWith('\n')
+        ? text.substring(0, text.length - 1)
+        : text;
     return CodeBlock(null, trimmed);
   }
 
@@ -420,14 +442,18 @@ class MarkdownParser {
   // Vietnamese authors sometimes type `~~~` as a decorative separator
   // (similar to `---`), so we deliberately don't recognise it as a code
   // fence to keep it as literal text.
-  static final RegExp _fenceRegExp =
-      RegExp(r'^\s{0,3}`{3,}\s*([\w\-+#.]*)\s*$');
+  static final RegExp _fenceRegExp = RegExp(
+    r'^\s{0,3}`{3,}\s*([\w\-+#.]*)\s*$',
+  );
   static final RegExp _orderedListStartRegExp = RegExp(r'^(\d{1,9})[.)]\s+');
 
-  static final RegExp _codeSpanRegExp =
-      RegExp(r'`+((?:[^`]|(?<=\\)`)*?)`+');
-  static final RegExp _linkRegExp = RegExp(r'\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)');
-  static final RegExp _imageRegExp = RegExp(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)');
+  static final RegExp _codeSpanRegExp = RegExp(r'`+((?:[^`]|(?<=\\)`)*?)`+');
+  static final RegExp _linkRegExp = RegExp(
+    r'\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
+  );
+  static final RegExp _imageRegExp = RegExp(
+    r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
+  );
 
   bool _isHorizontalRule(String line) {
     final trimmed = line.trim();

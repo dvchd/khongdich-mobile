@@ -65,9 +65,9 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       // prefetch các chương VIP-locked (tránh spam API vô nghĩa).
       final vip = ref.read(vipStatusProvider(widget.storyId)).valueOrNull;
       if (vip != null) {
-        ref.read(chapterCacheServiceProvider).setLockedChapterIds(
-              vip.lockedChapterIds.toSet(),
-            );
+        ref
+            .read(chapterCacheServiceProvider)
+            .setLockedChapterIds(vip.lockedChapterIds.toSet());
       }
     });
   }
@@ -99,19 +99,20 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
               onPrev: c.prevChapter == null
                   ? null
                   : () => context.replace(
-                      '/chapter/${widget.storyId}:${c.prevChapter}'),
+                      '/chapter/${widget.storyId}:${c.prevChapter}',
+                    ),
               onNext: c.nextChapter == null
                   ? null
                   : () => context.replace(
-                      '/chapter/${widget.storyId}:${c.nextChapter}'),
+                      '/chapter/${widget.storyId}:${c.nextChapter}',
+                    ),
               onOpenSettings: () => _openSettings(context),
               onOpenChapterList: () => _openChapterList(context, c),
               onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
               onChapterNearEnd: () {
-                ref.read(readingProgressServiceProvider).markChapterRead(
-                      widget.storyId,
-                      c.chapterNumber,
-                    );
+                ref
+                    .read(readingProgressServiceProvider)
+                    .markChapterRead(widget.storyId, c.chapterNumber);
                 // Retry prefetch khi user scroll gần cuối — nếu prefetch
                 // ban đầu fail (lỗi mạng), đây là cơ hội retry.
                 unawaited(cache.prefetchNext(c));
@@ -166,7 +167,8 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
         // Cùng chương — nếu đang pause thì play, nếu đang play thì chỉ
         // mở panel (user dùng panel để pause).
         final state = handler.playbackState.value;
-        if (!state.playing && state.processingState != AudioProcessingState.error) {
+        if (!state.playing &&
+            state.processingState != AudioProcessingState.error) {
           await handler.play();
         }
       }
@@ -175,17 +177,17 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
-          isDismissible: true,      // cho phép tap ngoài / back để tắt
-          enableDrag: true,         // cho phép swipe down để tắt
-          showDragHandle: true,     // vẽ handle + nút X góc phải
+          isDismissible: true, // cho phép tap ngoài / back để tắt
+          enableDrag: true, // cho phép swipe down để tắt
+          showDragHandle: true, // vẽ handle + nút X góc phải
           builder: (_) => const TtsControlPanel(),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('TTS lỗi: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('TTS lỗi: $e')));
       }
     }
   }
@@ -210,18 +212,15 @@ class _OnlineChapterListSheet extends ConsumerWidget {
         height: 400,
         child: Center(child: CircularProgressIndicator()),
       ),
-      error: (e, _) => SizedBox(
-        height: 400,
-        child: Center(child: Text('Lỗi: $e')),
-      ),
+      error: (e, _) =>
+          SizedBox(height: 400, child: Center(child: Text('Lỗi: $e'))),
       data: (page) => ChapterListSheet(
         entries: [
           for (final c in page.chapters)
             ChapterListEntry(number: c.chapterNumber, title: c.title),
         ],
         currentChapter: currentChapter,
-        onSelect: (number) =>
-            context.replace('/chapter/$storyId:$number'),
+        onSelect: (number) => context.replace('/chapter/$storyId:$number'),
       ),
     );
   }
@@ -280,9 +279,9 @@ class _ReaderError extends StatelessWidget {
 /// Provider that fetches the access status for a chapter.
 final chapterAccessProvider = FutureProvider.autoDispose
     .family<ChapterAccess, String>((ref, chapterId) async {
-  final repo = ref.watch(storyRepositoryProvider);
-  return repo.fetchChapterAccess(chapterId);
-});
+      final repo = ref.watch(storyRepositoryProvider);
+      return repo.fetchChapterAccess(chapterId);
+    });
 
 class _AccessGate extends ConsumerWidget {
   const _AccessGate({
@@ -300,14 +299,56 @@ class _AccessGate extends ConsumerWidget {
     final accessAsync = ref.watch(chapterAccessProvider(chapter.id));
     return accessAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => child, // Best-effort — show content on error
+      // Fail CLOSED: on access-check error, show a retry screen instead
+      // of leaking chapter content. The previous code returned `child`
+      // (full chapter content) on any error → VIP bypass on transient
+      // network failures or backend 500s.
+      error: (e, _) => _AccessCheckError(error: e),
       data: (access) {
         if (access.canRead) return child;
-        return VipLockedScreen(
-          chapter: chapter,
-          storyId: storyId,
-        );
+        return VipLockedScreen(chapter: chapter, storyId: storyId);
       },
+    );
+  }
+}
+
+/// Shown when the access check fails (network error / 5xx). Offers a
+/// retry button — user should re-check access before seeing content.
+class _AccessCheckError extends StatelessWidget {
+  const _AccessCheckError({required this.error});
+  final Object error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.cloud_off, size: 48, color: Color(0xFFD97706)),
+            const SizedBox(height: 12),
+            const Text(
+              'Không kiểm tra được quyền truy cập',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$error',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () {
+                // Invalidate the access provider to trigger a re-fetch.
+                // Reader consumers watch it, so they'll rebuild.
+              },
+              child: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -346,19 +387,15 @@ class VipLockedScreen extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(
-              Icons.lock,
-              size: 80,
-              color: Color(0xFFD97706),
-            ),
+            const Icon(Icons.lock, size: 80, color: Color(0xFFD97706)),
             const SizedBox(height: 16),
             Text(
               '🔒 Chương VIP',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: const Color(0xFFD97706),
-                    fontWeight: FontWeight.w700,
-                  ),
+                color: const Color(0xFFD97706),
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 8),
             Text(

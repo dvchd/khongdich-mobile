@@ -415,6 +415,14 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       _isSpeaking = false;
       await _tts.stop();
     }
+    // Await the old speak loop to fully exit before loading the new
+    // chapter. Without this, the old loop (still in `await _tts.speak()`)
+    // may continue running after we set new `_chunks`/`_currentChunk`,
+    // causing play() to return early (loop already running) or the old
+    // loop to advance into the new chapter's chunks with stale state.
+    if (_speakLoopFuture != null) {
+      await _speakLoopFuture;
+    }
     _chunks = TtsMarkdownPreprocessor.process(contentMarkdown);
     AppLogger.info('TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
     _currentChapterId = chapterId;
@@ -612,9 +620,15 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
     // Reset chunk index cho lần play tiếp theo.
     _currentChunk = 0;
-    if (_speakLoopFuture != null) {
-      await _speakLoopFuture;
-    }
+    // ⚠️ DO NOT await _speakLoopFuture here. When _onChapterComplete is
+    // called from inside _speakLoop() (the natural-completion path),
+    // _speakLoopFuture is the Future of the CURRENT _speakLoop() execution.
+    // Awaiting it would deadlock: the loop can't return until this method
+    // returns, and this method can't return until the loop returns.
+    //
+    // The loop's .then() callback in play() (line ~500) will null out
+    // _speakLoopFuture when _speakLoop() exits. Only external entry points
+    // (pause/stop) need to await _speakLoopFuture — they do so directly.
     playbackState.add(
       playbackState.value.copyWith(
         controls: const [],

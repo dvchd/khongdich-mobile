@@ -39,8 +39,11 @@ class MangaImageDownloader {
 
     final existing = await _db.getDownloadedImagesForChapter(chapterId);
     final existingUrls = {for (final e in existing) e.imageUrl};
-    final toDownload = imageUrls.asMap().entries.where(
-        (e) => !existingUrls.contains(e.value)).toList();
+    final toDownload = imageUrls
+        .asMap()
+        .entries
+        .where((e) => !existingUrls.contains(e.value))
+        .toList();
     if (toDownload.isEmpty) return 0;
 
     final dir = await _mangaDirFor(chapterId);
@@ -68,11 +71,15 @@ class MangaImageDownloader {
         // Don't abort the whole batch — log and continue. The reader
         // will fall back to the remote URL for the failed images.
         AppLogger.warning(
-            'MangaImageDownloader: failed to download image $url', e, s);
+          'MangaImageDownloader: failed to download image $url',
+          e,
+          s,
+        );
       }
     }
     AppLogger.info(
-        'MangaImageDownloader: downloaded $downloaded/${toDownload.length} images for chapter $chapterId');
+      'MangaImageDownloader: downloaded $downloaded/${toDownload.length} images for chapter $chapterId',
+    );
     return downloaded;
   }
 
@@ -104,7 +111,9 @@ class MangaImageDownloader {
       try {
         final file = File(r.localPath);
         if (await file.exists()) await file.delete();
-      } catch (_) {/* best-effort */}
+      } catch (_) {
+        /* best-effort */
+      }
     }
     await _db.deleteDownloadedImagesForChapter(chapterId);
     // Also remove the chapter's manga directory if it's now empty.
@@ -113,12 +122,20 @@ class MangaImageDownloader {
       if (await dir.exists()) {
         if (await dir.list().isEmpty) await dir.delete();
       }
-    } catch (_) {/* best-effort */}
+    } catch (_) {
+      /* best-effort */
+    }
   }
 
   Future<Directory> _mangaDirFor(String chapterId) async {
     final base = await getApplicationSupportDirectory();
-    final dir = Directory(p.join(base.path, 'manga', chapterId));
+    // Sanitize chapterId before using it as a path component. Normally
+    // chapterId is a UUID, but a compromised or malicious backend could
+    // return "../../cache" → p.join would produce a path escaping the
+    // manga/ directory → arbitrary file write within the app's support
+    // directory. Strip any character that isn't a safe path identifier.
+    final safe = chapterId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    final dir = Directory(p.join(base.path, 'manga', safe));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
@@ -133,8 +150,7 @@ class MangaImageDownloader {
       final req = await client.getUrl(Uri.parse(url));
       final resp = await req.close();
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        throw HttpException(
-            'HTTP ${resp.statusCode} when fetching $url');
+        throw HttpException('HTTP ${resp.statusCode} when fetching $url');
       }
       final builder = await resp.fold<List<int>>(
         <int>[],

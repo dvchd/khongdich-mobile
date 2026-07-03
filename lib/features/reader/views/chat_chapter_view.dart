@@ -43,18 +43,15 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   }
 
   ChatParticipant? get _meCharacter {
-    return widget.participants.cast<ChatParticipant?>().firstWhere(
-          (p) {
-            if (p == null) return false;
-            final name = p.name.toLowerCase().trim();
-            return name == 'bạn' ||
-                name == 'ban' ||
-                name == 'tôi' ||
-                name == 'toi' ||
-                name == 'ta';
-          },
-          orElse: () => null,
-        );
+    return widget.participants.cast<ChatParticipant?>().firstWhere((p) {
+      if (p == null) return false;
+      final name = p.name.toLowerCase().trim();
+      return name == 'bạn' ||
+          name == 'ban' ||
+          name == 'tôi' ||
+          name == 'toi' ||
+          name == 'ta';
+    }, orElse: () => null);
   }
 
   bool _isMe(ChatMessage msg) {
@@ -134,8 +131,9 @@ class _ChatChapterViewState extends State<ChatChapterView> {
                 );
               }
               final msg = visibleMessages[i];
-              final character =
-                  msg.characterId == null ? null : byId[msg.characterId];
+              final character = msg.characterId == null
+                  ? null
+                  : byId[msg.characterId];
 
               switch (msg.messageType) {
                 case 'action':
@@ -172,16 +170,23 @@ class _ChatChapterViewState extends State<ChatChapterView> {
                 child: GestureDetector(
                   onTap: _revealAll,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       'Chạm để xem tiếp ($_revealed/${widget.messages.length})',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.7),
                       ),
                     ),
                   ),
@@ -197,7 +202,11 @@ class _ChatChapterViewState extends State<ChatChapterView> {
 // ─── Message widgets ─────────────────────────────────────────────
 
 class _LeftBubble extends StatelessWidget {
-  const _LeftBubble({required this.character, required this.content, this.imageUrl});
+  const _LeftBubble({
+    required this.character,
+    required this.content,
+    this.imageUrl,
+  });
   final ChatParticipant? character;
   final String content;
   final String? imageUrl;
@@ -232,7 +241,11 @@ class _LeftBubble extends StatelessWidget {
                   if (character != null) ...[
                     Text(
                       character!.name.isEmpty ? 'Không tên' : character!.name,
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
                     ),
                     const SizedBox(height: 2),
                   ],
@@ -248,7 +261,10 @@ class _LeftBubble extends StatelessWidget {
                     if (content.isNotEmpty) const SizedBox(height: 4),
                   ],
                   if (content.isNotEmpty)
-                    Text(content, style: Theme.of(context).textTheme.bodyMedium),
+                    Text(
+                      content,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
                 ],
               ),
             ),
@@ -260,7 +276,11 @@ class _LeftBubble extends StatelessWidget {
 }
 
 class _RightBubble extends StatelessWidget {
-  const _RightBubble({required this.character, required this.content, this.imageUrl});
+  const _RightBubble({
+    required this.character,
+    required this.content,
+    this.imageUrl,
+  });
   final ChatParticipant? character;
   final String content;
   final String? imageUrl;
@@ -308,7 +328,11 @@ class _RightBubble extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          _Avatar(character: character, fallbackColor: const Color(0xFF0084FF), isMe: true),
+          _Avatar(
+            character: character,
+            fallbackColor: const Color(0xFF0084FF),
+            isMe: true,
+          ),
         ],
       ),
     );
@@ -316,7 +340,11 @@ class _RightBubble extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.character, required this.fallbackColor, this.isMe = false});
+  const _Avatar({
+    required this.character,
+    required this.fallbackColor,
+    this.isMe = false,
+  });
   final ChatParticipant? character;
   final Color fallbackColor;
   final bool isMe;
@@ -329,7 +357,9 @@ class _Avatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: CachedNetworkImage(
           imageUrl: character!.avatarUrl!,
-          width: 36, height: 36, fit: BoxFit.cover,
+          width: 36,
+          height: 36,
+          fit: BoxFit.cover,
           errorWidget: (_, _, _) => _fallback(),
         ),
       );
@@ -341,12 +371,20 @@ class _Avatar extends StatelessWidget {
     final name = character?.name ?? '?';
     final displayName = isMe ? 'Bạn' : name;
     return Container(
-      width: 36, height: 36,
-      decoration: BoxDecoration(color: fallbackColor, borderRadius: BorderRadius.circular(18)),
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: fallbackColor,
+        borderRadius: BorderRadius.circular(18),
+      ),
       child: Center(
         child: Text(
           displayName.isEmpty ? '?' : displayName[0].toUpperCase(),
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
         ),
       ),
     );
@@ -362,9 +400,17 @@ class _ActionMessage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       child: Center(
-        child: Text('✦ $content', textAlign: TextAlign.center,
-          style: TextStyle(fontStyle: FontStyle.italic,
-            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 14)),
+        child: Text(
+          '✦ $content',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontStyle: FontStyle.italic,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.6),
+            fontSize: 14,
+          ),
+        ),
       ),
     );
   }
@@ -379,8 +425,16 @@ class _NarrationMessage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       child: Center(
-        child: Text(content, textAlign: TextAlign.center,
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7), fontSize: 14)),
+        child: Text(
+          content,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.7),
+            fontSize: 14,
+          ),
+        ),
       ),
     );
   }
@@ -395,8 +449,16 @@ class _SystemMessage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
       child: Center(
-        child: Text(content, textAlign: TextAlign.center,
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), fontSize: 12)),
+        child: Text(
+          content,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.4),
+            fontSize: 12,
+          ),
+        ),
       ),
     );
   }
@@ -414,7 +476,10 @@ class _EndOfChapter extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Column(
         children: [
-          const Text('— hết chương —', style: TextStyle(color: Colors.grey, fontSize: 14)),
+          const Text(
+            '— hết chương —',
+            style: TextStyle(color: Colors.grey, fontSize: 14),
+          ),
           const SizedBox(height: 16),
           Wrap(
             spacing: 8,
@@ -450,5 +515,8 @@ Color? _parseColor(String? hex) {
   if (hex == null || hex.isEmpty) return null;
   final v = hex.replaceFirst('#', '');
   if (v.length != 6) return null;
-  return Color(int.parse('FF$v', radix: 16));
+  // Use tryParse instead of parse — a malformed hex string (e.g. "GGGHHH"
+  // or "red") would throw FormatException and crash the chat view.
+  final parsed = int.tryParse('FF$v', radix: 16);
+  return parsed != null ? Color(parsed) : null;
 }

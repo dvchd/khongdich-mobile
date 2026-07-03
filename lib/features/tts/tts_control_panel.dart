@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -47,14 +49,24 @@ class _PanelContentState extends State<_PanelContent> {
   List<Map<String, String>> _voices = const [];
   List<String> _engines = const [];
   TtsChunkProgress? _progress;
+  StreamSubscription<TtsChunkProgress>? _progressSub;
 
   @override
   void initState() {
     super.initState();
     _refreshFromHandler();
-    widget.handler.chunkProgress.listen((p) {
+    // Store the subscription so we can cancel it in dispose(). Previously
+    // the subscription was created inline and never cancelled → memory
+    // leak accumulating with each panel open/close.
+    _progressSub = widget.handler.chunkProgress.listen((p) {
       if (mounted) setState(() => _progress = p);
     });
+  }
+
+  @override
+  void dispose() {
+    _progressSub?.cancel();
+    super.dispose();
   }
 
   /// Sync local state from handler. Gọi sau reinit() để dropdown cập nhật
@@ -119,12 +131,19 @@ class _PanelContentState extends State<_PanelContent> {
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                            Icon(
+                              Icons.error_outline,
+                              color: Colors.red.shade700,
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 errorMsg ?? 'TTS gặp lỗi',
-                                style: TextStyle(color: Colors.red.shade900, fontSize: 13),
+                                style: TextStyle(
+                                  color: Colors.red.shade900,
+                                  fontSize: 13,
+                                ),
                               ),
                             ),
                           ],
@@ -251,14 +270,11 @@ class _PanelContentState extends State<_PanelContent> {
                                   child: Text('Mặc định hệ thống'),
                                 ),
                                 for (final e in _engines)
-                                  DropdownMenuItem(
-                                    value: e,
-                                    child: Text(e),
-                                  ),
+                                  DropdownMenuItem(value: e, child: Text(e)),
                               ],
                               onChanged: (name) async {
-                                final newVoices =
-                                    await widget.handler.setEngine(name);
+                                final newVoices = await widget.handler
+                                    .setEngine(name);
                                 setState(() {
                                   _selectedEngine = name;
                                   _voices = newVoices;
@@ -322,7 +338,16 @@ class _PanelContentState extends State<_PanelContent> {
                       child: Wrap(
                         spacing: 6,
                         children: [
-                          for (final s in [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5])
+                          for (final s in [
+                            0.5,
+                            0.75,
+                            1.0,
+                            1.25,
+                            1.5,
+                            1.75,
+                            2.0,
+                            2.5,
+                          ])
                             ChoiceChip(
                               label: Text('${s}x'),
                               selected: (_speed - s).abs() < 0.01,

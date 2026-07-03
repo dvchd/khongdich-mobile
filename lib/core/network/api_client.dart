@@ -19,14 +19,14 @@ enum AppEnv { demo, prod }
 
 extension AppEnvX on AppEnv {
   String get label => switch (this) {
-        AppEnv.demo => 'Demo (demo.khongdich.com)',
-        AppEnv.prod => 'Production (khongdich.com)',
-      };
+    AppEnv.demo => 'Demo (demo.khongdich.com)',
+    AppEnv.prod => 'Production (khongdich.com)',
+  };
 
   String get baseUrl => switch (this) {
-        AppEnv.demo => 'https://demo.khongdich.com',
-        AppEnv.prod => 'https://khongdich.com',
-      };
+    AppEnv.demo => 'https://demo.khongdich.com',
+    AppEnv.prod => 'https://khongdich.com',
+  };
 }
 
 /// Error returned by the Không Dịch backend.
@@ -116,9 +116,27 @@ class ApiClient {
           }
           handler.next(options);
         },
-        onError: (e, handler) {
+        onError: (e, handler) async {
           final resp = e.response;
           if (resp != null) {
+            // 401 Unauthorized: JWT expired or revoked. Clear the stored
+            // JWT so the next request is anonymous, and the auth flow
+            // can prompt the user to re-sign-in. Without this, the app
+            // would keep sending the expired JWT → permanent 401 loop
+            // with no recovery path short of manual sign-out.
+            if (resp.statusCode == 401) {
+              try {
+                await storage.delete(key: _kJwt);
+                AppLogger.info(
+                  'ApiClient: cleared expired/revoked JWT after 401',
+                );
+              } catch (err) {
+                AppLogger.warning(
+                  'ApiClient: failed to clear JWT after 401',
+                  err,
+                );
+              }
+            }
             final data = resp.data;
             String? message;
             if (data is Map) {
