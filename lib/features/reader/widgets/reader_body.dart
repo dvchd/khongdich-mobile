@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
 import '../../../models/chapter_content.dart';
-import '../../tts/tts_mini_player.dart';
 import '../reader_settings_provider.dart';
 import 'reader_bar.dart';
 import 'reader_helpers.dart';
@@ -16,8 +15,8 @@ import 'reader_helpers.dart';
 /// [ChapterContent] came from** — online fetches it from the API,
 /// offline loads it from the local Drift DB. Everything else (reader
 /// chrome, theme resolution, content rendering, page-flip / swipe
-/// wrappers, tap zones, TTS mini player, reading-progress tracking)
-/// is identical and lives here.
+/// wrappers, tap zones, TTS highlight + auto-scroll, reading-progress
+/// tracking) is identical and lives here.
 ///
 /// Parents supply:
 ///   - [chapter]: the loaded `ChapterContent` (online or offline).
@@ -30,6 +29,17 @@ import 'reader_helpers.dart';
 ///   - [onChapterNearEnd]: fired once when the user scrolls past 95%
 ///     of the chapter — parents use this to mark reading progress
 ///     (online → API call, offline → local Drift update).
+///
+/// NOTE: There used to be a `TtsMiniPlayer` bar pinned at the bottom
+/// of the Stack while TTS was active. It was removed because the
+/// `ReaderTapZones` overlay (also in the Stack) sits on top of it and
+/// intercepts taps — pressing the bar would navigate chapters or
+/// open the settings sheet instead of pausing TTS. The headphone
+/// icon in the AppBar still opens the TTS control panel where the
+/// user can pause/stop. While TTS is reading, the active block in
+/// `TextChapterView` is highlighted yellow and the view auto-scrolls
+/// (or page-flips) to follow along — see `TextChapterView` for the
+/// implementation.
 class ReaderBody extends ConsumerStatefulWidget {
   const ReaderBody({
     super.key,
@@ -184,18 +194,10 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         child: Stack(
           children: [
             body,
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: TtsMiniPlayer(chapter: widget.chapter),
-            ),
             // Tap zones for edge navigation
             // Skip for chat — it handles its own tap to reveal next message.
             if (widget.chapter is! ChatChapterContent)
-              Positioned.fill(
-                child: ReaderTapZones(onTap: _onTapZone),
-              ),
+              Positioned.fill(child: ReaderTapZones(onTap: _onTapZone)),
           ],
         ),
       ),

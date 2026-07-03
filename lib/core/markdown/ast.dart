@@ -21,9 +21,9 @@ class Paragraph extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'paragraph',
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'paragraph',
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class Heading extends Block {
@@ -33,10 +33,10 @@ class Heading extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'heading',
-        'level': level,
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'heading',
+    'level': level,
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class BlockQuote extends Block {
@@ -45,9 +45,9 @@ class BlockQuote extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'blockquote',
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'blockquote',
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class CodeBlock extends Block {
@@ -57,10 +57,10 @@ class CodeBlock extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'code_block',
-        if (language != null) 'language': language,
-        'code': code,
-      };
+    'type': 'code_block',
+    if (language != null) 'language': language,
+    'code': code,
+  };
 }
 
 class HorizontalRule extends Block {
@@ -76,12 +76,11 @@ class BulletList extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'bullet_list',
-        'items': [
-          for (final item in items)
-            [for (final b in item) b.toJson()],
-        ],
-      };
+    'type': 'bullet_list',
+    'items': [
+      for (final item in items) [for (final b in item) b.toJson()],
+    ],
+  };
 }
 
 class OrderedList extends Block {
@@ -91,13 +90,12 @@ class OrderedList extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'ordered_list',
-        'start': start,
-        'items': [
-          for (final item in items)
-            [for (final b in item) b.toJson()],
-        ],
-      };
+    'type': 'ordered_list',
+    'start': start,
+    'items': [
+      for (final item in items) [for (final b in item) b.toJson()],
+    ],
+  };
 }
 
 class ImageBlock extends Block {
@@ -108,11 +106,11 @@ class ImageBlock extends Block {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'image',
-        'url': url,
-        if (alt != null) 'alt': alt,
-        if (caption != null) 'caption': caption,
-      };
+    'type': 'image',
+    'url': url,
+    if (alt != null) 'alt': alt,
+    if (caption != null) 'caption': caption,
+  };
 }
 
 // ---------- Inline spans ----------
@@ -138,9 +136,9 @@ class EmphasisRun extends Inline {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'emphasis',
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'emphasis',
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class StrongRun extends Inline {
@@ -149,9 +147,9 @@ class StrongRun extends Inline {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'strong',
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'strong',
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class StrikethroughRun extends Inline {
@@ -160,9 +158,9 @@ class StrikethroughRun extends Inline {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'strikethrough',
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'strikethrough',
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class LinkRun extends Inline {
@@ -172,10 +170,10 @@ class LinkRun extends Inline {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'link',
-        'url': url,
-        'children': [for (final c in children) c.toJson()],
-      };
+    'type': 'link',
+    'url': url,
+    'children': [for (final c in children) c.toJson()],
+  };
 }
 
 class CodeRun extends Inline {
@@ -192,4 +190,53 @@ class LineBreak extends Inline {
 
   @override
   Map<String, dynamic> toJson() => {'type': 'line_break', 'hard': hard};
+}
+
+// ─── Plain-text extraction ──────────────────────────────────────────
+//
+// Used by the TTS highlight feature: when the TTS engine starts reading
+// chunk N, we need to find which rendered Block that chunk belongs to
+// so we can (a) highlight it yellow and (b) scroll/page-flip to it.
+//
+// The plain-text extraction here mirrors what `TtsMarkdownPreprocessor`
+// produces (strip markdown markers, keep visible text). The match is
+// approximate (the preprocessor also adds ".\n\n" after headings and
+// collapses whitespace) but combined with prefix matching in
+// `_findBlockForChunk` it's robust enough for Vietnamese prose.
+
+extension BlockPlainText on Block {
+  /// Visible plain text of this block (no markdown markers).
+  /// Headings, paragraphs, blockquotes, list items, code, image alt/caption
+  /// all contribute their text. HorizontalRule contributes nothing
+  /// (the renderer draws '* * *' as a decorative separator).
+  String get plainText {
+    return switch (this) {
+      Paragraph(:final children) => children.map((i) => i.plainText).join(),
+      Heading(:final children) => children.map((i) => i.plainText).join(),
+      BlockQuote(:final children) =>
+        children.map((b) => b.plainText).join('\n'),
+      CodeBlock(:final code) => code,
+      HorizontalRule() => '',
+      BulletList(:final items) =>
+        items.map((item) => item.map((b) => b.plainText).join()).join('\n'),
+      OrderedList(:final items) =>
+        items.map((item) => item.map((b) => b.plainText).join()).join('\n'),
+      ImageBlock(:final alt, :final caption) => alt ?? caption ?? '',
+    };
+  }
+}
+
+extension InlinePlainText on Inline {
+  String get plainText {
+    return switch (this) {
+      TextRun(:final text) => text,
+      EmphasisRun(:final children) => children.map((i) => i.plainText).join(),
+      StrongRun(:final children) => children.map((i) => i.plainText).join(),
+      StrikethroughRun(:final children) =>
+        children.map((i) => i.plainText).join(),
+      LinkRun(:final children) => children.map((i) => i.plainText).join(),
+      CodeRun(:final code) => code,
+      LineBreak(:final hard) => hard ? '\n' : ' ',
+    };
+  }
 }

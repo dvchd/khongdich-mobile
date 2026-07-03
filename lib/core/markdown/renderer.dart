@@ -28,8 +28,9 @@ class ReaderTheme {
 
   factory ReaderTheme.defaults(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    final onSurface =
-        isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final onSurface = isDark
+        ? const Color(0xFFF1F5F9)
+        : const Color(0xFF0F172A);
     final bodyColor = onSurface;
     // Use GoogleFonts to ensure the font is actually loaded — using
     // fontFamily: 'NotoSerif' as a plain string doesn't work because
@@ -59,12 +60,14 @@ class ReaderTheme {
         fontFamily: 'monospace',
         fontSize: 15,
         color: bodyColor,
-        backgroundColor:
-            isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+        backgroundColor: isDark
+            ? const Color(0xFF0F172A)
+            : const Color(0xFFF1F5F9),
       ),
       quoteColor: const Color(0xFFE11D48),
-      blockBackground:
-          isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC),
+      blockBackground: isDark
+          ? const Color(0xFF1E293B)
+          : const Color(0xFFF8FAFC),
     );
   }
 
@@ -80,101 +83,127 @@ class MarkdownRenderer extends StatelessWidget {
     required this.blocks,
     required this.theme,
     this.onLinkTap,
+    this.activeBlockIndex,
   });
 
   final List<Block> blocks;
   final ReaderTheme theme;
   final void Function(Uri url)? onLinkTap;
 
+  /// Index of the block currently being read by TTS. The renderer wraps
+  /// that block in a yellow-tinted background so the user can see where
+  /// the audio is up to. Null when TTS is idle or the active chunk
+  /// doesn't map to any block (e.g. horizontal rule).
+  final int? activeBlockIndex;
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final b in blocks) _renderBlock(b, theme, context),
+        for (var i = 0; i < blocks.length; i++)
+          _maybeHighlight(i, _renderBlock(blocks[i], theme, context)),
       ],
+    );
+  }
+
+  /// Wrap the block in a yellow-tinted background if its index matches
+  /// [activeBlockIndex]. The tint is semi-transparent so the underlying
+  /// text colour is still readable on both light and dark themes.
+  Widget _maybeHighlight(int index, Widget child) {
+    if (index != activeBlockIndex) return child;
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0x44FFD54F), // ~27% amber-yellow tint
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: child,
     );
   }
 
   Widget _renderBlock(Block block, ReaderTheme t, BuildContext context) {
     return switch (block) {
       Paragraph(:final children) => Padding(
-          padding: EdgeInsets.symmetric(vertical: t.paragraphSpacing / 2),
-          child: RichText(
-            text: TextSpan(
-              style: t.bodyStyle,
-              children: [
-                for (final i in children) _renderInline(i, t, context),
-              ],
-            ),
+        padding: EdgeInsets.symmetric(vertical: t.paragraphSpacing / 2),
+        child: RichText(
+          text: TextSpan(
+            style: t.bodyStyle,
+            children: [for (final i in children) _renderInline(i, t, context)],
           ),
         ),
+      ),
       Heading(:final level, :final children) => Padding(
-          padding: const EdgeInsets.only(top: 12, bottom: 8),
-          child: RichText(
-            text: TextSpan(
-              style: t.headingStyle(level),
-              children: [
-                for (final i in children) _renderInline(i, t, context),
-              ],
-            ),
+        padding: const EdgeInsets.only(top: 12, bottom: 8),
+        child: RichText(
+          text: TextSpan(
+            style: t.headingStyle(level),
+            children: [for (final i in children) _renderInline(i, t, context)],
           ),
         ),
+      ),
       BlockQuote(:final children) => Container(
-          margin: const EdgeInsets.symmetric(vertical: 12),
-          padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
-          decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(color: t.quoteColor, width: 4),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final b in children) _renderBlock(b, t, context),
-            ],
-          ),
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.only(left: 16, top: 4, bottom: 4),
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: t.quoteColor, width: 4)),
         ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (final b in children) _renderBlock(b, t, context)],
+        ),
+      ),
       CodeBlock(:final code, :final language) => Container(
-          margin: const EdgeInsets.symmetric(vertical: 12),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: t.blockBackground,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (language != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    language,
-                    style: t.bodyStyle.copyWith(
-                      fontSize: 12,
-                      color: t.bodyStyle.color?.withValues(alpha: 0.5),
-                    ),
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: t.blockBackground,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (language != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  language,
+                  style: t.bodyStyle.copyWith(
+                    fontSize: 12,
+                    color: t.bodyStyle.color?.withValues(alpha: 0.5),
                   ),
                 ),
-              SelectableText(
-                code,
-                style: t.codeStyle,
               ),
-            ],
-          ),
+            SelectableText(code, style: t.codeStyle),
+          ],
         ),
+      ),
       HorizontalRule() => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24),
-          child: Center(
-            child: Text(
-              '* * *',
-              style: t.bodyStyle.copyWith(letterSpacing: 8),
-            ),
-          ),
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text('* * *', style: t.bodyStyle.copyWith(letterSpacing: 8)),
         ),
-      BulletList(:final items) => _renderList(items, t, context, ordered: false, start: 1),
-      OrderedList(:final start, :final items) => _renderList(items, t, context, ordered: true, start: start),
-      ImageBlock(:final url, :final alt, :final caption) => _renderImage(url, alt, caption, t, context),
+      ),
+      BulletList(:final items) => _renderList(
+        items,
+        t,
+        context,
+        ordered: false,
+        start: 1,
+      ),
+      OrderedList(:final start, :final items) => _renderList(
+        items,
+        t,
+        context,
+        ordered: true,
+        start: start,
+      ),
+      ImageBlock(:final url, :final alt, :final caption) => _renderImage(
+        url,
+        alt,
+        caption,
+        t,
+        context,
+      ),
     };
   }
 
@@ -207,8 +236,7 @@ class MarkdownRenderer extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final b in items[i])
-                          _renderBlock(b, t, context),
+                        for (final b in items[i]) _renderBlock(b, t, context),
                       ],
                     ),
                   ),
@@ -241,10 +269,7 @@ class MarkdownRenderer extends StatelessWidget {
                 height: 120,
                 color: t.blockBackground,
                 alignment: Alignment.center,
-                child: Text(
-                  alt ?? '[image]',
-                  style: t.bodyStyle,
-                ),
+                child: Text(alt ?? '[image]', style: t.bodyStyle),
               ),
             ),
           ),
@@ -270,45 +295,45 @@ class MarkdownRenderer extends StatelessWidget {
     return switch (inline) {
       TextRun(:final text) => TextSpan(text: text),
       EmphasisRun(:final children) => TextSpan(
-          style: const TextStyle(fontStyle: FontStyle.italic),
-          children: [for (final i in children) _renderInline(i, t, context)],
-        ),
+        style: const TextStyle(fontStyle: FontStyle.italic),
+        children: [for (final i in children) _renderInline(i, t, context)],
+      ),
       StrongRun(:final children) => TextSpan(
-          style: const TextStyle(fontWeight: FontWeight.bold),
-          children: [for (final i in children) _renderInline(i, t, context)],
-        ),
+        style: const TextStyle(fontWeight: FontWeight.bold),
+        children: [for (final i in children) _renderInline(i, t, context)],
+      ),
       StrikethroughRun(:final children) => TextSpan(
-          style: const TextStyle(decoration: TextDecoration.lineThrough),
-          children: [for (final i in children) _renderInline(i, t, context)],
-        ),
+        style: const TextStyle(decoration: TextDecoration.lineThrough),
+        children: [for (final i in children) _renderInline(i, t, context)],
+      ),
       LinkRun(:final url, :final children) => TextSpan(
-          style: TextStyle(
-            color: t.accentColor,
-            decoration: TextDecoration.underline,
-          ),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () {
-              final uri = Uri.tryParse(url);
-              if (uri != null) {
-                if (onLinkTap != null) {
-                  onLinkTap!(uri);
-                }
+        style: TextStyle(
+          color: t.accentColor,
+          decoration: TextDecoration.underline,
+        ),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () {
+            final uri = Uri.tryParse(url);
+            if (uri != null) {
+              if (onLinkTap != null) {
+                onLinkTap!(uri);
               }
-            },
-          children: [for (final i in children) _renderInline(i, t, context)],
-        ),
+            }
+          },
+        children: [for (final i in children) _renderInline(i, t, context)],
+      ),
       CodeRun(:final code) => WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-            decoration: BoxDecoration(
-              color: t.codeStyle.backgroundColor,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(code, style: t.codeStyle),
+        alignment: PlaceholderAlignment.baseline,
+        baseline: TextBaseline.alphabetic,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+          decoration: BoxDecoration(
+            color: t.codeStyle.backgroundColor,
+            borderRadius: BorderRadius.circular(4),
           ),
+          child: Text(code, style: t.codeStyle),
         ),
+      ),
       LineBreak(:final hard) => TextSpan(text: hard ? '\n' : ' '),
     };
   }

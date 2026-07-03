@@ -41,14 +41,16 @@ ReaderTheme resolveReaderTheme(ReaderSettings s, Brightness brightness) {
       for (final entry in [1, 2, 3, 4, 5, 6])
         entry: GoogleFonts.notoSans(
           fontWeight: FontWeight.w700,
-          fontSize: switch (entry) {
-            1 => 28.0,
-            2 => 24.0,
-            3 => 20.0,
-            4 => 18.0,
-            5 => 16.0,
-            _ => 14.0,
-          } * (s.fontSize / 18),
+          fontSize:
+              switch (entry) {
+                1 => 28.0,
+                2 => 24.0,
+                3 => 20.0,
+                4 => 18.0,
+                5 => 16.0,
+                _ => 14.0,
+              } *
+              (s.fontSize / 18),
           height: 1.3,
           color: textColor,
         ),
@@ -112,26 +114,26 @@ Widget buildChapterContent(
   Map<String, String> mangaLocalImagePaths = const {},
 }) {
   return switch (chapter) {
-    TextChapterContent(:final contentMarkdown) => TextChapterView(
-        markdown: contentMarkdown,
-        theme: theme,
-        scrollController: scrollController,
-        pageController: isPageMode ? pageController : null,
-        isPageMode: isPageMode,
-      ),
+    TextChapterContent(:final id, :final contentMarkdown) => TextChapterView(
+      markdown: contentMarkdown,
+      theme: theme,
+      chapterId: id,
+      scrollController: scrollController,
+      pageController: isPageMode ? pageController : null,
+      isPageMode: isPageMode,
+    ),
     MangaChapterContent(:final images) => MangaChapterView(
-        images: [for (final p in images) p.url],
-        scrollController: scrollController,
-        localImagePaths: mangaLocalImagePaths,
-      ),
-    ChatChapterContent(:final participants, :final messages) =>
-      ChatChapterView(
-        participants: participants,
-        messages: messages,
-        scrollController: scrollController,
-        onNext: onNext,
-        onPrev: onPrev,
-      ),
+      images: [for (final p in images) p.url],
+      scrollController: scrollController,
+      localImagePaths: mangaLocalImagePaths,
+    ),
+    ChatChapterContent(:final participants, :final messages) => ChatChapterView(
+      participants: participants,
+      messages: messages,
+      scrollController: scrollController,
+      onNext: onNext,
+      onPrev: onPrev,
+    ),
     VideoChapterContent(:final video, :final captionMarkdown) =>
       VideoChapterView(
         videoId: video.videoId,
@@ -191,7 +193,12 @@ class HorizontalSwipeWrapper extends StatelessWidget {
 /// detect when the PageView reaches its boundary AND the user keeps
 /// swiping. The OverscrollNotification fires at that point.
 class PageModeWrapper extends StatefulWidget {
-  const PageModeWrapper({super.key, this.onNext, this.onPrev, required this.child});
+  const PageModeWrapper({
+    super.key,
+    this.onNext,
+    this.onPrev,
+    required this.child,
+  });
   final VoidCallback? onNext;
   final VoidCallback? onPrev;
   final Widget child;

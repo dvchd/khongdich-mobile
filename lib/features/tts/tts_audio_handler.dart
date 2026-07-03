@@ -89,9 +89,18 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   List<String> get availableEngines => _availableEngines;
   String? get selectedVoiceName => _selectedVoiceName;
   String? get selectedEngine => _selectedEngine;
+
   /// ID của chương hiện đang load (hoặc đang play). Dùng cho UI quyết định
   /// có cần stop + reload khi user tap headphone ở chương khác.
   String? get currentChapterId => _currentChapterId;
+
+  /// Read-only access to the chunk list of the currently-loaded chapter.
+  /// Used by the reader to map chunk index → markdown block for highlight
+  /// + auto-scroll. Returns an empty list when no chapter is loaded.
+  List<String> get chunks => List.unmodifiable(_chunks);
+
+  /// Index of the chunk currently being spoken. -1 when idle.
+  int get currentChunkIndex => _currentChunk;
 
   Future<void> _init() async {
     if (_initialised) return;
@@ -121,7 +130,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
               .where((s) => s.isNotEmpty)
               .toList();
           AppLogger.info(
-              'TTS: ${_availableEngines.length} engines available: $_availableEngines');
+            'TTS: ${_availableEngines.length} engines available: $_availableEngines',
+          );
 
           final desired = _selectedEngine ?? defaultEngine?.toString();
           if (desired != null && _availableEngines.contains(desired)) {
@@ -129,10 +139,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
             AppLogger.info('TTS: setEngine($desired) → $setResult');
           } else if (_availableEngines.isNotEmpty) {
             // Fall back to first available engine.
-            final setResult =
-                await _tts.setEngine(_availableEngines.first);
+            final setResult = await _tts.setEngine(_availableEngines.first);
             AppLogger.info(
-                'TTS: setEngine(${_availableEngines.first}) fallback → $setResult');
+              'TTS: setEngine(${_availableEngines.first}) fallback → $setResult',
+            );
           }
         }
       } catch (e, s) {
@@ -162,8 +172,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       // xem log biết engine có support tiếng Việt không).
       if (langResult == -1 || langResult == -2) {
         AppLogger.warning(
-            'TTS: vi-* not available (result=$langResult). User có thể chọn '
-            'voice tiếng Việt thủ công qua dropdown nếu engine support.');
+          'TTS: vi-* not available (result=$langResult). User có thể chọn '
+          'voice tiếng Việt thủ công qua dropdown nếu engine support.',
+        );
         try {
           final langs = await _tts.getLanguages;
           if (langs != null) {
@@ -209,16 +220,18 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
             if (aVi != bVi) return aVi.compareTo(bVi);
             return (a['name'] ?? '').compareTo(b['name'] ?? '');
           });
-          AppLogger.info(
-              'TTS: ${_availableVoices.length} voices available');
+          AppLogger.info('TTS: ${_availableVoices.length} voices available');
           // Log first 5 Vietnamese voices để debug.
           final viVoices = _availableVoices
-              .where((v) => (v['locale'] ?? v['language'] ?? '')
-                  .toLowerCase()
-                  .startsWith('vi'))
+              .where(
+                (v) => (v['locale'] ?? v['language'] ?? '')
+                    .toLowerCase()
+                    .startsWith('vi'),
+              )
               .toList();
           AppLogger.info(
-              'TTS: ${viVoices.length} Vietnamese voices: ${viVoices.take(3).map((v) => "${v['name']} (${v['locale'] ?? v['language']})").toList()}');
+            'TTS: ${viVoices.length} Vietnamese voices: ${viVoices.take(3).map((v) => "${v['name']} (${v['locale'] ?? v['language']})").toList()}',
+          );
           if (_selectedVoiceName != null) {
             final voice = _availableVoices
                 .where((v) => v['name'] == _selectedVoiceName)
@@ -228,7 +241,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
               AppLogger.info('TTS: setVoice(${voice['name']}) → ok');
             } else {
               AppLogger.warning(
-                  'TTS: saved voice "$_selectedVoiceName" not found in current engine');
+                'TTS: saved voice "$_selectedVoiceName" not found in current engine',
+              );
             }
           } else if (viVoices.isNotEmpty) {
             // Auto-select first Vietnamese voice if user hasn't picked one.
@@ -239,7 +253,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
             await _tts.setVoice(voice);
             _selectedVoiceName = voice['name'];
             AppLogger.info(
-                'TTS: auto-selected Vietnamese voice ${voice['name']} (${voice['locale'] ?? voice['language']})');
+              'TTS: auto-selected Vietnamese voice ${voice['name']} (${voice['locale'] ?? voice['language']})',
+            );
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString('tts.voice', _selectedVoiceName!);
           }
@@ -262,19 +277,23 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       _tts.setErrorHandler((msg) {
         AppLogger.error('TTS error: $msg');
         _isSpeaking = false;
-        playbackState.add(playbackState.value.copyWith(
-          processingState: AudioProcessingState.error,
-          errorMessage: msg.toString(),
-        ));
+        playbackState.add(
+          playbackState.value.copyWith(
+            processingState: AudioProcessingState.error,
+            errorMessage: msg.toString(),
+          ),
+        );
       });
 
       _tts.setCancelHandler(() {
         AppLogger.info('TTS: cancel handler fired');
         _isSpeaking = false;
-        playbackState.add(playbackState.value.copyWith(
-          processingState: AudioProcessingState.idle,
-          playing: false,
-        ));
+        playbackState.add(
+          playbackState.value.copyWith(
+            processingState: AudioProcessingState.idle,
+            playing: false,
+          ),
+        );
       });
 
       // Chỉ set _initialised = true ở CUỐI try block. Nếu bất kỳ bước
@@ -283,7 +302,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       AppLogger.info('TTS: init complete');
     } catch (e, s) {
       // Init failed — _initialised vẫn false, retry sẽ chạy lại lần sau.
-      AppLogger.error('TtsAudioHandler._init failed (will retry on next call)', e, s);
+      AppLogger.error(
+        'TtsAudioHandler._init failed (will retry on next call)',
+        e,
+        s,
+      );
     }
   }
 
@@ -393,8 +416,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       await _tts.stop();
     }
     _chunks = TtsMarkdownPreprocessor.process(contentMarkdown);
-    AppLogger.info(
-        'TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
+    AppLogger.info('TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
     _currentChapterId = chapterId;
     _currentStoryId = storyId;
     _currentChapterNumber = chapterNumber;
@@ -403,13 +425,15 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _currentChunk = state?.chunkIndex ?? 0;
     if (_currentChunk >= _chunks.length) _currentChunk = 0;
 
-    mediaItem.add(MediaItem(
-      id: chapterId,
-      album: storyTitle,
-      title: chapterTitle,
-      artist: storyTitle,
-      duration: Duration(seconds: _chunks.length * 30),
-    ));
+    mediaItem.add(
+      MediaItem(
+        id: chapterId,
+        album: storyTitle,
+        title: chapterTitle,
+        artist: storyTitle,
+        duration: Duration(seconds: _chunks.length * 30),
+      ),
+    );
   }
 
   @override
@@ -417,11 +441,14 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     if (_currentChapterId == null || _chunks.isEmpty) {
       AppLogger.warning('TTS: play() called but no chapter loaded');
       // Surface error để user biết thay vì silent return.
-      playbackState.add(playbackState.value.copyWith(
-        processingState: AudioProcessingState.error,
-        errorMessage: 'Chưa load được chương để đọc. '
-            'Thử mở lại chương rồi bấm headphone.',
-      ));
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.error,
+          errorMessage:
+              'Chưa load được chương để đọc. '
+              'Thử mở lại chương rồi bấm headphone.',
+        ),
+      );
       return;
     }
     await _init();
@@ -429,25 +456,36 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // sẽ false. Surface error thay vì cố play → fail silently.
     if (!_initialised) {
       AppLogger.error('TTS: play() aborted — init failed, _initialised=false');
-      playbackState.add(playbackState.value.copyWith(
-        processingState: AudioProcessingState.error,
-        errorMessage: 'Không khởi tạo được TTS engine. '
-            'Kiểm tra Google TTS engine + giọng tiếng Việt trong Android '
-            'Settings → Text-to-speech. Sau đó bấm "Thử lại".',
-      ));
+      playbackState.add(
+        playbackState.value.copyWith(
+          processingState: AudioProcessingState.error,
+          errorMessage:
+              'Không khởi tạo được TTS engine. '
+              'Kiểm tra Google TTS engine + giọng tiếng Việt trong Android '
+              'Settings → Text-to-speech. Sau đó bấm "Thử lại".',
+        ),
+      );
       return;
     }
     _isSpeaking = true;
-    playbackState.add(playbackState.value.copyWith(
-      controls: [MediaControl.pause, MediaControl.skipToNext, MediaControl.stop],
-      playing: true,
-      processingState: AudioProcessingState.ready,
-    ));
-    _chunkProgressController.add(TtsChunkProgress(
-      chapterId: _currentChapterId!,
-      chunkIndex: _currentChunk,
-      totalChunks: _chunks.length,
-    ));
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: [
+          MediaControl.pause,
+          MediaControl.skipToNext,
+          MediaControl.stop,
+        ],
+        playing: true,
+        processingState: AudioProcessingState.ready,
+      ),
+    );
+    _chunkProgressController.add(
+      TtsChunkProgress(
+        chapterId: _currentChapterId!,
+        chunkIndex: _currentChunk,
+        totalChunks: _chunks.length,
+      ),
+    );
     // Start the speak loop. Nếu loop cũ vẫn đang chạy (vd: user press play
     // nhanh 2 lần), đợi nó kết thúc trước. Thực tế _isSpeaking guard trong
     // loop sẽ khiến loop cũ exit sớm.
@@ -457,9 +495,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
     _speakLoopFuture = _speakLoop();
     // Fire-and-forget — loop tự kết thúc khi chapter complete hoặc stop.
-    unawaited(_speakLoopFuture!.then((_) {
-      _speakLoopFuture = null;
-    }));
+    unawaited(
+      _speakLoopFuture!.then((_) {
+        _speakLoopFuture = null;
+      }),
+    );
   }
 
   @override
@@ -470,10 +510,16 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     if (_speakLoopFuture != null) {
       await _speakLoopFuture;
     }
-    playbackState.add(playbackState.value.copyWith(
-      controls: [MediaControl.play, MediaControl.skipToNext, MediaControl.stop],
-      playing: false,
-    ));
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: [
+          MediaControl.play,
+          MediaControl.skipToNext,
+          MediaControl.stop,
+        ],
+        playing: false,
+      ),
+    );
     unawaited(_savePlaybackState(isPlaying: false));
   }
 
@@ -486,11 +532,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       await _speakLoopFuture;
     }
     _currentChunk = 0;
-    playbackState.add(playbackState.value.copyWith(
-      controls: const [],
-      playing: false,
-      processingState: AudioProcessingState.idle,
-    ));
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: const [],
+        playing: false,
+        processingState: AudioProcessingState.idle,
+      ),
+    );
     unawaited(_savePlaybackState(isPlaying: false));
   }
 
@@ -512,26 +560,33 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       final chunk = _chunks[_currentChunk];
       // Fire-and-forget — không block hot path giữa các chunk.
       unawaited(_savePlaybackState(isPlaying: true));
-      _chunkProgressController.add(TtsChunkProgress(
-        chapterId: _currentChapterId!,
-        chunkIndex: _currentChunk,
-        totalChunks: _chunks.length,
-      ));
+      _chunkProgressController.add(
+        TtsChunkProgress(
+          chapterId: _currentChapterId!,
+          chunkIndex: _currentChunk,
+          totalChunks: _chunks.length,
+        ),
+      );
       AppLogger.info(
-          'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.length} chars)');
+        'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.length} chars)',
+      );
       // speak() với awaitSpeakCompletion(true) resolve khi chunk xong.
       final result = await _tts.speak(chunk);
       // Check return value: 1 = success, 0 = failure (no voice, engine
       // not ready, text too long...). Trước đây ignore → TTS hang silently.
       if (result != 1) {
         AppLogger.error(
-            'TTS: speak() returned $result for chunk $_currentChunk — engine rejected');
+          'TTS: speak() returned $result for chunk $_currentChunk — engine rejected',
+        );
         _isSpeaking = false;
-        playbackState.add(playbackState.value.copyWith(
-          processingState: AudioProcessingState.error,
-          errorMessage: 'TTS engine từ chối phát (result=$result). '
-              'Có thể chưa cài giọng tiếng Việt — xem README mục TTS.',
-        ));
+        playbackState.add(
+          playbackState.value.copyWith(
+            processingState: AudioProcessingState.error,
+            errorMessage:
+                'TTS engine từ chối phát (result=$result). '
+                'Có thể chưa cài giọng tiếng Việt — xem README mục TTS.',
+          ),
+        );
         return;
       }
       // Stopped/paused trong lúc await speak() → exit.
@@ -560,24 +615,28 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     if (_speakLoopFuture != null) {
       await _speakLoopFuture;
     }
-    playbackState.add(playbackState.value.copyWith(
-      controls: const [],
-      playing: false,
-      processingState: AudioProcessingState.idle,
-    ));
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: const [],
+        playing: false,
+        processingState: AudioProcessingState.idle,
+      ),
+    );
   }
 
   Future<void> _savePlaybackState({required bool isPlaying}) async {
     if (_currentChapterId == null) return;
     try {
-      await _db.upsertTtsState(TtsPlaybackStateCompanion.insert(
-        chapterId: _currentChapterId!,
-        storyId: _currentStoryId ?? '',
-        chapterNumber: _currentChapterNumber ?? 0,
-        chunkIndex: Value(_currentChunk),
-        isPlaying: Value(isPlaying ? 1 : 0),
-        lastPlayedAt: Value(DateTime.now().toIso8601String()),
-      ));
+      await _db.upsertTtsState(
+        TtsPlaybackStateCompanion.insert(
+          chapterId: _currentChapterId!,
+          storyId: _currentStoryId ?? '',
+          chapterNumber: _currentChapterNumber ?? 0,
+          chunkIndex: Value(_currentChunk),
+          isPlaying: Value(isPlaying ? 1 : 0),
+          lastPlayedAt: Value(DateTime.now().toIso8601String()),
+        ),
+      );
     } catch (e, s) {
       AppLogger.warning('TtsAudioHandler._savePlaybackState', e, s);
     }
@@ -617,7 +676,11 @@ final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
     // Log warning nhưng vẫn return handler. _initialised vẫn false →
     // retry tự động khi user tap play lần tiếp theo. UI có thể gọi
     // handler.reinit() để retry thủ công.
-    AppLogger.warning('ttsHandlerProvider: init failed (will retry on next use)', e, s);
+    AppLogger.warning(
+      'ttsHandlerProvider: init failed (will retry on next use)',
+      e,
+      s,
+    );
   }
   return handler;
 });
