@@ -216,11 +216,11 @@ class AppDatabase extends _$AppDatabase {
       '  LIMIT ?'
       ')',
       variables: [
-        Variable.withString(storyId),
-        const Variable.withString('auto_cache'),
-        Variable.withString(storyId),
-        const Variable.withString('auto_cache'),
-        Variable.withInt(keep),
+        Variable<String>(storyId),
+        const Variable<String>('auto_cache'),
+        Variable<String>(storyId),
+        const Variable<String>('auto_cache'),
+        Variable<int>(keep),
       ],
       updates: {downloadedChapters},
     );

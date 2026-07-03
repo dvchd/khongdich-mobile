@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/database/app_database.dart';
 import '../core/observability/app_logger.dart';
 import '../models/chapter_content.dart';
+import '../models/story.dart' show ChapterSummary;
 import '../repositories/story_repository.dart';
 
 /// Storage + memory cache + prefetch service cho chapter content.
@@ -23,9 +24,9 @@ import '../repositories/story_repository.dart';
 ///     Library, không bị LRU evict.
 ///   - `auto_cache`: prefetch ngầm khi đọc online → ẩn khỏi Offline
 ///     Library, LRU evict (giữ 20 chương gần nhất per story).
-/// - Memory cache (Riverpod): Map<chapterId, ChapterContent> cho tốc độ
+/// - Memory cache (Riverpod): `Map<chapterId, ChapterContent>` cho tốc độ
 ///   truy cập instant trong session. Không persist.
-/// - Chapter list cache: Map<storyId, _ChapterListCache> TTL 5 phút.
+/// - Chapter list cache: `Map<storyId, _ChapterListCache>` TTL 5 phút.
 ///
 /// **Prefetch**:
 /// - Khi `chapterProvider` resolve → prefetch N+1 và N+2 fire-and-forget.
@@ -81,7 +82,8 @@ class ChapterCacheService {
       throw StateError(
           'Chapter $chapterNumber not found in story $storyId');
     }
-    final chapterId = match.id;
+    final chapter = match;
+    final chapterId = chapter.id;
 
     // 2. Check memory cache → instant return.
     final memCached = _chapterCache[chapterId];
@@ -132,14 +134,15 @@ class ChapterCacheService {
     for (int i = 0; i < _prefetchCount; i++) {
       final match = chapters.where((c) => c.chapterNumber == nextNumIter).firstOrNull;
       if (match == null) break;
+      final ch = match;
 
       // VIP gate: skip nếu chương locked.
-      if (_lockedChapterIds.contains(match.id)) {
+      if (_lockedChapterIds.contains(ch.id)) {
         AppLogger.info('ChapterCache: skip prefetch N$nextNumIter (VIP locked)');
         break; // Nếu N+1 locked, N+2 cũng có thể locked → stop.
       }
 
-      futures.add(_prefetchOne(match.id, nextNumIter, currentChapter.storyId));
+      futures.add(_prefetchOne(ch.id, nextNumIter, currentChapter.storyId));
       // Tìm chương kế tiếp cho vòng lặp.
       final next = chapters.where((c) => c.chapterNumber == nextNumIter + 1).firstOrNull;
       if (next == null) break;
