@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/chapter_content.dart';
 import '../../repositories/story_repository.dart';
+import '../../services/chapter_cache_service.dart';
 import '../tts/tts_audio_handler.dart';
 import '../tts/tts_control_panel.dart';
 import 'chapter_provider.dart';
@@ -71,31 +74,42 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           error: e,
           onRetry: () => ref.invalidate(chapterProvider(_ref)),
         ),
-        data: (c) => _AccessGate(
-          chapter: c,
-          storyId: widget.storyId,
-          child: ReaderBody(
+        data: (c) {
+          // Prefetch chương kế tiếp ngầm (fire-and-forget). Khi user bấm
+          // Next, chapterProvider check cache → nếu hit → render ngay
+          // không loading spinner. Idempotent — skip nếu đã cache/đang
+          // fetch. Không await để không block UI.
+          final cache = ref.read(chapterCacheServiceProvider);
+          unawaited(cache.prefetchNext(c));
+          return _AccessGate(
             chapter: c,
-            settings: settings,
-            onPrev: c.prevChapter == null
-                ? null
-                : () => context.replace(
-                    '/chapter/${widget.storyId}:${c.prevChapter}'),
-            onNext: c.nextChapter == null
-                ? null
-                : () => context.replace(
-                    '/chapter/${widget.storyId}:${c.nextChapter}'),
-            onOpenSettings: () => _openSettings(context),
-            onOpenChapterList: () => _openChapterList(context, c),
-            onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
-            onChapterNearEnd: () {
-              ref.read(readingProgressServiceProvider).markChapterRead(
-                    widget.storyId,
-                    c.chapterNumber,
-                  );
-            },
-          ),
-        ),
+            storyId: widget.storyId,
+            child: ReaderBody(
+              chapter: c,
+              settings: settings,
+              onPrev: c.prevChapter == null
+                  ? null
+                  : () => context.replace(
+                      '/chapter/${widget.storyId}:${c.prevChapter}'),
+              onNext: c.nextChapter == null
+                  ? null
+                  : () => context.replace(
+                      '/chapter/${widget.storyId}:${c.nextChapter}'),
+              onOpenSettings: () => _openSettings(context),
+              onOpenChapterList: () => _openChapterList(context, c),
+              onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
+              onChapterNearEnd: () {
+                ref.read(readingProgressServiceProvider).markChapterRead(
+                      widget.storyId,
+                      c.chapterNumber,
+                    );
+                // Retry prefetch khi user scroll gần cuối — nếu prefetch
+                // ban đầu fail (lỗi mạng), đây là cơ hội retry.
+                unawaited(cache.prefetchNext(c));
+              },
+            ),
+          );
+        },
       ),
     );
   }
