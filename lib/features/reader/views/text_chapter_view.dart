@@ -253,6 +253,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   }
 
   /// Split blocks into pages based on measured heights.
+  ///
+  /// Blocks taller than a full page are placed on their own page —
+  /// the SingleChildScrollView inside each PageView page will scroll
+  /// vertically to reveal the rest. This is better than the old behavior
+  /// which would push a tall block to the next page, leaving the current
+  /// page mostly empty.
   void _computePages(Size size) {
     if (_lastSize != null &&
         (_lastSize!.width - size.width).abs() < 1 &&
@@ -271,10 +277,15 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     for (var i = 0; i < _blocks.length; i++) {
       final h = _measureBlockHeight(_blocks[i], maxWidth);
       if (currentHeight + h > maxHeight && current.isNotEmpty) {
+        // Current page is full — flush it and start a new page.
         _pageBlockIndices.add(current);
         current = [];
         currentHeight = 0;
       }
+      // Add block to current page. If the block itself is taller than
+      // maxHeight, it gets its own page and the SingleChildScrollView
+      // inside the page will allow vertical scrolling to see the rest.
+      // This avoids leaving large blank space on the previous page.
       current.add(i);
       currentHeight += h;
     }
@@ -319,9 +330,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
   Widget _buildPageMode() {
     if (_pageBlockIndices.length <= 1) {
-      // Single page — just render all blocks
+      // Single page — just render all blocks, allow scroll if content
+      // is taller than viewport.
       return SingleChildScrollView(
-        physics: const NeverScrollableScrollPhysics(),
+        physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -360,7 +372,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             ? blockIndices.indexOf(_activeBlockIndex!)
             : null;
         return SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
+          // Allow vertical scrolling for pages with tall blocks that
+          // exceed the viewport height. Previously NeverScrollable caused
+          // tall blocks to be clipped with no way to see the rest.
+          physics: const ClampingScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -467,8 +482,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   /// span only horizontal rules or stripped code blocks.
   int? _findBlockForChunk(String chunkText) {
     final needle = _normalize(chunkText);
-    if (needle.length < 5) return null;
-    final fingerprint = needle.substring(0, needle.length.clamp(0, 40));
+    if (needle.isEmpty) return null;
+    // Use up to 40 chars as fingerprint, but allow short chunks (even 1 char)
+    // to match. Previously required length >= 5 which caused short paragraphs
+    // (e.g. "OK.", "Hmm...", single-word dialogue) to never highlight.
+    final fpLen = needle.length.clamp(0, 40);
+    final fingerprint = needle.substring(0, fpLen);
 
     // Pass 1: prefix match — chunk's first chars match block's first chars.
     // This handles the common case where the chunk starts at a block
@@ -477,25 +496,30 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     // Monotonic: search from _searchFromBlock forward so the highlight
     // never jumps backwards. This prevents a false match when a later
     // chunk's text coincidentally matches an earlier block.
+    //
+    // Minimum match length is 1 (was 5 before) — short paragraphs like
+    // "OK." or "Hmm..." should still highlight.
     for (var i = _searchFromBlock; i < _blockPlainTextCache.length; i++) {
       final blockText = _blockPlainTextCache[i];
       if (blockText.isEmpty) continue;
       final cmpLen = fingerprint.length < blockText.length
           ? fingerprint.length
           : blockText.length;
-      if (cmpLen < 5) continue;
+      if (cmpLen < 1) continue;
       if (fingerprint.substring(0, cmpLen) == blockText.substring(0, cmpLen)) {
         return i;
       }
     }
 
-    // Pass 2: substring match — chunk's first 20 chars appear inside the
+    // Pass 2: substring match — chunk's first chars appear inside the
     // block. This handles the case where the chunk starts mid-block
     // (rare — happens when a long paragraph is split into multiple chunks
     // by the preprocessor's 500-char limit).
     // Also monotonic — search from _searchFromBlock forward.
-    final short = fingerprint.substring(0, fingerprint.length.clamp(0, 20));
-    if (short.length < 5) return null;
+    // Use up to 20 chars but allow short chunks (min 1 char).
+    final shortLen = fingerprint.length.clamp(0, 20);
+    final short = fingerprint.substring(0, shortLen);
+    if (short.isEmpty) return null;
     for (var i = _searchFromBlock; i < _blockPlainTextCache.length; i++) {
       final blockText = _blockPlainTextCache[i];
       if (blockText.contains(short)) return i;

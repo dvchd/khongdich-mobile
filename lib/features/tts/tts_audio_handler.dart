@@ -63,11 +63,16 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   int _currentChunk = 0;
   String? _currentChapterId;
   String? _currentStoryId;
+  String? _currentStorySlug;
   int? _currentChapterNumber;
+  int? _nextChapterNumber;
   bool _initialised = false;
   bool _isSpeaking = false; // Guard against re-entrant completion handlers
   // Future của speak loop hiện tại — dùng để cancel khi stop/pause.
   Future<void>? _speakLoopFuture;
+  // Callback khi TTS đọc xong 1 chương — reader screen dùng để load
+  // chương tiếp theo và tự play tiếp.
+  void Function(String storyId, int nextChapterNumber)? onChapterComplete;
 
   // User settings (persisted)
   double _speed = 1.0;
@@ -93,6 +98,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// ID của chương hiện đang load (hoặc đang play). Dùng cho UI quyết định
   /// có cần stop + reload khi user tap headphone ở chương khác.
   String? get currentChapterId => _currentChapterId;
+
+  /// Story slug + next chapter number — set bởi reader screen khi load
+  /// chapter, để TTS có thể tự chuyển chương khi đọc xong.
+  String? get currentStorySlug => _currentStorySlug;
+  int? get nextChapterNumber => _nextChapterNumber;
 
   /// Read-only access to the chunk list of the currently-loaded chapter.
   /// Used by the reader to map chunk index → markdown block for highlight
@@ -406,6 +416,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     required String chapterTitle,
     required int chapterNumber,
     required String contentMarkdown,
+    String? storySlug,
+    int? nextChapterNumber,
   }) async {
     await _init();
     // Stop mọi playback đang chạy của chương cũ trước khi load chương mới.
@@ -427,7 +439,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     AppLogger.info('TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
     _currentChapterId = chapterId;
     _currentStoryId = storyId;
+    _currentStorySlug = storySlug;
     _currentChapterNumber = chapterNumber;
+    _nextChapterNumber = nextChapterNumber;
 
     final state = await _db.getTtsState(chapterId);
     _currentChunk = state?.chunkIndex ?? 0;
@@ -639,6 +653,15 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         processingState: AudioProcessingState.idle,
       ),
     );
+    // Auto-advance to next chapter if callback is set and next chapter
+    // number is available. The reader screen sets `onChapterComplete` to
+    // navigate to the next chapter and reload TTS.
+    if (onChapterComplete != null &&
+        _currentStoryId != null &&
+        _nextChapterNumber != null) {
+      AppLogger.info('TTS: auto-advancing to next chapter $_nextChapterNumber');
+      onChapterComplete!(_currentStoryId!, _nextChapterNumber!);
+    }
   }
 
   Future<void> _savePlaybackState({required bool isPlaying}) async {
@@ -681,11 +704,17 @@ final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
   try {
     await AudioService.init(
       builder: () => handler,
-      config: const AudioServiceConfig(
+      config: AudioServiceConfig(
         androidNotificationChannelId: 'com.khongdich.app.tts',
         androidNotificationChannelName: 'Không Dịch — Đọc truyện',
         androidNotificationOngoing: true,
-        androidStopForegroundOnPause: true,
+        // Keep notification visible when paused so user can resume from
+        // lockscreen / notification shade. Previously this was true →
+        // notification disappeared on pause → user couldn't resume without
+        // opening the app.
+        androidStopForegroundOnPause: false,
+        // Show app icon in notification.
+        androidNotificationIcon: 'drawable/ic_launcher_splash',
       ),
     );
     await handler._init();

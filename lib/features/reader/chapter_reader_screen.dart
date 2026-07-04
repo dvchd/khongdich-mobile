@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/observability/app_logger.dart';
 import '../../models/chapter_content.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/chapter_cache_service.dart';
@@ -146,6 +147,20 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   void _toggleTts(TextChapterContent chapter) async {
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
+      // Set up auto-advance callback: when TTS finishes a chapter,
+      // navigate to the next chapter and auto-play.
+      handler.onChapterComplete = (storyId, nextChapterNumber) {
+        if (!mounted) return;
+        context.replace('/chapter/$storyId:$nextChapterNumber');
+        // The next chapter's _toggleTts will be called automatically
+        // because the new ChapterReaderScreen will detect TTS is active
+        // and auto-load the new chapter. We use a post-frame callback
+        // to let the new screen mount first.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _autoLoadTtsForNewChapter(handler, storyId, nextChapterNumber);
+        });
+      };
+
       // Nếu đang play/pause chương KHÁC chương user vừa tap → stop + load
       // chương mới. Trước đây chỉ load khi `!state.playing`, nên nếu TTS
       // đang chạy chương A mà user tap headphone ở chương B → không gì
@@ -161,6 +176,8 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           chapterTitle: chapter.title,
           chapterNumber: chapter.chapterNumber,
           contentMarkdown: chapter.contentMarkdown,
+          storySlug: chapter.storySlug,
+          nextChapterNumber: chapter.nextChapter,
         );
         await handler.play();
       } else {
@@ -188,6 +205,42 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('TTS lỗi: $e')));
+      }
+    }
+  }
+
+  /// Auto-load TTS for the next chapter after auto-advance.
+  /// Called from `onChapterComplete` callback via post-frame callback.
+  void _autoLoadTtsForNewChapter(
+    TtsAudioHandler handler,
+    String storyId,
+    int nextChapterNumber,
+  ) async {
+    // Fetch the next chapter's content via the chapterProvider.
+    // The new ChapterReaderScreen's build method will have already
+    // triggered the fetch via chapterProvider. We just need to wait
+    // for it and then load TTS.
+    final nextRef = ChapterRef(
+      storyId: storyId,
+      chapterNumber: nextChapterNumber,
+    );
+    final chapterAsync = ref.read(chapterProvider(nextRef));
+    final chapter = chapterAsync.valueOrNull;
+    if (chapter is TextChapterContent) {
+      try {
+        await handler.loadChapter(
+          chapterId: chapter.id,
+          storyId: chapter.storyId,
+          storyTitle: chapter.storyTitle,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          contentMarkdown: chapter.contentMarkdown,
+          storySlug: chapter.storySlug,
+          nextChapterNumber: chapter.nextChapter,
+        );
+        await handler.play();
+      } catch (e) {
+        AppLogger.warning('TTS auto-advance loadChapter failed', e);
       }
     }
   }

@@ -102,7 +102,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/offline-story/:storyId',
         name: 'offline_story_detail',
         builder: (context, state) {
-          return OfflineStoryDetailScreen(storyId: state.pathParameters['storyId']!);
+          return OfflineStoryDetailScreen(
+            storyId: state.pathParameters['storyId']!,
+          );
         },
       ),
       GoRoute(
@@ -131,9 +133,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const AuthScreen(),
       ),
     ],
-    errorBuilder: (context, state) => Scaffold(
-      body: Center(child: Text('Route not found: ${state.uri}')),
-    ),
+    errorBuilder: (context, state) =>
+        Scaffold(body: Center(child: Text('Route not found: ${state.uri}'))),
   );
 });
 
@@ -157,7 +158,8 @@ class OfflineChapterReader extends ConsumerStatefulWidget {
   final String chapterId;
 
   @override
-  ConsumerState<OfflineChapterReader> createState() => _OfflineChapterReaderState();
+  ConsumerState<OfflineChapterReader> createState() =>
+      _OfflineChapterReaderState();
 }
 
 class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
@@ -176,9 +178,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   Future<void> _load() async {
     try {
       final db = ref.read(appDatabaseProvider);
-      final row = await (db.select(db.downloadedChapters)
-            ..where((t) => t.chapterId.equals(widget.chapterId)))
-          .getSingleOrNull();
+      final row = await (db.select(
+        db.downloadedChapters,
+      )..where((t) => t.chapterId.equals(widget.chapterId))).getSingleOrNull();
       if (row == null) {
         if (mounted) {
           setState(() {
@@ -189,10 +191,11 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         return;
       }
       // Find siblings (same story, also downloaded), sorted by chapterNumber.
-      final all = await (db.select(db.downloadedChapters)
-            ..where((t) => t.storyId.equals(row.storyId))
-            ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
-          .get();
+      final all =
+          await (db.select(db.downloadedChapters)
+                ..where((t) => t.storyId.equals(row.storyId))
+                ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
+              .get();
       final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
       final fullJson = <String, dynamic>{
         ...json,
@@ -228,12 +231,15 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
                 imageUrls: [for (final p in chapterObj.images) p.url],
               );
               final freshImages = await db.getDownloadedImagesForChapter(
-                  widget.chapterId);
+                widget.chapterId,
+              );
               for (final img in freshImages) {
                 localPaths[img.imageUrl] = img.localPath;
               }
             }
-          } catch (_) {/* best-effort */}
+          } catch (_) {
+            /* best-effort */
+          }
         }
       }
       if (mounted) {
@@ -311,9 +317,20 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   void _toggleTts(TextChapterContent chapter) async {
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      // Nếu đang play/pause chương KHÁC chương user vừa tap → stop + load
-      // chương mới (fix bug "TTS không chuyển chương"). Nếu cùng chương →
-      // chỉ play nếu đang pause.
+      // Set up auto-advance callback for offline reader.
+      handler.onChapterComplete = (storyId, nextChapterNumber) {
+        if (!mounted) return;
+        // Find the next sibling chapter and navigate to it.
+        final i = _currentIndex;
+        if (i >= 0 && i < _siblings.length - 1) {
+          context.replace('/chapter-offline/${_siblings[i + 1].chapterId}');
+          // Auto-load TTS for the new chapter after it mounts.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _autoLoadTtsOffline(handler, _siblings[i + 1]);
+          });
+        }
+      };
+
       if (handler.currentChapterId != chapter.id) {
         await handler.stop();
         await handler.loadChapter(
@@ -323,11 +340,17 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           chapterTitle: chapter.title,
           chapterNumber: chapter.chapterNumber,
           contentMarkdown: chapter.contentMarkdown,
+          storySlug: chapter.storySlug,
+          nextChapterNumber:
+              (_currentIndex >= 0 && _currentIndex < _siblings.length - 1)
+              ? _siblings[_currentIndex + 1].chapterNumber
+              : null,
         );
         await handler.play();
       } else {
         final state = handler.playbackState.value;
-        if (!state.playing && state.processingState != AudioProcessingState.error) {
+        if (!state.playing &&
+            state.processingState != AudioProcessingState.error) {
           await handler.play();
         }
       }
@@ -343,9 +366,53 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('TTS lỗi: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('TTS lỗi: $e')));
       }
+    }
+  }
+
+  /// Auto-load TTS for the next offline chapter after auto-advance.
+  void _autoLoadTtsOffline(
+    TtsAudioHandler handler,
+    DownloadedChapter sibling,
+  ) async {
+    try {
+      // Fetch the chapter content from local DB.
+      final db = ref.read(appDatabaseProvider);
+      final row = await (db.select(
+        db.downloadedChapters,
+      )..where((t) => t.chapterId.equals(sibling.chapterId))).getSingleOrNull();
+      if (row == null) return;
+      final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
+      final fullJson = <String, dynamic>{
+        ...json,
+        'content_markdown': json['content_markdown'] ?? '',
+        'content_type': row.contentType,
+        'story_title': row.storyTitle,
+        'story_slug': row.storySlug,
+        'chapter_number': row.chapterNumber,
+        'title': row.chapterTitle,
+      };
+      final chapter = ChapterContent.fromJson(fullJson);
+      if (chapter is TextChapterContent) {
+        final i = _siblings.indexWhere((s) => s.chapterId == sibling.chapterId);
+        final hasNext = i >= 0 && i < _siblings.length - 1;
+        await handler.loadChapter(
+          chapterId: chapter.id,
+          storyId: chapter.storyId,
+          storyTitle: chapter.storyTitle,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          contentMarkdown: chapter.contentMarkdown,
+          storySlug: chapter.storySlug,
+          nextChapterNumber: hasNext ? _siblings[i + 1].chapterNumber : null,
+        );
+        await handler.play();
+      }
+    } catch (e) {
+      // Best-effort — don't crash if offline chapter can't be loaded.
     }
   }
 
@@ -357,7 +424,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     if (_chapter == null) {
       return Scaffold(
         appBar: AppBar(),
-        body: Center(child: Text(_loadError ?? 'Chương không có trong bộ nhớ.')),
+        body: Center(
+          child: Text(_loadError ?? 'Chương không có trong bộ nhớ.'),
+        ),
       );
     }
     final chapter = _chapter!;
@@ -374,8 +443,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         onNext: hasNext ? _goNext : null,
         onOpenSettings: _openSettings,
         onOpenChapterList: _openChapterList,
-        onToggleTts:
-            chapter is TextChapterContent ? () => _toggleTts(chapter) : null,
+        onToggleTts: chapter is TextChapterContent
+            ? () => _toggleTts(chapter)
+            : null,
         mangaLocalImagePaths: _mangaLocalImagePaths,
         onChapterNearEnd: () async {
           // Mark chapter as read in local Drift DB (cho LRU evict +
@@ -383,7 +453,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           try {
             final db = ref.read(appDatabaseProvider);
             await db.markChapterRead(widget.chapterId);
-          } catch (_) {/* best-effort */}
+          } catch (_) {
+            /* best-effort */
+          }
 
           // Sync reading progress lên server (best-effort). Nếu offline,
           // _saveToServer fail silently và để lại row synced=0 —
@@ -396,7 +468,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
               chapter.storyId,
               chapter.chapterNumber,
             );
-          } catch (_) {/* best-effort */}
+          } catch (_) {
+            /* best-effort */
+          }
         },
       ),
     );
