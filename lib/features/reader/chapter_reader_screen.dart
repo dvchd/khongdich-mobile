@@ -13,6 +13,7 @@ import '../../services/chapter_cache_service.dart';
 import '../story/story_detail_screen.dart' show vipStatusProvider;
 import '../tts/tts_audio_handler.dart';
 import '../tts/tts_control_panel.dart';
+import '../comments/segment_composer_sheet.dart';
 import 'chapter_provider.dart';
 import 'reader_settings_provider.dart';
 import 'services/reading_progress_service.dart';
@@ -109,7 +110,15 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
                     ),
               onOpenSettings: () => _openSettings(context),
               onOpenChapterList: () => _openChapterList(context, c),
-              onToggleTts: c is TextChapterContent ? () => _toggleTts(c) : null,
+              onOpenComments: () => context.push(
+                '/chapter-comments/${c.id}',
+                extra: c.title,
+              ),
+              onParagraphLongPress: (plain) => _openSegmentComposer(c, plain),
+              onToggleTts: chapter is TextChapterContent ||
+                      chapter is VisualChapterContent
+                  ? () => _toggleTts(c)
+                  : null,
               onChapterNearEnd: () {
                 ref
                     .read(readingProgressServiceProvider)
@@ -144,7 +153,36 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     );
   }
 
-  void _toggleTts(TextChapterContent chapter) async {
+  /// Long-press paragraph → bình luận đoạn composer. On success, bounce
+  /// to the chapter comments feed so the user sees their comment in place.
+  Future<void> _openSegmentComposer(
+    ChapterContent chapter,
+    String plainText,
+  ) async {
+    final result = await showSegmentComposer(
+      context,
+      chapterId: chapter.id,
+      quoteText: plainText,
+    );
+    if (result == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            result.wasHidden
+                ? 'Đã gửi — bình luận đang chờ kiểm duyệt.'
+                : 'Đã gửi bình luận đoạn.',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    context.push('/chapter-comments/${chapter.id}', extra: chapter.title);
+  }
+
+  void _toggleTts(ChapterContent chapter) async {
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown == null) return;
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
       // Set up auto-advance callback: when TTS finishes a chapter,
@@ -175,7 +213,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           storyTitle: chapter.storyTitle,
           chapterTitle: chapter.title,
           chapterNumber: chapter.chapterNumber,
-          contentMarkdown: chapter.contentMarkdown,
+          contentMarkdown: markdown,
           storySlug: chapter.storySlug,
           nextChapterNumber: chapter.nextChapter,
         );
@@ -226,7 +264,8 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     );
     final chapterAsync = ref.read(chapterProvider(nextRef));
     final chapter = chapterAsync.valueOrNull;
-    if (chapter is TextChapterContent) {
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown != null && chapter != null) {
       try {
         await handler.loadChapter(
           chapterId: chapter.id,
@@ -234,7 +273,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           storyTitle: chapter.storyTitle,
           chapterTitle: chapter.title,
           chapterNumber: chapter.chapterNumber,
-          contentMarkdown: chapter.contentMarkdown,
+          contentMarkdown: markdown,
           storySlug: chapter.storySlug,
           nextChapterNumber: chapter.nextChapter,
         );
@@ -244,6 +283,16 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       }
     }
   }
+}
+
+/// Markdown payload for TTS — `text` and `visual` (Bách khoa) chapters
+/// share the text pipeline; manga / chat / video have no TTS.
+String? chapterMarkdownOrNull(ChapterContent? chapter) {
+  return switch (chapter) {
+    TextChapterContent(:final contentMarkdown) => contentMarkdown,
+    VisualChapterContent(:final contentMarkdown) => contentMarkdown,
+    _ => null,
+  };
 }
 
 /// Online chapter-list sheet — fetches the chapter list from the API
@@ -267,9 +316,9 @@ class _OnlineChapterListSheet extends ConsumerWidget {
       ),
       error: (e, _) =>
           SizedBox(height: 400, child: Center(child: Text('Lỗi: $e'))),
-      data: (page) => ChapterListSheet(
+      data: (chapters) => ChapterListSheet(
         entries: [
-          for (final c in page.chapters)
+          for (final c in chapters)
             ChapterListEntry(number: c.chapterNumber, title: c.title),
         ],
         currentChapter: currentChapter,
@@ -356,7 +405,11 @@ class _AccessGate extends ConsumerWidget {
       // of leaking chapter content. The previous code returned `child`
       // (full chapter content) on any error → VIP bypass on transient
       // network failures or backend 500s.
-      error: (e, _) => _AccessCheckError(error: e),
+      error: (e, _) => _AccessCheckError(
+        error: e,
+        chapterId: chapter.id,
+        storyId: storyId,
+      ),
       data: (access) {
         if (access.canRead) return child;
         return VipLockedScreen(chapter: chapter, storyId: storyId);
@@ -366,13 +419,19 @@ class _AccessGate extends ConsumerWidget {
 }
 
 /// Shown when the access check fails (network error / 5xx). Offers a
-/// retry button — user should re-check access before seeing content.
-class _AccessCheckError extends StatelessWidget {
-  const _AccessCheckError({required this.error});
+/// retry button that re-runs the access check.
+class _AccessCheckError extends ConsumerWidget {
+  const _AccessCheckError({
+    required this.error,
+    required this.chapterId,
+    required this.storyId,
+  });
   final Object error;
+  final String chapterId;
+  final String storyId;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -393,11 +452,13 @@ class _AccessCheckError extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             FilledButton(
-              onPressed: () {
-                // Invalidate the access provider to trigger a re-fetch.
-                // Reader consumers watch it, so they'll rebuild.
-              },
+              onPressed: () =>
+                  ref.invalidate(chapterAccessProvider(chapterId)),
               child: const Text('Thử lại'),
+            ),
+            TextButton(
+              onPressed: () => context.go('/story/$storyId'),
+              child: const Text('Về trang truyện'),
             ),
           ],
         ),

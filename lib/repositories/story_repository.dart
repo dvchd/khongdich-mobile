@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_client.dart';
 import '../models/chapter_content.dart';
+import '../models/comment.dart';
 import '../models/story.dart';
 
 /// Unified read/write client for the Không Dịch backend's mobile JSON
@@ -186,7 +187,29 @@ class StoryRepository {
     ];
   }
 
-  // ─── Search ─────────────────────────────────────────────────────
+  /// Fetch ALL chapters of a story, looping backend pages.
+  ///
+  /// The backend caps `per_page` at 200 (mobile.rs clamps 1..200), so a
+  /// single `fetchChapterList(perPage: 200)` silently truncates stories
+  /// with more than 200 chapters — the reader then fails to resolve
+  /// chapters beyond the cap ("Chapter N not found"). This helper walks
+  /// every page and merges them, keeping chapter order (chapter_number).
+  Future<List<ChapterSummary>> fetchAllChapters(String storyId) async {
+    const perPage = 200;
+    final page = await fetchChapterList(storyId, perPage: perPage);
+    if (page.chapters.length >= page.total || page.totalPages <= 1) {
+      return page.chapters;
+    }
+    final all = <ChapterSummary>[...page.chapters];
+    for (var p = 2; p <= page.totalPages; p++) {
+      final next = await fetchChapterList(storyId, page: p, perPage: perPage);
+      all.addAll(next.chapters);
+    }
+    // Sort by chapter number — page boundaries can split a volume group,
+    // and older stories may have been renumbered after caching.
+    all.sort((a, b) => a.chapterNumber.compareTo(b.chapterNumber));
+    return all;
+  }
 
   /// Search stories + posts.
   /// Hits the existing `GET /api/v1/search?q=&limit=` endpoint (still
@@ -207,6 +230,105 @@ class StoryRepository {
           PostCard.fromJson(p as Map<String, dynamic>),
       ],
     );
+  }
+
+  // ─── Comments ────────────────────────────────────────────────────
+
+  /// Merged comment feed (regular + segment comments) for one chapter.
+  /// Hits `GET /api/v1/mobile/chapters/{id}/comments`.
+  Future<PaginatedComments> fetchChapterComments(
+    String chapterId, {
+    int page = 1,
+    int perPage = 20,
+    String sort = 'newest',
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/chapters/$chapterId/comments',
+      queryParameters: {'page': page, 'per_page': perPage, 'sort': sort},
+    );
+    return PaginatedComments.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Post a comment on a chapter (root or reply via [parentId]).
+  /// Hits `POST /api/v1/mobile/chapters/{id}/comments`.
+  Future<CommentPostResult> postChapterComment(
+    String chapterId, {
+    required String content,
+    String? parentId,
+  }) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/chapters/$chapterId/comments',
+      data: {'content': content, if (parentId != null) 'parent_id': parentId},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return CommentPostResult(
+      id: data['id'] as String,
+      wasHidden: data['was_hidden'] as bool? ?? false,
+    );
+  }
+
+  /// Post a paragraph-level (segment) comment. `paraKey` may be empty —
+  /// the backend then resolves the anchor from the exact paragraph text
+  /// (mobile renderers can't compute the server's FNV-1a key).
+  /// Hits `POST /api/v1/mobile/chapters/{id}/segment-comments`.
+  Future<CommentPostResult> postSegmentComment({
+    required String chapterId,
+    String paraKey = '',
+    required String quoteText,
+    required String content,
+    String? parentId,
+  }) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/chapters/$chapterId/segment-comments',
+      data: {
+        'chapter_id': chapterId,
+        'para_key': paraKey,
+        'quote_text': quoteText,
+        'content': content,
+        if (parentId != null) 'parent_id': parentId,
+      },
+    );
+    final data = r.data as Map<String, dynamic>;
+    return CommentPostResult(
+      id: data['id'] as String,
+      wasHidden: data['was_hidden'] as bool? ?? false,
+    );
+  }
+
+  /// Toggle a like on a regular comment.
+  /// Hits `POST /api/v1/mobile/comments/{id}/like`.
+  Future<(bool liked, int count)> toggleCommentLike(String commentId) async {
+    final r = await _dio.post('/api/v1/mobile/comments/$commentId/like');
+    final data = r.data as Map<String, dynamic>;
+    return (
+      data['liked'] as bool? ?? false,
+      (data['count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// Toggle a like on a segment (paragraph) comment.
+  /// Hits `POST /api/v1/mobile/segment-comments/{id}/like`.
+  Future<(bool liked, int count)> toggleSegmentCommentLike(
+    String commentId,
+  ) async {
+    final r = await _dio.post('/api/v1/mobile/segment-comments/$commentId/like');
+    final data = r.data as Map<String, dynamic>;
+    return (
+      data['liked'] as bool? ?? false,
+      (data['count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// Delete a comment — own comments or moderator.
+  /// Hits `DELETE /api/v1/mobile/comments/{id}`.
+  Future<void> deleteComment(String commentId) async {
+    await _dio.delete('/api/v1/mobile/comments/$commentId');
+  }
+
+  /// Delete a segment (paragraph) comment.
+  /// Hits `DELETE /api/v1/mobile/segment-comments/{id}`.
+  Future<void> deleteSegmentComment(String commentId) async {
+    await _dio.delete('/api/v1/mobile/segment-comments/$commentId');
   }
 
   // ─── Bookmarks ──────────────────────────────────────────────────
@@ -413,10 +535,13 @@ final storyRepositoryProvider = Provider<StoryRepository>((ref) {
 
 /// Paginated chapter list for a story. Shared by story detail screen
 /// and the chapter reader's chapter-list bottom sheet.
+///
+/// `fetchAllChapters` walks every backend page — the backend caps
+/// `per_page` at 200, so single-page fetches truncate long stories.
 final chapterListProvider = FutureProvider.autoDispose
-    .family<PaginatedChapters, String>((ref, storyId) async {
+    .family<List<ChapterSummary>, String>((ref, storyId) async {
       final repo = ref.watch(storyRepositoryProvider);
-      return repo.fetchChapterList(storyId, perPage: 200);
+      return repo.fetchAllChapters(storyId);
     });
 
 // ─── DTOs ──────────────────────────────────────────────────────────

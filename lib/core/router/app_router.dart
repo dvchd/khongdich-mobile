@@ -8,6 +8,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/auth_screen.dart';
 import '../../features/bookshelf/bookshelf_screen.dart';
+import '../../features/comments/comments_screen.dart';
+import '../../features/comments/segment_composer_sheet.dart';
 import '../../features/downloads/downloads_screen.dart';
 import '../../features/downloads/offline_library_screen.dart';
 import '../../features/downloads/offline_story_detail_screen.dart';
@@ -84,6 +86,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             chapterNumber: chapterNumber,
           );
         },
+      ),
+      // Chapter comments screen — pushed with the chapter title as `extra`.
+      GoRoute(
+        path: '/chapter-comments/:chapterId',
+        name: 'chapter_comments',
+        builder: (context, state) => CommentsScreen(
+          chapterId: state.pathParameters['chapterId']!,
+          chapterTitle: state.extra as String? ?? '',
+        ),
       ),
       // Offline chapter reader — loads from local Drift DB, no network.
       GoRoute(
@@ -314,7 +325,36 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     );
   }
 
-  void _toggleTts(TextChapterContent chapter) async {
+  /// Long-press paragraph → bình luận đoạn composer (best-effort when
+  /// offline — posting fails with a clear message until back online).
+  Future<void> _openSegmentComposer(
+    ChapterContent chapter,
+    String plainText,
+  ) async {
+    final result = await showSegmentComposer(
+      context,
+      chapterId: chapter.id,
+      quoteText: plainText,
+    );
+    if (result == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            result.wasHidden
+                ? 'Đã gửi — bình luận đang chờ kiểm duyệt.'
+                : 'Đã gửi bình luận đoạn.',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    context.push('/chapter-comments/${chapter.id}', extra: chapter.title);
+  }
+
+  void _toggleTts(ChapterContent chapter) async {
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown == null) return;
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
       // Set up auto-advance callback for offline reader.
@@ -339,7 +379,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           storyTitle: chapter.storyTitle,
           chapterTitle: chapter.title,
           chapterNumber: chapter.chapterNumber,
-          contentMarkdown: chapter.contentMarkdown,
+          contentMarkdown: markdown,
           storySlug: chapter.storySlug,
           nextChapterNumber:
               (_currentIndex >= 0 && _currentIndex < _siblings.length - 1)
@@ -396,7 +436,8 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         'title': row.chapterTitle,
       };
       final chapter = ChapterContent.fromJson(fullJson);
-      if (chapter is TextChapterContent) {
+      final markdown = chapterMarkdownOrNull(chapter);
+      if (markdown != null) {
         final i = _siblings.indexWhere((s) => s.chapterId == sibling.chapterId);
         final hasNext = i >= 0 && i < _siblings.length - 1;
         await handler.loadChapter(
@@ -405,7 +446,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           storyTitle: chapter.storyTitle,
           chapterTitle: chapter.title,
           chapterNumber: chapter.chapterNumber,
-          contentMarkdown: chapter.contentMarkdown,
+          contentMarkdown: markdown,
           storySlug: chapter.storySlug,
           nextChapterNumber: hasNext ? _siblings[i + 1].chapterNumber : null,
         );
@@ -443,9 +484,15 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         onNext: hasNext ? _goNext : null,
         onOpenSettings: _openSettings,
         onOpenChapterList: _openChapterList,
-        onToggleTts: chapter is TextChapterContent
-            ? () => _toggleTts(chapter)
-            : null,
+        onOpenComments: () {
+          if (!mounted) return;
+          context.push('/chapter-comments/${chapter.id}', extra: chapter.title);
+        },
+        onParagraphLongPress: (plain) => _openSegmentComposer(chapter, plain),
+        onToggleTts: chapter is TextChapterContent ||
+          chapter is VisualChapterContent
+      ? () => _toggleTts(chapter)
+      : null,
         mangaLocalImagePaths: _mangaLocalImagePaths,
         onChapterNearEnd: () async {
           // Mark chapter as read in local Drift DB (cho LRU evict +

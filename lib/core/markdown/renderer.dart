@@ -84,6 +84,7 @@ class MarkdownRenderer extends StatelessWidget {
     required this.theme,
     this.onLinkTap,
     this.activeBlockIndex,
+    this.onParagraphLongPress,
   });
 
   final List<Block> blocks;
@@ -95,6 +96,11 @@ class MarkdownRenderer extends StatelessWidget {
   /// the audio is up to. Null when TTS is idle or the active chunk
   /// doesn't map to any block (e.g. horizontal rule).
   final int? activeBlockIndex;
+
+  /// Fired when a paragraph block is long-pressed. Receives the block's
+  /// normalized plain text (used as the paragraph quote for bình luận
+  /// đoạn — the server resolves the anchor from it).
+  final void Function(String plainText)? onParagraphLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -123,15 +129,7 @@ class MarkdownRenderer extends StatelessWidget {
 
   Widget _renderBlock(Block block, ReaderTheme t, BuildContext context) {
     return switch (block) {
-      Paragraph(:final children) => Padding(
-        padding: EdgeInsets.symmetric(vertical: t.paragraphSpacing / 2),
-        child: RichText(
-          text: TextSpan(
-            style: t.bodyStyle,
-            children: [for (final i in children) _renderInline(i, t, context)],
-          ),
-        ),
-      ),
+      Paragraph(:final children) => _renderParagraph(children, t, context),
       Heading(:final level, :final children) => Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 8),
         child: RichText(
@@ -149,7 +147,9 @@ class MarkdownRenderer extends StatelessWidget {
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [for (final b in children) _renderBlock(b, t, context)],
+          children: [
+            for (final b in children) _renderBlock(b, t, context),
+          ],
         ),
       ),
       CodeBlock(:final code, :final language) => Container(
@@ -207,6 +207,30 @@ class MarkdownRenderer extends StatelessWidget {
     };
   }
 
+  /// Renders a paragraph block. When [onParagraphLongPress] is set and the
+  /// paragraph has visible text, wraps it in a long-press detector that
+  /// reports the normalized plain text (bình luận đoạn quote).
+  Widget _renderParagraph(List<Inline> children, ReaderTheme t, BuildContext context) {
+    final text = Padding(
+      padding: EdgeInsets.symmetric(vertical: t.paragraphSpacing / 2),
+      child: RichText(
+        text: TextSpan(
+          style: t.bodyStyle,
+          children: [for (final i in children) _renderInline(i, t, context)],
+        ),
+      ),
+    );
+    final callback = onParagraphLongPress;
+    if (callback == null) return text;
+    final plain = _paragraphPlain(children);
+    if (plain.isEmpty) return text;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onLongPress: () => callback(plain),
+      child: text,
+    );
+  }
+
   Widget _renderList(
     List<List<Block>> items,
     ReaderTheme t,
@@ -236,7 +260,8 @@ class MarkdownRenderer extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final b in items[i]) _renderBlock(b, t, context),
+                        for (final b in items[i])
+                          _renderBlock(b, t, context),
                       ],
                     ),
                   ),
@@ -337,4 +362,12 @@ class MarkdownRenderer extends StatelessWidget {
       LineBreak(:final hard) => TextSpan(text: hard ? '\n' : ' '),
     };
   }
+
+  /// Normalized plain text of a paragraph's inline children — collapses
+  /// whitespace runs to single spaces and trims, mirroring the backend's
+  /// `normalize_paragraph_text` so the quote resolves to the same segment
+  /// anchor server-side (images contribute nothing, like `textContent`).
+  String _paragraphPlain(List<Inline> children) => normalizeParagraphPlain(
+    children,
+  );
 }

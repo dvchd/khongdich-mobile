@@ -21,6 +21,7 @@ class ReaderBar extends StatelessWidget {
     this.onOpenSettings,
     this.onOpenChapterList,
     this.onToggleTts,
+    this.onOpenComments,
   });
 
   final ChapterContent chapter;
@@ -30,6 +31,7 @@ class ReaderBar extends StatelessWidget {
   final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenChapterList;
   final VoidCallback? onToggleTts;
+  final VoidCallback? onOpenComments;
 
   void _onBack(BuildContext context) {
     if (context.canPop()) {
@@ -59,11 +61,19 @@ class ReaderBar extends StatelessWidget {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         actions: [
-          if (chapter is TextChapterContent && onToggleTts != null)
+          if ((chapter is TextChapterContent ||
+                  chapter is VisualChapterContent) &&
+              onToggleTts != null)
             IconButton(
               icon: const Icon(Icons.headphones),
               tooltip: 'Nghe audio',
               onPressed: onToggleTts,
+            ),
+          if (onOpenComments != null)
+            IconButton(
+              icon: const Icon(Icons.chat_bubble_outline),
+              tooltip: 'Bình luận',
+              onPressed: onOpenComments,
             ),
           IconButton(
             icon: const Icon(Icons.list),

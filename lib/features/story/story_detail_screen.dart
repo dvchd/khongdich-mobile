@@ -307,8 +307,8 @@ class _StoryDetailBody extends ConsumerWidget {
                           ? null
                           : () async {
                         final repo = ref.read(storyRepositoryProvider);
-                        final page = await repo.fetchChapterList(story.id, perPage: 200);
-                        if (page.chapters.isEmpty) {
+                        final chapters = await repo.fetchAllChapters(story.id);
+                        if (chapters.isEmpty) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text('Chưa có chương để tải.')),
@@ -320,13 +320,12 @@ class _StoryDetailBody extends ConsumerWidget {
                         // sẽ check access per-chapter. Chapter nào user
                         // không có quyền → mark failed với message rõ
                         // ràng, các chapter khác vẫn tải bình thường.
-                        final chaptersToDownload = page.chapters;
-                        final total = page.chapters.length;
+                        final total = chapters.length;
                         final already = downloadedIds.length;
                         final enqueued = await ref.read(downloadManagerProvider).enqueueAllChapters(
                           storyId: story.id,
                           storySlug: story.slug,
-                          chapters: chaptersToDownload,
+                          chapters: chapters,
                           coverUrl: story.coverUrl,
                           storyAuthor: story.author,
                           storySynopsis: story.synopsis,
@@ -360,8 +359,8 @@ class _StoryDetailBody extends ConsumerWidget {
                 ),
                 const Spacer(),
                 chaptersAsync.maybeWhen(
-                  data: (page) => Text(
-                    '${page.total} chương',
+                  data: (chapters) => Text(
+                    '${chapters.length} chương',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   orElse: () => const SizedBox.shrink(),
@@ -377,7 +376,7 @@ class _StoryDetailBody extends ConsumerWidget {
           error: (e, _) => SlFillRemaining(
             child: Center(child: Text('Không tải được chương: $e')),
           ),
-          data: (page) => page.chapters.isEmpty
+          data: (chapters) => chapters.isEmpty
               ? const SliverFillRemaining(
                   hasScrollBody: false,
                   child: Center(
@@ -390,7 +389,7 @@ class _StoryDetailBody extends ConsumerWidget {
               : SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, i) {
-                      final c = page.chapters[i];
+                      final c = chapters[i];
                       // Only pending / downloading / retry count as
                       // "active in queue" — a `completed` queue row
                       // means the chapter is on disk and should render
@@ -459,7 +458,7 @@ class _StoryDetailBody extends ConsumerWidget {
                             context.push('/chapter/${story.id}:${c.chapterNumber}'),
                       );
                     },
-                    childCount: page.chapters.length,
+                    childCount: chapters.length,
                   ),
                 ),
         ),
@@ -470,6 +469,7 @@ class _StoryDetailBody extends ConsumerWidget {
 
   String _contentTypeLabel(String type) => switch (type) {
         'text' => 'Truyện text',
+        'visual' => 'Bách khoa',
         'manga' => 'Manga',
         'chat' => 'Truyện chat',
         'video' => 'Video YouTube',

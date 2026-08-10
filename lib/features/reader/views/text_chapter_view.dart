@@ -30,6 +30,7 @@ class TextChapterView extends ConsumerStatefulWidget {
     this.onChapterEnd,
     this.onChapterStart,
     this.isPageMode = false,
+    this.onParagraphLongPress,
   });
 
   final String markdown;
@@ -40,6 +41,10 @@ class TextChapterView extends ConsumerStatefulWidget {
   final VoidCallback? onChapterEnd;
   final VoidCallback? onChapterStart;
   final bool isPageMode;
+
+  /// Long-press on a paragraph block — normalized plain text payload
+  /// (used by bình luận đoạn).
+  final void Function(String plainText)? onParagraphLongPress;
 
   @override
   ConsumerState<TextChapterView> createState() => _TextChapterViewState();
@@ -322,6 +327,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             blocks: _blocks,
             theme: widget.theme,
             activeBlockIndex: _activeBlockIndex,
+            onParagraphLongPress: widget.onParagraphLongPress,
           ),
         );
       },
@@ -342,6 +348,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
               blocks: _blocks,
               theme: widget.theme,
               activeBlockIndex: _activeBlockIndex,
+              onParagraphLongPress: widget.onParagraphLongPress,
             ),
             const SizedBox(height: 32),
             Center(
@@ -381,10 +388,11 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               MarkdownRenderer(
-                blocks: pageBlocks,
-                theme: widget.theme,
-                activeBlockIndex: localActive,
-              ),
+              blocks: pageBlocks,
+              theme: widget.theme,
+              activeBlockIndex: localActive,
+              onParagraphLongPress: widget.onParagraphLongPress,
+            ),
               const SizedBox(height: 32),
               Center(
                 child: Text(

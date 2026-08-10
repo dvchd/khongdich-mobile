@@ -61,6 +61,7 @@ sealed class ChapterContent {
     final type = json['content_type'] as String;
     return switch (type) {
       'text' => TextChapterContent._fromJson(common, json),
+      'visual' => VisualChapterContent._fromJson(common, json),
       'manga' => MangaChapterContent._fromJson(common, json),
       'chat' => ChatChapterContent._fromJson(common, json),
       'video' => VideoChapterContent._fromJson(common, json),
@@ -170,6 +171,70 @@ class TextChapterContent extends ChapterContent {
         contentMarkdown: json['content_markdown'] as String? ?? '',
         contentFormat: json['content_format'] as String? ?? 'markdown',
         authorNote: json['author_note'] as String?,
+      );
+}
+
+/// `content_type=visual` (Bách khoa trực quan) chapters are served exactly
+/// like `text` chapters, plus an optional cover `thumbnail_url` for the
+/// story's visual-media banner. Rendering reuses the text pipeline.
+class VisualChapterContent extends ChapterContent {
+  final String contentMarkdown;
+  final String contentFormat;
+  final String? authorNote;
+
+  /// Story-level visual banner returned by the backend for `visual`
+  /// chapters (`thumbnail_url`), e.g. the encyclopedia illustration.
+  final String? thumbnailUrl;
+
+  const VisualChapterContent({
+    required super.id,
+    required super.storyId,
+    required super.storyTitle,
+    required super.storySlug,
+    required super.chapterNumber,
+    required super.title,
+    required super.contentVersion,
+    required super.wordCount,
+    required super.isPublished,
+    required super.prevChapter,
+    required super.nextChapter,
+    required super.updatedAt,
+    required this.contentMarkdown,
+    required this.contentFormat,
+    this.authorNote,
+    this.thumbnailUrl,
+  }) : super(contentType: 'visual');
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'content_markdown': contentMarkdown,
+        'content_format': contentFormat,
+        if (authorNote != null) 'author_note': authorNote,
+        if (thumbnailUrl != null) 'thumbnail_url': thumbnailUrl,
+      };
+
+  factory VisualChapterContent._fromJson(
+    _CommonFields c,
+    Map<String, dynamic> json,
+  ) =>
+      VisualChapterContent(
+        id: c.id,
+        storyId: c.storyId,
+        storyTitle: c.storyTitle,
+        storySlug: c.storySlug,
+        chapterNumber: c.chapterNumber,
+        title: c.title,
+        contentVersion: c.contentVersion,
+        wordCount: c.wordCount,
+        isPublished: c.isPublished,
+        prevChapter: c.prevChapter,
+        nextChapter: c.nextChapter,
+        updatedAt: c.updatedAt,
+        contentMarkdown: json['content_markdown'] as String? ?? '',
+        contentFormat: json['content_format'] as String? ?? 'markdown',
+        authorNote: json['author_note'] as String?,
+        thumbnailUrl: (json['thumbnail_url'] as String?)?.takeIfNonEmpty,
       );
 }
 

@@ -140,31 +140,59 @@ class _NotificationTile extends StatelessWidget {
 
   IconData _typeIcon(String type) {
     return switch (type) {
-      'new_chapter' || 'bookmark_new_chapter' => Icons.menu_book,
+      'new_chapter' || 'bookmark_new_chapter' ||
+      'collab_chapter_published' =>
+        Icons.menu_book,
       'new_comment' || 'new_reply' => Icons.comment,
       'new_review' => Icons.star,
       'new_follower' => Icons.person_add,
-      'story_approved' || 'chapter_approved' => Icons.check_circle,
-      'story_rejected' || 'chapter_rejected' => Icons.cancel,
-      'chapter_pending' || 'review_pending' => Icons.hourglass_top,
-      'content_flag' => Icons.flag,
-      'collab_invite' => Icons.group_add,
-      'beta_comment_new' => Icons.feedback,
+      'story_approved' || 'chapter_approved' || 'emoji_approved' ||
+      'suggestion_reviewed' =>
+        Icons.check_circle,
+      'story_rejected' || 'chapter_rejected' || 'emoji_rejected' =>
+        Icons.cancel,
+      'chapter_pending' || 'review_pending' || 'story_pending' ||
+      'emoji_pending' =>
+        Icons.hourglass_top,
+      'content_flag' || 'new_report' => Icons.flag,
+      'collab_invite' || 'collab_accepted' || 'collab_declined' =>
+        Icons.group_add,
+      'collab_revoked' => Icons.link_off,
+      'beta_comment_new' || 'segment_suggestion' => Icons.feedback,
+      'old_draft' => Icons.edit_note,
+      'vip_registered' || 'vip_approved' || 'vip_granted' =>
+        Icons.workspace_premium,
+      'vip_rejected' || 'vip_revoked' => Icons.workspace_premium_outlined,
       _ => Icons.notifications,
     };
   }
 
   Color _typeColor(String type) {
     return switch (type) {
-      'new_chapter' || 'bookmark_new_chapter' => const Color(0xFF2563EB),
-      'new_comment' || 'new_reply' || 'beta_comment_new' =>
+      'new_chapter' || 'bookmark_new_chapter' ||
+      'collab_chapter_published' =>
+        const Color(0xFF2563EB),
+      'new_comment' || 'new_reply' || 'beta_comment_new' ||
+      'segment_suggestion' =>
         const Color(0xFF0891B2),
       'new_review' => const Color(0xFFCA8A04),
-      'new_follower' || 'collab_invite' => const Color(0xFF7C3AED),
-      'story_approved' || 'chapter_approved' => const Color(0xFF16A34A),
-      'story_rejected' || 'chapter_rejected' || 'content_flag' =>
+      'new_follower' || 'collab_invite' || 'collab_accepted' ||
+      'collab_declined' =>
+        const Color(0xFF7C3AED),
+      'collab_revoked' => const Color(0xFFDC2626),
+      'story_approved' || 'chapter_approved' || 'emoji_approved' ||
+      'suggestion_reviewed' =>
+        const Color(0xFF16A34A),
+      'story_rejected' || 'chapter_rejected' || 'emoji_rejected' ||
+      'content_flag' || 'new_report' =>
         const Color(0xFFDC2626),
-      'chapter_pending' || 'review_pending' => const Color(0xFFD97706),
+      'chapter_pending' || 'review_pending' || 'story_pending' ||
+      'emoji_pending' =>
+        const Color(0xFFD97706),
+      'old_draft' => const Color(0xFF64748B),
+      'vip_registered' || 'vip_approved' || 'vip_granted' =>
+        const Color(0xFFB45309),
+      'vip_rejected' || 'vip_revoked' => const Color(0xFF9A3412),
       _ => AppTheme.primary,
     };
   }

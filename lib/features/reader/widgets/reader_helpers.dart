@@ -8,6 +8,7 @@ import '../views/chat_chapter_view.dart';
 import '../views/manga_chapter_view.dart';
 import '../views/text_chapter_view.dart';
 import '../views/video_chapter_view.dart';
+import '../views/visual_chapter_view.dart';
 
 // ─── Theme resolution ──────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ Widget buildChapterContent(
   PageController? pageController,
   VoidCallback? onNext,
   VoidCallback? onPrev,
+  void Function(String plainText)? onParagraphLongPress,
   Map<String, String> mangaLocalImagePaths = const {},
 }) {
   return switch (chapter) {
@@ -121,7 +123,23 @@ Widget buildChapterContent(
       scrollController: scrollController,
       pageController: isPageMode ? pageController : null,
       isPageMode: isPageMode,
+      onParagraphLongPress: onParagraphLongPress,
     ),
+    VisualChapterContent(
+      :final id,
+      :final contentMarkdown,
+      :final thumbnailUrl,
+    ) =>
+      VisualChapterView(
+        markdown: contentMarkdown,
+        theme: theme,
+        chapterId: id,
+        thumbnailUrl: thumbnailUrl,
+        scrollController: scrollController,
+        pageController: isPageMode ? pageController : null,
+        isPageMode: isPageMode,
+        onParagraphLongPress: onParagraphLongPress,
+      ),
     MangaChapterContent(:final images) => MangaChapterView(
       images: [for (final p in images) p.url],
       scrollController: scrollController,

@@ -50,9 +50,16 @@ class ReaderBody extends ConsumerStatefulWidget {
     this.onPrev,
     this.onNext,
     this.onToggleTts,
+    this.onOpenComments,
+    this.onParagraphLongPress,
     this.onChapterNearEnd,
     this.mangaLocalImagePaths = const {},
   });
+
+  /// Paragraph long-pressed inside a text/visual chapter — fires with the
+  /// block's normalized plain text so parents can open the segment
+  /// (bình luận đoạn) composer.
+  final void Function(String plainText)? onParagraphLongPress;
 
   final ChapterContent chapter;
   final ReaderSettings settings;
@@ -61,6 +68,7 @@ class ReaderBody extends ConsumerStatefulWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenChapterList;
   final VoidCallback? onToggleTts;
+  final VoidCallback? onOpenComments;
   final VoidCallback? onChapterNearEnd;
 
   /// For manga chapters, this maps `imageUrl → localFilePath` so the
@@ -175,6 +183,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         pageController: _pageController,
         onNext: widget.onNext,
         onPrev: widget.onPrev,
+        onParagraphLongPress: widget.onParagraphLongPress,
         mangaLocalImagePaths: widget.mangaLocalImagePaths,
       ),
     );
@@ -198,6 +207,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       onOpenSettings: widget.onOpenSettings,
       onOpenChapterList: widget.onOpenChapterList,
       onToggleTts: widget.onToggleTts,
+      onOpenComments: widget.onOpenComments,
       child: ColoredBox(
         color: bgColor,
         child: Stack(
@@ -219,6 +229,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   /// own scroll internally so they don't need the wrapper.
   Widget _scrollWrapper(Widget child) {
     if (widget.chapter is TextChapterContent ||
+        widget.chapter is VisualChapterContent ||
         widget.chapter is VideoChapterContent) {
       return PrimaryScrollController(
         controller: _scrollController,

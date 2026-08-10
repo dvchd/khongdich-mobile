@@ -200,17 +200,19 @@ class ChapterCacheService {
   }
 
   /// Lấy chapter list (cache TTL 5 phút). Tránh refetch mỗi lần next/prev.
+  /// `fetchAllChapters` loops backend pages — stories >200 chapters are
+  /// resolved completely (a single perPage=200 fetch truncates them).
   Future<List<ChapterSummary>> _getChapterList(String storyId) async {
     final cached = _chapterListCache[storyId];
     if (cached != null && DateTime.now().difference(cached.cachedAt) < _chapterListTtl) {
       return cached.chapters;
     }
-    final page = await _repo.fetchChapterList(storyId, perPage: 200);
+    final chapters = await _repo.fetchAllChapters(storyId);
     _chapterListCache[storyId] = _ChapterListCache(
-      chapters: page.chapters,
+      chapters: chapters,
       cachedAt: DateTime.now(),
     );
-    return page.chapters;
+    return chapters;
   }
 
   /// Clear memory cache (DB cache vẫn giữ). Gọi khi memory pressure.

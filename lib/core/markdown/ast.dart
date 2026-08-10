@@ -240,3 +240,17 @@ extension InlinePlainText on Inline {
     };
   }
 }
+
+/// Normalized paragraph text for the segment-comment quote: collapses
+/// whitespace runs to single spaces and trims. Mirrors the backend's
+/// `normalize_paragraph_text` (and the web reader's
+/// `s.replace(/\s+/g, ' ').trim()`) so the server resolves the exact
+/// same paragraph anchor from an empty `para_key`.
+String normalizeParagraphPlain(List<Inline> children) {
+  return children
+      .map((i) => i.plainText)
+      .join()
+      .split(RegExp(r'\s+'))
+      .where((s) => s.isNotEmpty)
+      .join(' ');
+}
