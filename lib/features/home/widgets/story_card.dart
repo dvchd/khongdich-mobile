@@ -164,7 +164,12 @@ class StoryCard extends ConsumerWidget {
                 story.author,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.6),
+                  fontSize: 12,
+                ),
               ),
           ],
         ),

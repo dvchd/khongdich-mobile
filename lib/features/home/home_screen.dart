@@ -2,19 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
+import 'publish_web_sheet.dart';
+import 'widgets/home_hero.dart';
 import 'widgets/story_card.dart';
 import 'widgets/story_section.dart';
 
 /// Home / discovery feed. Plan §5.2.
 ///
-/// Hits `GET /api/v1/mobile/stories?sort=hot|fresh|picks|completed` for
+/// Hits `GET /api/v1/mobile/stories?sort=hot|fresh|completed|picks` for
 /// each section. Authenticated users also see a "Đọc tiếp" strip from
 /// `GET /api/v1/mobile/reading-progress`.
+///
+/// Mobile-first UX: the hero highlights offline reading/listening (with
+/// a live downloaded-chapter count), quick actions (Tủ truyện / Đã tải
+/// / Đăng truyện), and story rails — publishing guidance lives in the
+/// docs sheet (`PublishWebSheet`): the app is read-only for stories.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -54,6 +60,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: const Text('Không Dịch'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.edit_note),
+            tooltip: 'Đăng truyện (web)',
+            onPressed: () => showPublishWebSheet(context),
+          ),
+          IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () => context.push('/notifications'),
           ),
@@ -80,13 +91,19 @@ class _HomeContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasAny = home.continueReading.isNotEmpty ||
+        home.hot.isNotEmpty ||
+        home.fresh.isNotEmpty ||
+        home.completed.isNotEmpty ||
+        home.picks.isNotEmpty;
     return ListView(
       children: [
-        const _HeroBanner(),
+        const HomeHero(),
         if (home.continueReading.isNotEmpty)
           StorySection(
             title: 'Đọc tiếp',
-            height: 180,
+            icon: Icons.history,
+            trailing: '${home.continueReading.length}',
             items: [
               for (final c in home.continueReading)
                 StoryCard(
@@ -100,44 +117,52 @@ class _HomeContent extends StatelessWidget {
         if (home.hot.isNotEmpty)
           StorySection(
             title: 'Đang hot',
+            icon: Icons.local_fire_department,
+            trailing: '${home.hot.length} truyện',
             items: [
               for (final s in home.hot)
-                StoryCard(
-                  story: s,
-                  onTap: () => context.push('/story/${s.slug}'),
-                ),
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
         if (home.fresh.isNotEmpty)
           StorySection(
             title: 'Truyện mới',
+            icon: Icons.fiber_new,
+            trailing: '${home.fresh.length} truyện',
             items: [
               for (final s in home.fresh)
-                StoryCard(
-                  story: s,
-                  onTap: () => context.push('/story/${s.slug}'),
-                ),
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
+            ],
+          ),
+        if (home.completed.isNotEmpty)
+          StorySection(
+            title: 'Hoàn thành',
+            icon: Icons.task_alt,
+            trailing: '${home.completed.length} truyện',
+            items: [
+              for (final s in home.completed)
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
         if (home.picks.isNotEmpty)
           StorySection(
             title: 'Tuyển chọn',
+            icon: Icons.workspace_premium,
+            trailing: '${home.picks.length} truyện',
             items: [
               for (final s in home.picks)
-                StoryCard(
-                  story: s,
-                  onTap: () => context.push('/story/${s.slug}'),
-                ),
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
-        if (home.hot.isEmpty &&
-            home.fresh.isEmpty &&
-            home.picks.isEmpty &&
-            home.continueReading.isEmpty)
-          const _EmptyState(),
+        if (!hasAny) const _EmptyState(),
+        const _PublishReminder(),
         const SizedBox(height: 24),
       ],
     );
+  }
+
+  void _openStory(BuildContext context, String slug) {
+    context.push('/story/$slug');
   }
 
   StorySummary _summaryFromContinue(ContinueReadingItem c) {
@@ -154,87 +179,52 @@ class _HomeContent extends StatelessWidget {
   }
 }
 
-class _HeroBanner extends StatelessWidget {
-  const _HeroBanner();
+/// Calm footer reminder: publishing happens on the web, the app is for
+/// reading (offline + TTS). Tapping opens the guidance sheet.
+class _PublishReminder extends StatelessWidget {
+  const _PublishReminder();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTheme.primary, Color(0xFFB91C1C)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+      child: Material(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => showPublishWebSheet(context),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.auto_stories_outlined, size: 20, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Muốn đăng truyện của riêng bạn? Việc đăng & quản lý '
+                    'truyện được thực hiện trên web — app chỉ dành cho '
+                    'việc đọc (online, offline & nghe TTS).',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.75),
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: scheme.onSurface.withValues(alpha: 0.5),
+                ),
+              ],
+            ),
+          ),
         ),
-        borderRadius: BorderRadius.circular(12),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Đọc truyện — Không Dịch',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: Colors.white,
-                  fontSize: 22,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Truyện text, manga, chat & video. Offline sẵn sàng, TTS 100% on-device.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.9),
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LoadingList extends StatelessWidget {
-  const _LoadingList();
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      children: List.filled(6, 0).map((_) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                width: 60,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      height: 16,
-                      width: double.infinity,
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      height: 12,
-                      width: 120,
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
     );
   }
 }
@@ -248,7 +238,13 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.all(40),
       child: Column(
         children: [
-          Icon(Icons.inbox_outlined, size: 64, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+          Icon(
+            Icons.inbox_outlined,
+            size: 64,
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.4),
+          ),
           const SizedBox(height: 12),
           Text(
             'Không có nội dung để hiển thị.',
@@ -282,8 +278,12 @@ class _OfflineOrErrorState extends StatelessWidget {
     return ListView(
       children: [
         const SizedBox(height: 100),
-        Icon(Icons.wifi_off, size: 64,
-            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+        Icon(
+          Icons.wifi_off,
+          size: 64,
+          color:
+              Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4),
+        ),
         const SizedBox(height: 12),
         const Center(child: Text('Không có kết nối mạng')),
         const SizedBox(height: 8),
@@ -297,8 +297,67 @@ class _OfflineOrErrorState extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         Center(
-          child: OutlinedButton(onPressed: onRetry, child: const Text('Thử lại')),
+          child: OutlinedButton(
+            onPressed: onRetry,
+            child: const Text('Thử lại'),
+          ),
         ),
+      ],
+    );
+  }
+}
+
+class _LoadingList extends StatelessWidget {
+  const _LoadingList();
+
+  @override
+  Widget build(BuildContext context) {
+    final placeholder = Theme.of(context).colorScheme.surfaceContainerHighest;
+    return ListView(
+      children: [
+        const SizedBox(height: 12),
+        // Hero skeleton
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Container(
+            height: 110,
+            decoration: BoxDecoration(
+              color: placeholder,
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        ),
+        for (var i = 0; i < 4; i++)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 60,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: placeholder,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 16,
+                        width: double.infinity,
+                        color: placeholder,
+                      ),
+                      const SizedBox(height: 8),
+                      Container(height: 12, width: 120, color: placeholder),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -311,11 +370,13 @@ class HomeFeed {
   const HomeFeed({
     required this.hot,
     required this.fresh,
+    required this.completed,
     required this.picks,
     required this.continueReading,
   });
   final List<StorySummary> hot;
   final List<StorySummary> fresh;
+  final List<StorySummary> completed;
   final List<StorySummary> picks;
   final List<ContinueReadingItem> continueReading;
 }
@@ -338,16 +399,18 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
       // is not authenticated — we don't want that to crash the whole
       // home screen.
       final results = await Future.wait([
-        repo.listStories(sort: 'hot', perPage: 20),
-        repo.listStories(sort: 'fresh', perPage: 20),
-        repo.listStories(sort: 'picks', perPage: 20),
+        repo.listStories(sort: 'hot', perPage: 15),
+        repo.listStories(sort: 'fresh', perPage: 15),
+        repo.listStories(sort: 'completed', perPage: 15),
+        repo.listStories(sort: 'picks', perPage: 15),
         repo.fetchContinueReading().catchError((_) => <ContinueReadingItem>[]),
       ]);
       state = AsyncValue.data(HomeFeed(
         hot: (results[0] as PaginatedStories).stories,
         fresh: (results[1] as PaginatedStories).stories,
-        picks: (results[2] as PaginatedStories).stories,
-        continueReading: results[3] as List<ContinueReadingItem>,
+        completed: (results[2] as PaginatedStories).stories,
+        picks: (results[3] as PaginatedStories).stories,
+        continueReading: results[4] as List<ContinueReadingItem>,
       ));
     } catch (e, s) {
       state = AsyncValue.error(e, s);

@@ -129,3 +129,14 @@ final downloadedStoryIdsProvider = Provider<Set<String>>((ref) {
   final chapters = ref.watch(offlineLibraryStreamProvider).valueOrNull ?? [];
   return chapters.map((c) => c.storyId).toSet();
 });
+
+/// Number of chapters the user has manually downloaded (excludes
+/// background auto-cache). Powers the "Đã lưu X chương" hero stat on
+/// the home screen; live-updates via Drift `watch()`.
+final downloadedChaptersCountProvider = StreamProvider<int>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.downloadedChapters)
+        ..where((t) => t.source.equals('manual_download')))
+      .watch()
+      .map((rows) => rows.length);
+});
