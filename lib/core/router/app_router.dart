@@ -14,6 +14,7 @@ import '../../features/downloads/downloads_screen.dart';
 import '../../features/downloads/offline_library_screen.dart';
 import '../../features/downloads/offline_story_detail_screen.dart';
 import '../../features/home/home_screen.dart';
+import '../../features/market/market_screen.dart';
 import '../../features/notifications/notifications_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/reader/chapter_reader_screen.dart';
@@ -122,6 +123,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/notifications',
         name: 'notifications',
         builder: (context, state) => const NotificationsScreen(),
+      ),
+      // Chợ Phiên — Họp Chợ realtime chat (mirrors the web home section).
+      GoRoute(
+        path: '/market',
+        name: 'market',
+        builder: (context, state) => const MarketScreen(),
       ),
       GoRoute(
         path: '/downloads',

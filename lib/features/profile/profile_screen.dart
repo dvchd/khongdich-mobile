@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -179,13 +180,13 @@ class _LoginCard extends StatelessWidget {
   }
 }
 
-class _UserHeader extends StatelessWidget {
+class _UserHeader extends ConsumerWidget {
   const _UserHeader({required this.user, required this.onSignOut});
   final CurrentUser user;
   final VoidCallback onSignOut;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -223,6 +224,38 @@ class _UserHeader extends StatelessWidget {
                       fontSize: 12,
                       color: AppTheme.primary,
                       fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (user.username.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  // Mirror the web profile's "📋 Sao chép link" — copies
+                  // the full profile URL with a 2s text feedback.
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final baseUrl = ref
+                              .read(apiClientProvider)
+                              .valueOrNull
+                              ?.baseUrl ??
+                          'https://khongdich.com';
+                      await Clipboard.setData(
+                        ClipboardData(text: '$baseUrl/u/${user.username}'),
+                      );
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context)
+                        ..hideCurrentSnackBar()
+                        ..showSnackBar(
+                          const SnackBar(
+                            content: Text('Đã sao chép link trang cá nhân'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                    },
+                    icon: const Icon(Icons.link, size: 16),
+                    label: const Text('Sao chép link'),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
                     ),
                   ),
                 ],

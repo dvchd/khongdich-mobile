@@ -8,6 +8,7 @@ import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
 import 'publish_web_sheet.dart';
 import 'widgets/home_hero.dart';
+import 'widgets/market_section.dart';
 import 'widgets/story_card.dart';
 import 'widgets/story_section.dart';
 
@@ -85,12 +86,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
-class _HomeContent extends StatelessWidget {
+class _HomeContent extends ConsumerWidget {
   const _HomeContent({required this.home});
   final HomeFeed home;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final hasAny = home.continueReading.isNotEmpty ||
         home.hot.isNotEmpty ||
         home.fresh.isNotEmpty ||
@@ -99,6 +100,12 @@ class _HomeContent extends StatelessWidget {
     return ListView(
       children: [
         const HomeHero(),
+        // Chợ Phiên — hidden while the chợ is closed (best-effort fetch,
+        // mirrors the web home section).
+        ref.watch(homeMarketProvider).whenData((section) {
+          if (section == null) return const SizedBox.shrink();
+          return MarketHomeSection(section: section);
+        }).value ?? const SizedBox.shrink(),
         if (home.continueReading.isNotEmpty)
           StorySection(
             title: 'Đọc tiếp',
@@ -392,6 +399,7 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
 
   Future<void> refresh() async {
     state = const AsyncValue.loading();
+    _ref.invalidate(homeMarketProvider);
     try {
       final repo = _ref.read(storyRepositoryProvider);
       // Fan out the section fetches in parallel. `fetchContinueReading`

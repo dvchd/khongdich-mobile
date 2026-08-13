@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/network/api_client.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/emoji_picker_sheet.dart';
+import '../../core/widgets/emoji_text.dart';
 import '../../models/comment.dart';
 import '../../repositories/story_repository.dart';
 
@@ -335,6 +337,21 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     setState(() => _replyingTo = null);
   }
 
+  /// Insert a `:name:` shortcode at the cursor (emoji picker).
+  Future<void> _insertEmoji() async {
+    final shortcode = await showEmojiPickerSheet(context);
+    if (shortcode == null || !mounted) return;
+    final value = _composer.text;
+    final selection = _composer.selection;
+    final start = selection.isValid ? selection.start : value.length;
+    final end = selection.isValid ? selection.end : value.length;
+    final next = value.replaceRange(start, end, shortcode);
+    _composer.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + shortcode.length),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -364,6 +381,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
             replyingTo: _replyingTo,
             onSend: _send,
             onCancelReply: _cancelReply,
+            onEmoji: _insertEmoji,
           ),
         ],
       ),
@@ -513,8 +531,9 @@ class _CommentTile extends StatelessWidget {
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
-              Text(
-                item.content,
+              EmojiText(
+                text: item.content,
+                contentHtml: item.contentHtml,
                 style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
               ),
             ],
@@ -658,6 +677,7 @@ class _ComposerBar extends StatelessWidget {
     required this.replyingTo,
     required this.onSend,
     required this.onCancelReply,
+    required this.onEmoji,
   });
 
   final TextEditingController controller;
@@ -665,6 +685,7 @@ class _ComposerBar extends StatelessWidget {
   final CommentItem? replyingTo;
   final VoidCallback onSend;
   final VoidCallback onCancelReply;
+  final VoidCallback onEmoji;
 
   @override
   Widget build(BuildContext context) {
@@ -702,6 +723,12 @@ class _ComposerBar extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                IconButton(
+                  icon: const Icon(Icons.emoji_emotions_outlined),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Chèn emoji',
+                  onPressed: posting ? null : onEmoji,
+                ),
                 Expanded(
                   child: TextField(
                     controller: controller,

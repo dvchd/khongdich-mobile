@@ -64,6 +64,10 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 | 120 FPS trên thiết bị hỗ trợ | ✅ |
 | Splash screen (logo app, theme-aware) | ✅ |
 | **Reader code refactor** — online + offline dùng chung `ReaderBody` | ✅ |
+| **Chợ Phiên — Họp Chợ** (chat realtime SSE, story rail, chủ chợ, login-gated gửi tin) | ✅ |
+| **Emoji custom** — picker + render `:name:` thành ảnh trong bình luận & chat (mirror web) | ✅ |
+| **Chia sẻ truyện** — sao chép link + mã QR (story detail) | ✅ |
+| **Sao chép link trang cá nhân** (profile) | ✅ |
 
 ### Chưa hoàn thành / Trì hoãn
 
@@ -86,7 +90,10 @@ lib/
 │   ├── shell/main_shell.dart            # bottom-nav shell + AppBottomNav
 │   ├── theme/app_theme.dart             # M3 theme + ThemeModeNotifier
 │   └── widgets/
-│       └── app_bottom_nav.dart          # Reusable bottom nav (MainShell + detail screens)
+│       ├── app_bottom_nav.dart          # Reusable bottom nav (MainShell + detail screens)
+│       ├── emoji_text.dart              # Render :name: → ảnh (parse content_html server)
+│       ├── emoji_picker_sheet.dart      # Emoji picker (dùng /api/v1/mobile/emojis)
+│       └── share_story_sheet.dart       # Copy link + mã QR cho story detail
 ├── features/
 │   ├── auth/auth_screen.dart            # google_sign_in → /mobile/auth/token
 │   ├── bookshelf/bookshelf_screen.dart  # 6-tab: Tất cả / Đang đọc / Đã đọc xong / Sẽ đọc / Yêu thích / Đã tải
@@ -95,7 +102,10 @@ lib/
 │   │   ├── offline_library_screen.dart  # StreamProvider + downloadedStoryIdsProvider
 │   │   └── offline_story_detail_screen.dart   # + bottom nav
 │   ├── home/{home_screen.dart, widgets/}
-│   │   └── widgets/story_card.dart      # ConsumerWidget — auto green downloaded badge
+│   │   ├── widgets/story_card.dart      # ConsumerWidget — auto green downloaded badge
+│   │   └── widgets/market_section.dart  # Chợ Phiên section (status + story rail + chat preview)
+│   ├── market/
+│   │   └── market_screen.dart           # Họp Chợ realtime (SSE) + emoji picker
 │   ├── notifications/notifications_screen.dart
 │   ├── profile/profile_screen.dart
 │   ├── reader/
@@ -117,10 +127,12 @@ lib/
 │       ├── tts_audio_handler.dart       # engine + voice + speed + chunk chaining
 │       ├── tts_control_panel.dart       # Bottom sheet: play/pause/speed/voice/engine/progress
 │       └── tts_mini_player.dart
-├── models/{chapter_content,story}.dart
+├── models/{chapter_content,story,comment,market}.dart
 ├── repositories/story_repository.dart    # JSON client cho mọi /api/v1/mobile endpoints
+├── repositories/market_repository.dart   # Chợ Phiên section/history/post/SSE stream
 └── services/
     ├── download_manager.dart             # Serial queue + batch + manga image fetch
+    ├── emoji_service.dart                # Emoji feed + resolve :name: → image URL
     └── manga_image_downloader.dart       # Download manga images → local files
 
 android/
