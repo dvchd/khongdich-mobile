@@ -249,24 +249,24 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
 
   /// Auto-load TTS for the next chapter after auto-advance.
   /// Called from `onChapterComplete` callback via post-frame callback.
-  void _autoLoadTtsForNewChapter(
+  Future<void> _autoLoadTtsForNewChapter(
     TtsAudioHandler handler,
     String storyId,
     int nextChapterNumber,
   ) async {
-    // Fetch the next chapter's content via the chapterProvider.
-    // The new ChapterReaderScreen's build method will have already
-    // triggered the fetch via chapterProvider. We just need to wait
-    // for it and then load TTS.
-    final nextRef = ChapterRef(
-      storyId: storyId,
-      chapterNumber: nextChapterNumber,
-    );
-    final chapterAsync = ref.read(chapterProvider(nextRef));
-    final chapter = chapterAsync.valueOrNull;
-    final markdown = chapterMarkdownOrNull(chapter);
-    if (markdown != null && chapter != null) {
-      try {
+    try {
+      // The new ChapterReaderScreen's build method triggers the fetch via
+      // chapterProvider. `ref.read(...future)` awaits the async computation
+      // (memory cache hit → instant; API miss → waits for network) instead
+      // of the old one-shot `valueOrNull` read, which was still `loading`
+      // here and silently dropped the auto-play.
+      final nextRef = ChapterRef(
+        storyId: storyId,
+        chapterNumber: nextChapterNumber,
+      );
+      final chapter = await ref.read(chapterProvider(nextRef).future);
+      final markdown = chapterMarkdownOrNull(chapter);
+      if (markdown != null) {
         await handler.loadChapter(
           chapterId: chapter.id,
           storyId: chapter.storyId,
@@ -278,9 +278,9 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           nextChapterNumber: chapter.nextChapter,
         );
         await handler.play();
-      } catch (e) {
-        AppLogger.warning('TTS auto-advance loadChapter failed', e);
       }
+    } catch (e) {
+      AppLogger.warning('TTS auto-advance loadChapter failed', e);
     }
   }
 }

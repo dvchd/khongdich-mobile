@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -74,6 +75,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   // chương tiếp theo và tự play tiếp.
   void Function(String storyId, int nextChapterNumber)? onChapterComplete;
 
+  // Audio session state — request/release audio focus để TTS không đè
+  // lên nhạc/video đang phát và tự dừng khi có cuộc gọi/âm thanh khác.
+  bool _sessionConfigured = false;
+
   // User settings (persisted)
   double _speed = 1.0;
   String? _selectedVoiceName;
@@ -112,10 +117,66 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// Index of the chunk currently being spoken. -1 when idle.
   int get currentChunkIndex => _currentChunk;
 
+  /// Configure the audio session once (speech attributes + audio focus
+  /// gain) và đăng ký interruption listener để tự pause khi có cuộc gọi
+  /// hoặc ứng dụng khác chiếm quyền phát. Best-effort — mọi lỗi đều log
+  /// warning, không bao giờ throw vào playback path.
+  Future<void> _configureAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      if (!_sessionConfigured) {
+        await session.configure(const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playback,
+          androidAudioAttributes: AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            usage: AndroidAudioUsage.media,
+          ),
+          androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+          androidWillPauseWhenDucked: false,
+        ));
+        _sessionConfigured = true;
+        // Auto-pause khi bị interruption (cuộc gọi, nhạc khác, ...).
+        session.interruptionEventStream.listen((event) {
+          if (!event.begin) return;
+          AppLogger.info('TTS: interruption begin (${event.type.name})');
+          if (event.type == AudioInterruptionType.duck) {
+            // Duck → tiếp tục đọc nhỏ hơn là dừng; nhưng để an toàn với
+            // speech thì pause rồi user bấm play tiếp.
+          }
+          unawaited(pause());
+        });
+      }
+    } catch (e, s) {
+      AppLogger.warning('TTS: audio session configure failed', e, s);
+    }
+  }
+
+  /// Request audio focus trước khi bắt đầu đọc. Best-effort.
+  Future<void> _activateAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+    } catch (e, s) {
+      AppLogger.warning('TTS: audio session activate failed', e, s);
+    }
+  }
+
+  /// Release audio focus khi tạm dừng/dừng đọc. Best-effort.
+  Future<void> _deactivateAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(false);
+    } catch (e, s) {
+      AppLogger.warning('TTS: audio session deactivate failed', e, s);
+    }
+  }
+
   Future<void> _init() async {
     if (_initialised) return;
     try {
       AppLogger.info('TTS: starting init...');
+
+      await _configureAudioSession();
 
       // Load persisted settings
       final prefs = await SharedPreferences.getInstance();
@@ -489,6 +550,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       );
       return;
     }
+    // Request audio focus (không đè nhạc/video khác đang phát).
+    await _activateAudioSession();
     // Check if the loop is already running BEFORE setting _isSpeaking.
     // If we set _isSpeaking first and then return, the guard works but
     // the ordering is confusing — _isSpeaking would be true even though
@@ -546,6 +609,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       ),
     );
     unawaited(_savePlaybackState(isPlaying: false));
+    unawaited(_deactivateAudioSession());
   }
 
   @override
@@ -565,6 +629,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       ),
     );
     unawaited(_savePlaybackState(isPlaying: false));
+    unawaited(_deactivateAudioSession());
   }
 
   @override
@@ -627,6 +692,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   Future<void> _onChapterComplete() async {
     AppLogger.info('TTS: chapter complete');
     _isSpeaking = false;
+    // Release audio focus — chapter đã xong, không cần giữ nữa.
+    unawaited(_deactivateAudioSession());
     // Save state với chunk index cuối TRƯỚC khi stop() reset _currentChunk = 0.
     unawaited(_savePlaybackState(isPlaying: false));
     if (_currentStoryId != null && _currentChapterNumber != null) {

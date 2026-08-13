@@ -92,9 +92,20 @@ android {
             // otherwise fall back to the debug signing config so local
             // `flutter build apk --release` still works.
             val ksFile = keystoreFileFromEnv()
-            signingConfig = if (ksFile != null) {
+            val releaseKs = ksFile != null
+            signingConfig = if (releaseKs) {
                 signingConfigs.getByName("release")
             } else {
+                // ⚠️ Google Play REJECTS debug-signed APKs. This fallback
+                // exists only for local dev builds. The CI pipeline
+                // (see .github/workflows/ci.yml) injects the keystore via
+                // KHONGDICH_KEYSTORE_BASE64 secrets — make sure those
+                // secrets are set before publishing a release tag.
+                logger.warn(
+                    "KHONGDICH_KEYSTORE_BASE64 not set — release build is " +
+                        "signed with the DEBUG keystore. Do NOT upload to " +
+                        "Google Play. Set the keystore secrets in CI."
+                )
                 signingConfigs.getByName("debug")
             }
             isMinifyEnabled = false

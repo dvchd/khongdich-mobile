@@ -71,18 +71,21 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                         if (item.link != null) {
                           // Crude deep-link: try to parse
                           // `/truyen/{slug}/chuong/{num}` style URLs.
+                          // The chapter reader route needs `storyId:num`,
+                          // but the notification link only carries the
+                          // story slug (slug ≠ backend story id). Since
+                          // we can't resolve slug → id without an extra
+                          // API call, navigate to the story detail where
+                          // the user can open the chapter (or continue
+                          // reading if already in progress).
                           final m = RegExp(
                                   r'/truyen/([^/?#]+)/chuong/(\d+)')
                               .firstMatch(item.link!);
-                          if (m != null) {
-                            context.push(
-                                '/chapter/${m.group(1)}/${m.group(2)}');
-                          } else {
-                            final m2 = RegExp(r'/truyen/([^/?#]+)')
-                                .firstMatch(item.link!);
-                            if (m2 != null) {
-                              context.push('/story/${m2.group(1)}');
-                            }
+                          final m2 = RegExp(r'/truyen/([^/?#]+)')
+                              .firstMatch(item.link!);
+                          final slug = m?.group(1) ?? m2?.group(1);
+                          if (slug != null) {
+                            context.push('/story/$slug');
                           }
                         }
                       },

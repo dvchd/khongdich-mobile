@@ -215,7 +215,11 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
             body,
             // Tap zones for edge navigation
             // Skip for chat — it handles its own tap to reveal next message.
-            if (widget.chapter is! ChatChapterContent)
+            // Skip for video too — the overlay would swallow the YouTube
+            // player's own controls (play/seek/fullscreen). Reader chrome
+            // (settings / chapter list) stays reachable via ReaderBar.
+            if (widget.chapter is! ChatChapterContent &&
+                widget.chapter is! VideoChapterContent)
               Positioned.fill(child: ReaderTapZones(onTap: _onTapZone)),
           ],
         ),

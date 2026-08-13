@@ -310,6 +310,10 @@ class AppDatabase extends _$AppDatabase {
     return into(readingProgressTable).insertOnConflictUpdate(entry);
   }
 
+  /// Xoá toàn bộ reading progress local — dùng khi đăng xuất để không
+  /// lộ tiến trình đọc của user trước cho user sau (shared device).
+  Future<void> clearAllReadingProgress() => delete(readingProgressTable).go();
+
   // ---- Bookmarks ----
 
   Future<List<LocalBookmark>> getBookmarks() => select(localBookmarks).get();
@@ -335,6 +339,10 @@ class AppDatabase extends _$AppDatabase {
         .go();
   }
 
+  /// Xoá toàn bộ bookmark local — dùng khi đăng xuất để không lộ dữ
+  /// liệu của user trước cho user sau (shared device).
+  Future<void> clearAllBookmarks() => delete(localBookmarks).go();
+
   // ---- TTS playback state ----
 
   Future<TtsPlaybackStateData?> getTtsState(String chapterId) {
@@ -346,6 +354,10 @@ class AppDatabase extends _$AppDatabase {
   Future<void> upsertTtsState(TtsPlaybackStateCompanion entry) {
     return into(ttsPlaybackState).insertOnConflictUpdate(entry);
   }
+
+  /// Xoá toàn bộ TTS playback state — dùng khi đăng xuất (đảm bảo user
+  /// sau không tiếp tục nghe chương của user trước).
+  Future<void> clearAllTtsState() => delete(ttsPlaybackState).go();
 
   // ---- Download queue ----
 

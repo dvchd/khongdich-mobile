@@ -43,16 +43,13 @@ dependencies:
   flutter_tts: ^4.2.5
   audio_session: ^0.1.21
 
-  # Local notifications (for download completion + fallback when FCM absent)
-  flutter_local_notifications: ^17.2.2
-
   # Auth — Google Sign-In → exchange idToken for server JWT
   google_sign_in: ^6.2.1
 
   # Push notifications: KHÔNG dùng Firebase. App dùng in-app notifications
-  # (GET /api/v1/mobile/notifications) + flutter_local_notifications cho
-  # download completion. Khi cần FCM push: re-add firebase_core +
-  # firebase_messaging + google-services.json + backend push_devices.
+  # (GET /api/v1/mobile/notifications) + media notification của audio_service
+  # cho TTS. Khi cần FCM push: re-add firebase_core + firebase_messaging +
+  # google-services.json + backend push_devices.
 
   # Utils
   logger: ^2.4.0

@@ -121,11 +121,23 @@ class AuthService {
     } catch (e) {
       AppLogger.warning('clearDownloadQueue on signOut failed', e);
     }
-    // Note: local bookmarks + reading progress tables don't have a
-    // "delete all" method yet. For now we leave them — they're keyed
-    // by storyId (not userId) so they're shared across accounts. A
-    // future migration should add userId scoping or a clearAll method.
-    // TODO: add db.clearAllBookmarks() + db.clearAllReadingProgress()
+    // Bookmark + reading progress + TTS state cũng là dữ liệu cá nhân —
+    // xoá để không lộ cho user kế tiếp trên shared device.
+    try {
+      await _db.clearAllBookmarks();
+    } catch (e) {
+      AppLogger.warning('clearAllBookmarks on signOut failed', e);
+    }
+    try {
+      await _db.clearAllReadingProgress();
+    } catch (e) {
+      AppLogger.warning('clearAllReadingProgress on signOut failed', e);
+    }
+    try {
+      await _db.clearAllTtsState();
+    } catch (e) {
+      AppLogger.warning('clearAllTtsState on signOut failed', e);
+    }
   }
 
   Future<bool> isAuthenticated() => _api.isAuthenticated();

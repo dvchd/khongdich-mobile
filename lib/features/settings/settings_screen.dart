@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/database/app_database.dart';
@@ -125,7 +126,7 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.person_outline),
             title: const Text('Đăng nhập với Google'),
             subtitle: const Text('Mở màn đăng nhập'),
-            onTap: () => Navigator.of(context).pushNamed('auth'),
+            onTap: () => context.push('/auth'),
           ),
           const Divider(),
           _Section('Bộ nhớ'),

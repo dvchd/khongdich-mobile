@@ -57,7 +57,7 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
       themeMode: themeMode,
       routerConfig: apiAsync.when(
         loading: () => _splashRouter(),
-        error: (e, _) => _splashRouter(),
+        error: (e, _) => _bootErrorRouter(e),
         data: (api) {
           // Sync the runtime AppEnv provider + flush pending progress.
           Future.microtask(() {
@@ -74,9 +74,8 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
     );
   }
 
-  /// A minimal router that shows a splash screen while the ApiClient
-  /// is initializing. This prevents the "ApiClient not ready" crash
-  /// on cold start.
+  /// Minimal router shown while the ApiClient is initializing. This
+  /// prevents the "ApiClient not ready" crash on cold start.
   GoRouter _splashRouter() {
     return GoRouter(
       routes: [
@@ -125,6 +124,71 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
                     const SizedBox(height: 16),
                     CircularProgressIndicator(color: AppTheme.primary),
                   ],
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Minimal router shown when the ApiClient fails to initialize
+  /// (e.g. secure-storage platform error). Instead of an eternal
+  /// spinner, show the error with a retry button that re-runs the
+  /// initialization.
+  GoRouter _bootErrorRouter(Object error) {
+    return GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, _) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final bgColor = isDark
+                ? const Color(0xFF0F172A)
+                : const Color(0xFFFAFAFA);
+            final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+            return Scaffold(
+              backgroundColor: bgColor,
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: isDark ? const Color(0xFFF87171) : AppTheme.primary,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Không khởi động được ứng dụng',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '$error',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: textColor.withValues(alpha: 0.6),
+                          fontSize: 13,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton.icon(
+                        onPressed: () => ref.invalidate(apiClientProvider),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Thử lại'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
