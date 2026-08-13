@@ -33,7 +33,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   bool _sending = false;
   String? _notice;
   Timer? _noticeTimer;
-  StreamSubscription<(MarketMessage, bool)>? _sub;
+  StreamSubscription<MarketStreamEvent>? _sub;
   final List<MarketMessage> _messages = [];
   final TextEditingController _composer = TextEditingController();
   final ScrollController _scroll = ScrollController();
@@ -83,22 +83,47 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     _sub?.cancel();
     final repo = ref.read(marketRepositoryProvider);
     _sub = repo.subscribeToStream((event) {
-      final message = event.$1;
-      final storyAdded = event.$2;
       if (!mounted) return;
-      setState(() {
-        if (_messages.any((m) => m.id == message.id)) return;
-        _messages.add(message);
-        if (_messages.length > _maxRows) {
-          _messages.removeRange(0, _messages.length - _maxRows);
-        }
-      });
-      if (storyAdded && !_loading) {
-        // Refresh the story grid when a message attached a new story.
-        unawaited(_refreshStories());
+      switch (event) {
+        case MarketMessageEvent(:final message, :final storyAdded):
+          setState(() {
+            if (_messages.any((m) => m.id == message.id)) return;
+            _messages.add(message);
+            if (_messages.length > _maxRows) {
+              _messages.removeRange(0, _messages.length - _maxRows);
+            }
+          });
+          if (storyAdded && !_loading) {
+            // Refresh the story grid when a message attached a new story.
+            unawaited(_refreshStories());
+          }
+          _scrollToBottom();
+        case MarketResetEvent():
+          // Weekly wipe / Chủ Chợ change: drop the stale session and pull
+          // the fresh section (master, grid, history) in one request.
+          setState(() => _messages.clear());
+          unawaited(_refreshSection());
       }
-      _scrollToBottom();
     });
+  }
+
+  /// Full section refresh after a session reset: new Chủ Chợ, empty story
+  /// grid and fresh history. Best-effort — the stream keeps flowing either
+  /// way.
+  Future<void> _refreshSection() async {
+    try {
+      final repo = ref.read(marketRepositoryProvider);
+      final section = await repo.fetchSection();
+      if (!mounted || _section == null) return;
+      setState(() {
+        _section = section;
+        _messages
+          ..clear()
+          ..addAll(section.messages);
+      });
+    } catch (_) {
+      /* best-effort */
+    }
   }
 
   Future<void> _refreshStories() async {

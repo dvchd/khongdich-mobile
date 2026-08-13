@@ -49,13 +49,17 @@ class MarketRepository {
 
   /// Subscribe to the realtime SSE stream.
   ///
-  /// Emits `(message, storyAdded)` for every `chat` event and re-subscribes
-  /// automatically after network drops. The returned subscription must be
-  /// cancelled by the caller (dispose). Hits `GET /api/v1/mobile/market/stream`.
-  StreamSubscription<(MarketMessage, bool)> subscribeToStream(
-    void Function((MarketMessage, bool) event) onEvent,
+  /// Emits a [MarketMessageEvent] for every `chat` event and a
+  /// [MarketResetEvent] for every `reset` event (weekly session wipe /
+  /// Chủ Chợ change). Re-subscribes automatically after network drops,
+  /// and replays the latest history after every (re)connect so messages
+  /// posted while the connection was down are not lost (the UI dedupes
+  /// by id). The returned subscription must be cancelled by the caller
+  /// (dispose). Hits `GET /api/v1/mobile/market/stream`.
+  StreamSubscription<MarketStreamEvent> subscribeToStream(
+    void Function(MarketStreamEvent event) onEvent,
   ) {
-    final controller = StreamController<(MarketMessage, bool)>();
+    final controller = StreamController<MarketStreamEvent>();
 
     Future<void> connect() async {
       try {
@@ -67,21 +71,46 @@ class MarketRepository {
             receiveTimeout: const Duration(hours: 1),
           ),
         );
+        // Catch-up: EventSource does not replay messages sent while the
+        // connection was down — pull the latest history on every connect.
+        try {
+          final history = await fetchHistory();
+          for (final m in history) {
+            if (!controller.isClosed) {
+              controller.add(MarketMessageEvent(message: m, storyAdded: false));
+            }
+          }
+        } catch (_) {
+          // Best-effort: live events still flow if history fails.
+        }
         final stream = response.data!.stream
             .cast<List<int>>()
             .transform(utf8.decoder)
             .transform(const LineSplitter());
+        var eventName = 'chat';
         await for (final line in stream) {
+          if (line.startsWith('event:')) {
+            eventName = line.substring(6).trim();
+            continue;
+          }
           if (line.startsWith('data:')) {
             final payload = line.substring(5).trim();
             if (payload.isEmpty) continue;
             try {
               final event = jsonDecode(payload) as Map<String, dynamic>;
-              final raw = event['message'] as Map<String, dynamic>;
-              controller.add((
-                MarketMessage.fromJson(raw),
-                event['story_added'] as bool? ?? false,
-              ));
+              if (eventName == 'reset') {
+                controller.add(MarketResetEvent(
+                  masterId: event['master_id'] as String?,
+                  masterUsername: event['master_username'] as String?,
+                  masterDisplayName: event['master_display_name'] as String?,
+                ));
+              } else {
+                final raw = event['message'] as Map<String, dynamic>;
+                controller.add(MarketMessageEvent(
+                  message: MarketMessage.fromJson(raw),
+                  storyAdded: event['story_added'] as bool? ?? false,
+                ));
+              }
             } catch (_) {
               // Malformed event — skip, keep the stream alive.
             }
@@ -112,6 +141,33 @@ class MarketPostResult {
 
   /// True when the content filter auto-hid the message.
   final bool hidden;
+}
+
+/// A single Họp Chợ SSE event.
+sealed class MarketStreamEvent {
+  const MarketStreamEvent();
+}
+
+/// A new chat message (realtime `chat` event, or a history catch-up replay
+/// after a (re)connect — deduped by id on the UI side).
+class MarketMessageEvent extends MarketStreamEvent {
+  const MarketMessageEvent({required this.message, required this.storyAdded});
+  final MarketMessage message;
+  final bool storyAdded;
+}
+
+/// The weekly session was reset: chat wiped and/or Chủ Chợ changed.
+/// Clients must clear the old chat and refresh the section. `masterId`
+/// is null when the chợ closed (no new master).
+class MarketResetEvent extends MarketStreamEvent {
+  const MarketResetEvent({
+    this.masterId,
+    this.masterUsername,
+    this.masterDisplayName,
+  });
+  final String? masterId;
+  final String? masterUsername;
+  final String? masterDisplayName;
 }
 
 final marketRepositoryProvider = Provider<MarketRepository>((ref) {
