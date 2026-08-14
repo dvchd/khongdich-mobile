@@ -58,39 +58,91 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
               ? const _EmptyState()
               : ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  itemCount: page.notifications.length,
+                  itemCount: page.notifications.length +
+                      (page.page < page.totalPages ? 1 : 0),
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, i) {
+                    if (i >= page.notifications.length) {
+                      // "Xem thêm" — nạp trang cũ hơn.
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Center(
+                          child: TextButton(
+                            onPressed: () => ref
+                                .read(notificationsProvider.notifier)
+                                .loadMore(),
+                            child: const Text('Xem thêm'),
+                          ),
+                        ),
+                      );
+                    }
                     final item = page.notifications[i];
-                    return _NotificationTile(
-                      item: item,
-                      onTap: () {
-                        if (!item.isRead) {
-                          ref
-                              .read(notificationsProvider.notifier)
-                              .markRead(item.id);
-                        }
-                        if (item.link != null) {
-                          // Crude deep-link: try to parse
-                          // `/truyen/{slug}/chuong/{num}` style URLs.
-                          // The chapter reader route needs `storyId:num`,
-                          // but the notification link only carries the
-                          // story slug (slug ≠ backend story id). Since
-                          // we can't resolve slug → id without an extra
-                          // API call, navigate to the story detail where
-                          // the user can open the chapter (or continue
-                          // reading if already in progress).
-                          final m = RegExp(
-                                  r'/truyen/([^/?#]+)/chuong/(\d+)')
-                              .firstMatch(item.link!);
-                          final m2 = RegExp(r'/truyen/([^/?#]+)')
-                              .firstMatch(item.link!);
-                          final slug = m?.group(1) ?? m2?.group(1);
-                          if (slug != null) {
-                            context.push('/story/$slug');
+                    // Swipe để xoá — backend giờ có DELETE /mobile/notifications/{id}.
+                    return Dismissible(
+                      key: ValueKey(item.id),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        color: Colors.red.shade400,
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        child: const Icon(Icons.delete_outline,
+                            color: Colors.white),
+                      ),
+                      confirmDismiss: (_) => showDialog<bool>(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: const Text('Xoá thông báo?'),
+                          content: const Text(
+                              'Thông báo này sẽ bị xoá vĩnh viễn.'),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(context).pop(false),
+                              child: const Text('Huỷ'),
+                            ),
+                            FilledButton(
+                              onPressed: () =>
+                                  Navigator.of(context).pop(true),
+                              style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.red),
+                              child: const Text('Xoá'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      onDismissed: (_) => ref
+                          .read(notificationsProvider.notifier)
+                          .delete(item.id),
+                      child: _NotificationTile(
+                        item: item,
+                        onTap: () {
+                          if (!item.isRead) {
+                            ref
+                                .read(notificationsProvider.notifier)
+                                .markRead(item.id);
                           }
-                        }
-                      },
+                          if (item.link != null) {
+                            // Crude deep-link: try to parse
+                            // `/truyen/{slug}/chuong/{num}` style URLs.
+                            // The chapter reader route needs `storyId:num`,
+                            // but the notification link only carries the
+                            // story slug (slug ≠ backend story id). Since
+                            // we can't resolve slug → id without an extra
+                            // API call, navigate to the story detail where
+                            // the user can open the chapter (or continue
+                            // reading if already in progress).
+                            final m = RegExp(
+                                    r'/truyen/([^/?#]+)/chuong/(\d+)')
+                                .firstMatch(item.link!);
+                            final m2 = RegExp(r'/truyen/([^/?#]+)')
+                                .firstMatch(item.link!);
+                            final slug = m?.group(1) ?? m2?.group(1);
+                            if (slug != null) {
+                              context.push('/story/$slug');
+                            }
+                          }
+                        },
+                      ),
                     );
                   },
                 ),
@@ -261,8 +313,11 @@ class NotificationsNotifier
     extends StateNotifier<AsyncValue<PaginatedNotifications>> {
   NotificationsNotifier(this._ref) : super(const AsyncValue.loading());
   final Ref _ref;
+  bool _loadingMore = false;
 
-  Future<void> refresh() async {
+  /// `silent = true` giữ data cũ trong lúc reload (không full-screen
+  /// spinner) — dùng sau mark-read/delete để UI không giật cục.
+  Future<void> refresh({bool silent = false}) async {
     final api = _ref.read(apiClientProvider).maybeWhen(
           data: (c) => c,
           orElse: () => null,
@@ -278,12 +333,41 @@ class NotificationsNotifier
       ));
       return;
     }
-    state = const AsyncValue.loading();
+    if (!silent) state = const AsyncValue.loading();
     try {
       final repo = _ref.read(storyRepositoryProvider);
       state = AsyncValue.data(await repo.listNotifications());
     } catch (e, s) {
-      state = AsyncValue.error(e, s);
+      if (!silent) state = AsyncValue.error(e, s);
+      // silent: giữ nguyên data cũ, lần refresh tiếp theo sẽ cập nhật.
+    }
+  }
+
+  /// Nạp thêm trang cũ hơn — append vào list hiện tại (dedupe theo id).
+  Future<void> loadMore() async {
+    final current = state.valueOrNull;
+    if (current == null || _loadingMore) return;
+    if (current.page >= current.totalPages) return;
+    _loadingMore = true;
+    try {
+      final repo = _ref.read(storyRepositoryProvider);
+      final next = await repo.listNotifications(page: current.page + 1);
+      final known = {for (final n in current.notifications) n.id};
+      state = AsyncValue.data(PaginatedNotifications(
+        notifications: [
+          ...current.notifications,
+          ...next.notifications.where((n) => !known.contains(n.id)),
+        ],
+        total: next.total,
+        unread: next.unread,
+        page: next.page,
+        perPage: next.perPage,
+        totalPages: next.totalPages,
+      ));
+    } catch (e) {
+      AppLogger.warning('NotificationsNotifier.loadMore failed', e);
+    } finally {
+      _loadingMore = false;
     }
   }
 
@@ -291,7 +375,7 @@ class NotificationsNotifier
     try {
       final repo = _ref.read(storyRepositoryProvider);
       await repo.markNotificationRead(id);
-      await refresh();
+      await refresh(silent: true);
     } catch (e) {
       AppLogger.warning('NotificationsNotifier.markRead failed', e);
     }
@@ -301,9 +385,39 @@ class NotificationsNotifier
     try {
       final repo = _ref.read(storyRepositoryProvider);
       await repo.markAllNotificationsRead();
-      await refresh();
+      await refresh(silent: true);
     } catch (e) {
       AppLogger.warning('NotificationsNotifier.markAllRead failed', e);
+    }
+  }
+
+  /// Xoá 1 thông báo + cập nhật list local ngay (không chờ refresh).
+  Future<void> delete(String id) async {
+    final current = state.valueOrNull;
+    if (current != null) {
+      final deleted =
+          current.notifications.where((n) => n.id == id).firstOrNull;
+      state = AsyncValue.data(PaginatedNotifications(
+        notifications: [
+          for (final n in current.notifications)
+            if (n.id != id) n,
+        ],
+        total: current.total - 1,
+        unread: deleted != null && !deleted.isRead
+            ? (current.unread - 1).clamp(0, 1 << 31)
+            : current.unread,
+        page: current.page,
+        perPage: current.perPage,
+        totalPages: current.totalPages,
+      ));
+    }
+    try {
+      final repo = _ref.read(storyRepositoryProvider);
+      await repo.deleteNotification(id);
+    } catch (e) {
+      AppLogger.warning('NotificationsNotifier.delete failed', e);
+      // Server xoá thất bại → khôi phục list từ server.
+      await refresh(silent: true);
     }
   }
 }

@@ -456,17 +456,18 @@ class StoryRepository {
   }
 
   Future<void> markNotificationRead(String id) async {
-    // Existing endpoint — works with Bearer JWT too since it goes
-    // through the same AuthUser extractor.
-    await _dio.put('/api/v1/notifications/$id/read');
+    // Mobile route (Bearer JWT, no CSRF) — the web copy under
+    // /api/v1/notifications/* is CSRF-guarded and unreachable from a
+    // cookie-less native client.
+    await _dio.put('/api/v1/mobile/notifications/$id/read');
   }
 
   Future<void> markAllNotificationsRead() async {
-    await _dio.put('/api/v1/notifications/read-all');
+    await _dio.put('/api/v1/mobile/notifications/read-all');
   }
 
   Future<void> deleteNotification(String id) async {
-    await _dio.delete('/api/v1/notifications/$id');
+    await _dio.delete('/api/v1/mobile/notifications/$id');
   }
 
   // ─── Auth ───────────────────────────────────────────────────────
