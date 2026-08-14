@@ -118,12 +118,48 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     final pos = _scrollController.position;
-    final ratio =
-        pos.pixels / (pos.maxScrollExtent == 0 ? 1 : pos.maxScrollExtent);
+    // maxScrollExtent == 0 → nội dung ngắn hơn viewport (không scroll
+    // được). Trước đây ratio = 0/1 = 0 → chương ngắn KHÔNG BAO GIỜ được
+    // đánh dấu đã đọc (onChapterNearEnd không fire, "continue reading"
+    // không cập nhật, LRU evict sai). Coi như đã đọc xong.
+    final ratio = pos.maxScrollExtent == 0
+        ? 1.0
+        : pos.pixels / pos.maxScrollExtent;
     if (ratio > 0.95 && !_progressSaved) {
       _progressSaved = true;
       widget.onChapterNearEnd?.call();
     }
+  }
+
+  /// Chat chapters reveal messages one tap at a time — when everything
+  /// is revealed the chat view reports it via this callback so reading
+  /// progress is still recorded (the shared scroll controller is not
+  /// attached to the chat's internal list).
+  void _onAllRevealed() {
+    if (_progressSaved) return;
+    _progressSaved = true;
+    widget.onChapterNearEnd?.call();
+  }
+
+  /// Chương ngắn (vừa một màn hình) không bao giờ phát sinh scroll
+  /// event → kiểm tra một lần sau layout để không bỏ sót tiến trình.
+  /// Chỉ áp dụng cho text/visual — manga ảnh load async nên extent
+  /// lúc đầu chưa đáng tin (có thể đánh dấu đã đọc nhầm khi ảnh chưa
+  /// kịp tải), chat có cơ chế reveal riêng, video không cần.
+  void _checkShortChapterAfterLayout() {
+    if (widget.chapter is! TextChapterContent &&
+        widget.chapter is! VisualChapterContent) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _progressSaved) return;
+      if (!_scrollController.hasClients) return;
+      final pos = _scrollController.position;
+      if (pos.maxScrollExtent == 0) {
+        _progressSaved = true;
+        widget.onChapterNearEnd?.call();
+      }
+    });
   }
 
   void _onTapZone(ReaderTapZone zone) {
@@ -185,6 +221,9 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         onPrev: widget.onPrev,
         onParagraphLongPress: widget.onParagraphLongPress,
         mangaLocalImagePaths: widget.mangaLocalImagePaths,
+        onAllRevealed: widget.chapter is ChatChapterContent
+            ? _onAllRevealed
+            : null,
       ),
     );
 
@@ -199,6 +238,9 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
             onSwipeRight: widget.onPrev,
             child: content,
           );
+
+    // Short-chapter check after layout (no-op for scrolling chapters).
+    _checkShortChapterAfterLayout();
 
     return ReaderBar(
       chapter: widget.chapter,
@@ -218,8 +260,13 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
             // Skip for video too — the overlay would swallow the YouTube
             // player's own controls (play/seek/fullscreen). Reader chrome
             // (settings / chapter list) stays reachable via ReaderBar.
+            // Skip for manga as well — the overlay would swallow taps on
+            // images, making the pinch-to-zoom gallery unreachable
+            // (the overlay wins the gesture arena because it's the last
+            // child in the Stack).
             if (widget.chapter is! ChatChapterContent &&
-                widget.chapter is! VideoChapterContent)
+                widget.chapter is! VideoChapterContent &&
+                widget.chapter is! MangaChapterContent)
               Positioned.fill(child: ReaderTapZones(onTap: _onTapZone)),
           ],
         ),

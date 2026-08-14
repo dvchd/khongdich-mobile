@@ -20,12 +20,18 @@ class MarkdownParser {
   /// chapter could crash every client that opens it. 50 levels is
   /// far beyond any legitimate chapter structure.
   static const int _maxDepth = 50;
-  int _depth = 0;
+
+  /// Maximum inline nesting depth (Strong/Emphasis/Link label
+  /// recursion). Each level needs at least ~4 chars of marker, so a
+  /// long pathological string (`**a **b **c ...** b** a**`) could
+  /// recurse tens of thousands of levels deep and overflow the stack.
+  static const int _maxInlineDepth = 100;
 
   /// Parse [source] markdown into a list of top-level [Block]s.
-  List<Block> parse(String source) {
-    if (++_depth > _maxDepth) {
-      _depth--;
+  List<Block> parse(String source) => _parseWithDepth(source, 0);
+
+  List<Block> _parseWithDepth(String source, int depth) {
+    if (depth > _maxDepth) {
       // Fallback: treat the entire source as a single paragraph of
       // plain text. This prevents StackOverflowError on pathological
       // nesting while still showing the user the raw content.
@@ -33,18 +39,14 @@ class MarkdownParser {
         Paragraph([TextRun(source)]),
       ];
     }
-    try {
-      final lines = source.replaceAll('\r\n', '\n').split('\n');
-      final ctx = _ParseContext(lines);
-      return _parseBlocks(ctx);
-    } finally {
-      _depth--;
-    }
+    final lines = source.replaceAll('\r\n', '\n').split('\n');
+    final ctx = _ParseContext(lines);
+    return _parseBlocks(ctx, depth);
   }
 
   // ---- Block parsing ----
 
-  List<Block> _parseBlocks(_ParseContext ctx) {
+  List<Block> _parseBlocks(_ParseContext ctx, int depth) {
     final blocks = <Block>[];
     while (!ctx.isAtEnd) {
       // Skip blank lines between blocks.
@@ -76,13 +78,13 @@ class MarkdownParser {
 
       // Blockquote.
       if (ctx.current.trimLeft().startsWith('>')) {
-        blocks.add(_parseBlockquote(ctx));
+        blocks.add(_parseBlockquote(ctx, depth));
         continue;
       }
 
       // Lists.
       if (_isBulletListItem(ctx.current) || _isOrderedListItem(ctx.current)) {
-        blocks.add(_parseList(ctx));
+        blocks.add(_parseList(ctx, depth));
         continue;
       }
 
@@ -110,7 +112,7 @@ class MarkdownParser {
     return Heading(level, _parseInline(text));
   }
 
-  Block _parseBlockquote(_ParseContext ctx) {
+  Block _parseBlockquote(_ParseContext ctx, int depth) {
     final inner = <String>[];
     while (!ctx.isAtEnd && !ctx.currentIsBlank) {
       final line = ctx.current;
@@ -122,11 +124,16 @@ class MarkdownParser {
       inner.add(stripped);
       ctx.advance();
     }
-    final childBlocks = MarkdownParser().parse(inner.join('\n'));
+    // NOTE: recursion must carry the SAME depth counter through
+    // `_parseWithDepth` — a previous version created a fresh
+    // `MarkdownParser()` instance here, resetting the depth guard to 0
+    // on every level, so deeply-nested content could stack-overflow
+    // the app.
+    final childBlocks = _parseWithDepth(inner.join('\n'), depth + 1);
     return BlockQuote(childBlocks);
   }
 
-  Block _parseList(_ParseContext ctx) {
+  Block _parseList(_ParseContext ctx, int depth) {
     final isBullet = _isBulletListItem(ctx.current);
     var start = 1;
     if (!isBullet) {
@@ -165,7 +172,7 @@ class MarkdownParser {
           break;
         }
       }
-      items.add(MarkdownParser().parse(itemLines.join('\n')));
+      items.add(_parseWithDepth(itemLines.join('\n'), depth + 1));
     }
     return isBullet ? BulletList(items) : OrderedList(start, items);
   }
@@ -264,7 +271,12 @@ class MarkdownParser {
 
   // ---- Inline parsing ----
 
-  List<Inline> _parseInline(String text) {
+  List<Inline> _parseInline(String text) => _parseInlineWithDepth(text, 0);
+
+  List<Inline> _parseInlineWithDepth(String text, int depth) {
+    if (depth > _maxInlineDepth) {
+      return [TextRun(text)];
+    }
     final spans = <Inline>[];
     final buf = StringBuffer();
     var i = 0;
@@ -361,7 +373,9 @@ class MarkdownParser {
           final url = match.group(2) ?? '';
           if (_isSafeUrl(url)) {
             flushText();
-            spans.add(LinkRun(url, _parseInline(label)));
+            spans.add(
+              LinkRun(url, _parseInlineWithDepth(label, depth + 1)),
+            );
             i = match.end;
             continue;
           }
@@ -374,7 +388,11 @@ class MarkdownParser {
         final close = text.indexOf(marker, i + 2);
         if (close > i + 2) {
           flushText();
-          spans.add(StrongRun(_parseInline(text.substring(i + 2, close))));
+          spans.add(
+            StrongRun(
+              _parseInlineWithDepth(text.substring(i + 2, close), depth + 1),
+            ),
+          );
           i = close + 2;
           continue;
         }
@@ -387,7 +405,11 @@ class MarkdownParser {
             !_isWordCharBefore(text, i) &&
             !_isWordCharAfter(text, close)) {
           flushText();
-          spans.add(EmphasisRun(_parseInline(text.substring(i + 1, close))));
+          spans.add(
+            EmphasisRun(
+              _parseInlineWithDepth(text.substring(i + 1, close), depth + 1),
+            ),
+          );
           i = close + 1;
           continue;
         }
@@ -454,6 +476,7 @@ class MarkdownParser {
   static final RegExp _imageRegExp = RegExp(
     r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
   );
+  static final RegExp _bulletItemRegExp = RegExp(r'^\s{0,3}([-*+])\s+');
 
   bool _isHorizontalRule(String line) {
     final trimmed = line.trim();
@@ -471,7 +494,7 @@ class MarkdownParser {
   }
 
   bool _isBulletListItem(String line) {
-    final m = RegExp(r'^\s{0,3}([-*+])\s+').firstMatch(line);
+    final m = _bulletItemRegExp.firstMatch(line);
     return m != null;
   }
 
@@ -484,7 +507,7 @@ class MarkdownParser {
   }
 
   String _stripListMarker(String line) {
-    final bullet = RegExp(r'^\s{0,3}[-*+]\s+').firstMatch(line);
+    final bullet = _bulletItemRegExp.firstMatch(line);
     if (bullet != null) return line.substring(bullet.end);
     final ordered = _orderedListStartRegExp.firstMatch(line.trimLeft())!;
     final leading = line.length - line.trimLeft().length;

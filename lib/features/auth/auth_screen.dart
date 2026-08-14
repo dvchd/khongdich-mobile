@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
+import '../profile/profile_screen.dart' show currentUserProvider;
 
 /// Auth screen. Plan §5.1 + §10.1.
 ///
@@ -37,6 +38,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     try {
       final auth = ref.read(authServiceProvider);
       final result = await auth.signInWithGoogle();
+      // Invalidate để Profile header (nếu đang ở back stack) cập nhật —
+      // trước đây pop về Profile vẫn hiện "Chưa đăng nhập" vì provider
+      // còn alive.
+      ref.invalidate(currentUserProvider);
       if (mounted) {
         _toast('Đăng nhập thành công. Xin chào ${result.user.displayName}!');
         // Quay lại màn hình đã push /auth (reader, chat, ...) nếu có —
@@ -65,10 +70,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       if (mounted) setState(() => _busy = false);
     }
   }
-
-  /// Translate raw Google Sign-In exceptions into user-friendly
-  /// Vietnamese messages. (Logic đã chuyển sang `translateSignInError`
-  /// trong auth_service.dart — giữ lại ở đây để backward compat.)
 
   void _showError(String title, String hint) {
     ScaffoldMessenger.of(context).showSnackBar(

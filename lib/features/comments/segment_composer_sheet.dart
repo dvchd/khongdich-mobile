@@ -62,11 +62,15 @@ class _SegmentComposerSheetState extends ConsumerState<SegmentComposerSheet> {
     final api = ref.read(apiClientProvider).valueOrNull;
     if (api == null || !await api.isAuthenticated()) {
       if (!mounted) return;
+      // Capture router trước khi pop — dùng context của sheet sau khi
+      // pop là fragile (element sắp bị deactivate).
+      final router = GoRouter.of(context);
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('Đăng nhập để bình luận đoạn và góp ý.')),
       );
-      context.push('/auth');
+      router.push('/auth');
       return;
     }
     setState(() => _posting = true);

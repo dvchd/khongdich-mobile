@@ -89,10 +89,16 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         if (handler.currentChapterId == widget.chapterId &&
             handler.currentChunkIndex >= 0 &&
             handler.chunkModels.isNotEmpty) {
-          final chunk = handler.chunkModels[handler.currentChunkIndex];
-          _applyBlock(
-            chunk.blocks.isEmpty ? -1 : chunk.blocks.first.blockIndex,
-          );
+          // Bound check: chunkIndex có thể trỏ ra ngoài danh sách chunk
+          // sau khi nội dung chương được cập nhật (ít chunk hơn) —
+          // trước đây RangeError bị catch (_) nuốt lặng lẽ.
+          final index = handler.currentChunkIndex;
+          if (index < handler.chunkModels.length) {
+            final chunk = handler.chunkModels[index];
+            _applyBlock(
+              chunk.blocks.isEmpty ? -1 : chunk.blocks.first.blockIndex,
+            );
+          }
         }
       } catch (_) {
         // TTS init may fail — silently ignore; the reader still works.
@@ -103,6 +109,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   @override
   void didUpdateWidget(covariant TextChapterView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Khi theme settings (font/size/line height) đổi, chiều cao block
+    // đổi theo → phải tính lại page split. _computePages chỉ cache theo
+    // kích thước màn hình nên trước đây đổi font không làm mới phân
+    // trang → page dùng split cũ trong khi text thật cao hơn/thấp hơn.
+    final themeChanged = _themeFingerprint(oldWidget.theme) !=
+        _themeFingerprint(widget.theme);
     // When the chapter changes (parent navigates to next/prev chapter),
     // the markdown content changes. We must:
     //   1. Re-parse the new markdown into blocks.
@@ -130,7 +142,16 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
           _pageController.jumpToPage(0);
         }
       });
+    } else if (themeChanged) {
+      _lastSize = null;
     }
+  }
+
+  /// Fingerprint các yếu tố ảnh hưởng chiều cao đo được — đổi bất kỳ
+  /// giá trị nào cũng phải làm mới page split.
+  String _themeFingerprint(ReaderTheme t) {
+    final style = t.bodyStyle;
+    return '${style.fontSize}|${style.height}|${style.fontFamily}';
   }
 
   @override
@@ -450,9 +471,17 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
   /// Highlight the exact block being spoken. [blockIndex] comes straight
   /// from the block-aligned TTS chunker — no text matching, so the
-  /// highlight can never drift to the wrong paragraph.
+  /// highlight can never drift to the wrong paragraph. `-1` (chunk maps
+  /// to no block) CLEARS the highlight — trước đây -1 return sớm làm
+  /// highlight vàng dính ở block trước đó.
   void _applyBlock(int blockIndex) {
-    if (blockIndex < 0 || blockIndex >= _blocks.length) return;
+    if (blockIndex < 0) {
+      if (_activeBlockIndex != null) {
+        setState(() => _activeBlockIndex = null);
+      }
+      return;
+    }
+    if (blockIndex >= _blocks.length) return;
     if (blockIndex == _activeBlockIndex) return;
     setState(() => _activeBlockIndex = blockIndex);
     // After the next frame (so the renderer has laid out the new

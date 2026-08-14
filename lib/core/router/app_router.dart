@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:audio_service/audio_service.dart';
-import 'package:drift/drift.dart' show OrderingTerm;
+import 'package:drift/drift.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -33,6 +34,7 @@ import '../../core/network/api_client.dart';
 import '../../models/chapter_content.dart';
 import '../../models/comment.dart';
 import '../../services/manga_image_downloader.dart';
+import '../observability/app_logger.dart';
 import '../shell/main_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -157,6 +159,91 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         Scaffold(body: Center(child: Text('Route not found: ${state.uri}'))),
   );
 });
+
+/// Attach the TTS auto-advance callback for the OFFLINE reader.
+///
+/// Container + router based (không capture widget State) — xem
+/// `attachTtsAutoAdvanceOnline` trong chapter_reader_screen.dart. Khác
+/// biệt: chương kế được lookup từ downloaded_chapters theo
+/// chapterNumber, và route guard check prefix '/chapter-offline/'.
+void attachTtsAutoAdvanceOffline({
+  required ProviderContainer container,
+  required GoRouter router,
+  required TtsAudioHandler handler,
+}) {
+  Future<void> autoLoad(String storyId, int nextChapterNumber) async {
+    try {
+      final db = container.read(appDatabaseProvider);
+      final siblings = await (db.select(db.downloadedChapters)
+            ..where((t) => t.storyId.equals(storyId))
+            ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
+          .get();
+      final i = siblings
+          .indexWhere((s) => s.chapterNumber == nextChapterNumber);
+      if (i < 0) return;
+      final row = siblings[i];
+      final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
+      final fullJson = <String, dynamic>{
+        ...json,
+        'content_markdown': json['content_markdown'] ?? '',
+        'content_type': row.contentType,
+        'story_title': row.storyTitle,
+        'story_slug': row.storySlug,
+        'chapter_number': row.chapterNumber,
+        'title': row.chapterTitle,
+      };
+      final chapter = ChapterContent.fromJson(fullJson);
+      final markdown = chapterMarkdownOrNull(chapter);
+      if (markdown != null) {
+        final hasNext = i < siblings.length - 1;
+        await handler.loadChapter(
+          chapterId: chapter.id,
+          storyId: chapter.storyId,
+          storyTitle: chapter.storyTitle,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          contentMarkdown: markdown,
+          storySlug: chapter.storySlug,
+          nextChapterNumber: hasNext ? siblings[i + 1].chapterNumber : null,
+        );
+        // Re-attach cho chương kế tiếp của chuỗi auto-advance.
+        attachTtsAutoAdvanceOffline(
+          container: container,
+          router: router,
+          handler: handler,
+        );
+        await handler.play();
+      }
+    } catch (e, s) {
+      // Best-effort — don't crash if offline chapter can't be loaded.
+      AppLogger.warning('TTS auto-advance offline load failed', e, s);
+    }
+  }
+
+  Future<void> navigateToNext(String storyId, int nextChapterNumber) async {
+    final db = container.read(appDatabaseProvider);
+    final rows = await (db.select(db.downloadedChapters)
+          ..where((t) =>
+              t.storyId.equals(storyId) &
+              t.chapterNumber.equals(nextChapterNumber)))
+        .get();
+    if (rows.isEmpty) return;
+    router.replace('/chapter-offline/${rows.first.chapterId}');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(autoLoad(storyId, nextChapterNumber));
+    });
+  }
+
+  handler.onChapterComplete = (storyId, nextChapterNumber) {
+    final path = router.routerDelegate.currentConfiguration.uri.path;
+    if (!path.startsWith('/chapter-offline/')) {
+      AppLogger.info(
+          'TTS auto-advance skipped — offline reader not on top ($path)');
+      return;
+    }
+    unawaited(navigateToNext(storyId, nextChapterNumber));
+  };
+}
 
 /// Reads a downloaded chapter from the local Drift DB and displays it
 /// using the **shared** [ReaderBody] widget — same UI as the online
@@ -383,21 +470,18 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   void _toggleTts(ChapterContent chapter) async {
     final markdown = chapterMarkdownOrNull(chapter);
     if (markdown == null) return;
+    // Capture UI handles before any await (lint + safety).
+    final container = ProviderScope.containerOf(context, listen: false);
+    final router = GoRouter.of(context);
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      // Set up auto-advance callback for offline reader.
-      handler.onChapterComplete = (storyId, nextChapterNumber) {
-        if (!mounted) return;
-        // Find the next sibling chapter and navigate to it.
-        final i = _currentIndex;
-        if (i >= 0 && i < _siblings.length - 1) {
-          context.replace('/chapter-offline/${_siblings[i + 1].chapterId}');
-          // Auto-load TTS for the new chapter after it mounts.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _autoLoadTtsOffline(handler, _siblings[i + 1]);
-          });
-        }
-      };
+      // Set up auto-advance callback for offline reader — container/router
+      // based (không capture State, xem attachTtsAutoAdvanceOffline).
+      attachTtsAutoAdvanceOffline(
+        container: container,
+        router: router,
+        handler: handler,
+      );
 
       if (handler.currentChapterId != chapter.id) {
         await handler.stop();
@@ -438,50 +522,6 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           context,
         ).showSnackBar(SnackBar(content: Text('TTS lỗi: $e')));
       }
-    }
-  }
-
-  /// Auto-load TTS for the next offline chapter after auto-advance.
-  void _autoLoadTtsOffline(
-    TtsAudioHandler handler,
-    DownloadedChapter sibling,
-  ) async {
-    try {
-      // Fetch the chapter content from local DB.
-      final db = ref.read(appDatabaseProvider);
-      final row = await (db.select(
-        db.downloadedChapters,
-      )..where((t) => t.chapterId.equals(sibling.chapterId))).getSingleOrNull();
-      if (row == null) return;
-      final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
-      final fullJson = <String, dynamic>{
-        ...json,
-        'content_markdown': json['content_markdown'] ?? '',
-        'content_type': row.contentType,
-        'story_title': row.storyTitle,
-        'story_slug': row.storySlug,
-        'chapter_number': row.chapterNumber,
-        'title': row.chapterTitle,
-      };
-      final chapter = ChapterContent.fromJson(fullJson);
-      final markdown = chapterMarkdownOrNull(chapter);
-      if (markdown != null) {
-        final i = _siblings.indexWhere((s) => s.chapterId == sibling.chapterId);
-        final hasNext = i >= 0 && i < _siblings.length - 1;
-        await handler.loadChapter(
-          chapterId: chapter.id,
-          storyId: chapter.storyId,
-          storyTitle: chapter.storyTitle,
-          chapterTitle: chapter.title,
-          chapterNumber: chapter.chapterNumber,
-          contentMarkdown: markdown,
-          storySlug: chapter.storySlug,
-          nextChapterNumber: hasNext ? _siblings[i + 1].chapterNumber : null,
-        );
-        await handler.play();
-      }
-    } catch (e) {
-      // Best-effort — don't crash if offline chapter can't be loaded.
     }
   }
 

@@ -7,6 +7,7 @@ import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
 import '../../core/widgets/share_story_sheet.dart';
+import '../../models/story.dart' show ChapterSummary;
 import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
@@ -318,8 +319,23 @@ class _StoryDetailBody extends ConsumerWidget {
                       onPressed: activeDownloads > 0
                           ? null
                           : () async {
-                        final repo = ref.read(storyRepositoryProvider);
-                        final chapters = await repo.fetchAllChapters(story.id);
+                        List<ChapterSummary> chapters;
+                        try {
+                          final repo = ref.read(storyRepositoryProvider);
+                          chapters = await repo.fetchAllChapters(story.id);
+                        } catch (e) {
+                          // Offline / 5xx — trước đây unhandled async
+                          // error, không có phản hồi gì cho user.
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                    'Không tải được danh sách chương: $e'),
+                              ),
+                            );
+                          }
+                          return;
+                        }
                         if (chapters.isEmpty) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -427,7 +443,10 @@ class _StoryDetailBody extends ConsumerWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        subtitle: Text(_contentTypeLabel(story.contentTypes.first)),
+                        subtitle: Text(_contentTypeLabel(
+                            story.contentTypes.isNotEmpty
+                                ? story.contentTypes.first
+                                : 'text')),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [

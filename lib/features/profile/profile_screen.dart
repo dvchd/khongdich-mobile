@@ -52,10 +52,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _signOut() async {
-    final auth = ref.read(authServiceProvider);
-    await auth.signOut();
-    ref.invalidate(currentUserProvider);
-    if (mounted) _toast('Đã đăng xuất.');
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final auth = ref.read(authServiceProvider);
+      await auth.signOut();
+      ref.invalidate(currentUserProvider);
+      if (mounted) _toast('Đã đăng xuất.');
+    } catch (e, s) {
+      AppLogger.error('Sign out failed', e, s);
+      if (mounted) _toast('Đăng xuất thất bại — thử lại sau.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _toast(String msg) {

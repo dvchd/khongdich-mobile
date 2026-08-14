@@ -52,8 +52,12 @@ class ChapterCacheService {
   /// TTL 5 phút — tránh refetch list mỗi lần next/prev.
   final Map<String, _ChapterListCache> _chapterListCache = {};
 
-  /// In-flight guard: chapterId đang được fetch → skip duplicate.
+  /// In-flight guard: chapterId đang được prefetch → skip duplicate.
   final Set<String> _inFlight = {};
+
+  /// In-flight guard cho getChapter (fetch chính, không phải prefetch) —
+  /// map chapterId → Future đang chạy.
+  final Map<String, Future<ChapterContent>> _inFlightFetches = {};
 
   /// Locked chapter IDs (từ VipStatus) — skip prefetch để tránh spam API.
   Set<String> _lockedChapterIds = {};
@@ -110,9 +114,29 @@ class ChapterCacheService {
       }
     }
 
+    // In-flight guard: 2 màn hình cùng request 1 chapter (vd. prefetch
+    // đang chạy trong lúc user bấm vào chương đó) → dùng chung 1 fetch
+    // thay vì 2 request API + 2 lần ghi DB.
+    final inFlight = _inFlightFetches[chapterId];
+    if (inFlight != null) {
+      AppLogger.info('ChapterCache: joining in-flight fetch for N$chapterNumber');
+      return inFlight;
+    }
+
     // 4. Cache miss → fetch API + write DB + memory cache.
+    final future = _fetchAndSave(chapterId, chapterNumber);
+    _inFlightFetches[chapterId] = future;
+    try {
+      final chapter = await future;
+      _chapterCache[chapterId] = chapter;
+      return chapter;
+    } finally {
+      _inFlightFetches.remove(chapterId);
+    }
+  }
+
+  Future<ChapterContent> _fetchAndSave(String chapterId, int chapterNumber) async {
     final chapter = await _repo.fetchChapter(chapterId);
-    _chapterCache[chapterId] = chapter;
     await _saveToDb(chapter, source: 'auto_cache');
     AppLogger.info('ChapterCache: MISS → fetched N$chapterNumber '
         '(${_chapterCache.length} memory, DB saved)');
@@ -179,6 +203,15 @@ class ChapterCacheService {
   /// hoặc manual_download.
   Future<void> _saveToDb(ChapterContent chapter, {required String source}) async {
     try {
+      // Race narrow nhưng hậu quả nặng: prefetch (auto_cache) đã fetch
+      // xong chương TRONG LÚC user bấm download manual → upsert với
+      // source=auto_cache sau đó sẽ ghi ĐÈ row manual_download → chương
+      // bị ẩn khỏi Offline Library + dính LRU evict. Giữ source manual
+      // nếu row hiện tại đã là manual_download.
+      final existing = await _db.getDownloadedChapter(chapter.id);
+      final effectiveSource = existing?.source == 'manual_download'
+          ? 'manual_download'
+          : source;
       final json = chapter.toJson();
       await _db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
         chapterId: chapter.id,
@@ -192,7 +225,7 @@ class ChapterCacheService {
         contentVersion: Value(chapter.contentVersion),
         wordCount: Value(chapter.wordCount),
         downloadedAt: DateTime.now().toIso8601String(),
-        source: Value(source),
+        source: Value(effectiveSource),
       ));
     } catch (e, s) {
       AppLogger.warning('ChapterCache: _saveToDb failed for ${chapter.id}', e, s);

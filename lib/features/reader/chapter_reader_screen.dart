@@ -55,16 +55,22 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     storyId: widget.storyId,
     chapterNumber: widget.chapterNumber,
   );
+  String? _prefetchedChapterId;
 
   @override
   void initState() {
     super.initState();
     // Mark the chapter as the user's current reading position on
     // mount — backend `PUT /api/v1/mobile/reading-progress/{story_id}`.
-    Future.microtask(() {
-      ref
-          .read(readingProgressServiceProvider)
-          .markChapterOpened(widget.storyId, widget.chapterNumber);
+    Future.microtask(() async {
+      try {
+        await ref
+            .read(readingProgressServiceProvider)
+            .markChapterOpened(widget.storyId, widget.chapterNumber);
+      } catch (e, s) {
+        // ApiClient chưa sẵn sàng lúc boot → best-effort, không crash.
+        AppLogger.warning('markChapterOpened failed on mount', e, s);
+      }
       // Set locked chapter IDs từ VipStatus → ChapterCacheService skip
       // prefetch các chương VIP-locked (tránh spam API vô nghĩa).
       final vip = ref.read(vipStatusProvider(widget.storyId)).valueOrNull;
@@ -91,9 +97,13 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           // Prefetch chương kế tiếp ngầm (fire-and-forget). Khi user bấm
           // Next, chapterProvider check cache → nếu hit → render ngay
           // không loading spinner. Idempotent — skip nếu đã cache/đang
-          // fetch. Không await để không block UI.
+          // fetch. Chỉ chạy MỘT lần per chapter id — trước đây chạy trên
+          // mọi rebuild của data branch (vd. mỗi lần mở settings sheet).
           final cache = ref.read(chapterCacheServiceProvider);
-          unawaited(cache.prefetchNext(c));
+          if (_prefetchedChapterId != c.id) {
+            _prefetchedChapterId = c.id;
+            unawaited(cache.prefetchNext(c));
+          }
           return _AccessGate(
             chapter: c,
             storyId: widget.storyId,
@@ -118,13 +128,17 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
               ),
               onParagraphLongPress: (plain) => _openSegmentComposer(c, plain),
               onToggleTts: chapterSupportsTts(c) ? () => _toggleTts(c) : null,
-              onChapterNearEnd: () {
-                ref
-                    .read(readingProgressServiceProvider)
-                    .markChapterRead(widget.storyId, c.chapterNumber);
+              onChapterNearEnd: () async {
                 // Retry prefetch khi user scroll gần cuối — nếu prefetch
                 // ban đầu fail (lỗi mạng), đây là cơ hội retry.
                 unawaited(cache.prefetchNext(c));
+                try {
+                  await ref
+                      .read(readingProgressServiceProvider)
+                      .markChapterRead(widget.storyId, c.chapterNumber);
+                } catch (e, s) {
+                  AppLogger.warning('markChapterRead failed', e, s);
+                }
               },
             ),
           );
@@ -201,21 +215,21 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   void _toggleTts(ChapterContent chapter) async {
     final markdown = chapterMarkdownOrNull(chapter);
     if (markdown == null) return;
+    // Capture UI handles before any await (lint + safety).
+    final container = ProviderScope.containerOf(context, listen: false);
+    final router = GoRouter.of(context);
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
       // Set up auto-advance callback: when TTS finishes a chapter,
-      // navigate to the next chapter and auto-play.
-      handler.onChapterComplete = (storyId, nextChapterNumber) {
-        if (!mounted) return;
-        context.replace('/chapter/$storyId:$nextChapterNumber');
-        // The next chapter's _toggleTts will be called automatically
-        // because the new ChapterReaderScreen will detect TTS is active
-        // and auto-load the new chapter. We use a post-frame callback
-        // to let the new screen mount first.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _autoLoadTtsForNewChapter(handler, storyId, nextChapterNumber);
-        });
-      };
+      // navigate to the next chapter and auto-play. The callback is
+      // container/router-based (see attachTtsAutoAdvanceOnline) — it
+      // does NOT capture this State, so the chain survives the screen
+      // being replaced and can never use a dead `ref`.
+      attachTtsAutoAdvanceOnline(
+        container: container,
+        router: router,
+        handler: handler,
+      );
 
       // Nếu đang play/pause chương KHÁC chương user vừa tap → stop + load
       // chương mới. Trước đây chỉ load khi `!state.playing`, nên nếu TTS
@@ -264,25 +278,33 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       }
     }
   }
+}
 
-  /// Auto-load TTS for the next chapter after auto-advance.
-  /// Called from `onChapterComplete` callback via post-frame callback.
-  Future<void> _autoLoadTtsForNewChapter(
-    TtsAudioHandler handler,
-    String storyId,
-    int nextChapterNumber,
-  ) async {
+/// Attach the TTS auto-advance callback for the ONLINE reader.
+///
+/// Container + router based (không capture bất kỳ widget State nào):
+/// - Sau `router.replace`, màn hình cũ dispose — callback cũ trỏ vào
+///   State đã chết → trước đây auto-advance đứt chuỗi im lặng ở chương
+///   thứ 2 và `ref.read` sau dispose là undefined behavior.
+/// - Callback được re-attach sau mỗi lần auto-load → chuỗi nghe liên
+///   tục không đứt.
+/// - Route guard: chỉ navigate khi reader vẫn đang trên top — nếu user
+///   đã rời reader (back về detail/home) thì TTS hết chương không được
+///   hijack navigation hiện tại.
+void attachTtsAutoAdvanceOnline({
+  required ProviderContainer container,
+  required GoRouter router,
+  required TtsAudioHandler handler,
+}) {
+  Future<void> autoLoad(String storyId, int nextChapterNumber) async {
     try {
-      // The new ChapterReaderScreen's build method triggers the fetch via
-      // chapterProvider. `ref.read(...future)` awaits the async computation
-      // (memory cache hit → instant; API miss → waits for network) instead
-      // of the old one-shot `valueOrNull` read, which was still `loading`
-      // here and silently dropped the auto-play.
+      // `container.read(...future)` awaits the async computation (memory
+      // cache hit → instant; API miss → waits for network).
       final nextRef = ChapterRef(
         storyId: storyId,
         chapterNumber: nextChapterNumber,
       );
-      final chapter = await ref.read(chapterProvider(nextRef).future);
+      final chapter = await container.read(chapterProvider(nextRef).future);
       final markdown = chapterMarkdownOrNull(chapter);
       if (markdown != null) {
         await handler.loadChapter(
@@ -295,12 +317,30 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           storySlug: chapter.storySlug,
           nextChapterNumber: chapter.nextChapter,
         );
+        // Re-attach cho chương kế tiếp của chuỗi auto-advance.
+        attachTtsAutoAdvanceOnline(
+          container: container,
+          router: router,
+          handler: handler,
+        );
         await handler.play();
       }
-    } catch (e) {
-      AppLogger.warning('TTS auto-advance loadChapter failed', e);
+    } catch (e, s) {
+      AppLogger.warning('TTS auto-advance loadChapter failed', e, s);
     }
   }
+
+  handler.onChapterComplete = (storyId, nextChapterNumber) {
+    final path = router.routerDelegate.currentConfiguration.uri.path;
+    if (!path.startsWith('/chapter/')) {
+      AppLogger.info('TTS auto-advance skipped — reader not on top ($path)');
+      return;
+    }
+    router.replace('/chapter/$storyId:$nextChapterNumber');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(autoLoad(storyId, nextChapterNumber));
+    });
+  };
 }
 
 /// Markdown payload for TTS — `text` and `visual` (Bách khoa) chapters

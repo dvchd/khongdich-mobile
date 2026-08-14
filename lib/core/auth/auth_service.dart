@@ -6,6 +6,7 @@ import '../network/api_client.dart';
 import '../observability/app_logger.dart';
 import '../../features/tts/tts_audio_handler.dart';
 import '../../repositories/story_repository.dart';
+import '../../services/manga_image_downloader.dart';
 
 /// Single source of truth cho Google Sign-In + JWT trên mobile.
 ///
@@ -115,6 +116,13 @@ class AuthService {
       await _db.deleteAllDownloadedChapters();
     } catch (e) {
       AppLogger.warning('deleteAllDownloadedChapters on signOut failed', e);
+    }
+    // File ảnh manga + bảng downloaded_chapter_images — trước đây không
+    // được xoá → hàng trăm MB ảnh + rows bị bỏ lại vĩnh viễn sau logout.
+    try {
+      await _ref.read(mangaImageDownloaderProvider).deleteAllImages();
+    } catch (e) {
+      AppLogger.warning('deleteAllImages on signOut failed', e);
     }
     try {
       await _db.clearDownloadQueue();

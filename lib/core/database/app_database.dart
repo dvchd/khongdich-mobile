@@ -292,6 +292,19 @@ class AppDatabase extends _$AppDatabase {
         .go();
   }
 
+  /// Delete the image mapping rows for a single URL of a chapter.
+  /// Used before re-inserting so a re-download never leaves duplicate
+  /// rows (the table has no unique constraint on chapterId+imageUrl).
+  Future<void> deleteDownloadedImageByUrl(String chapterId, String imageUrl) {
+    return (delete(downloadedChapterImages)
+          ..where((t) => t.chapterId.equals(chapterId) & t.imageUrl.equals(imageUrl)))
+        .go();
+  }
+
+  /// Xoá toàn bộ image mappings — dùng khi đăng xuất / xoá tất cả
+  /// truyện đã tải (cùng với xoá thư mục ảnh trên disk).
+  Future<void> clearDownloadedImages() => delete(downloadedChapterImages).go();
+
   // ---- Reading progress ----
 
   Future<ReadingProgressTableData?> getReadingProgress(String storyId) {
@@ -308,6 +321,20 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> upsertReadingProgress(ReadingProgressTableCompanion entry) {
     return into(readingProgressTable).insertOnConflictUpdate(entry);
+  }
+
+  /// Đánh dấu synced=1 CHỈ khi row hiện tại vẫn ở [lastChapter].
+  ///
+  /// Đây là conditional update chống race: sau khi PUT lên server hoàn
+  /// tất, nếu user đã chuyển sang chương mới hơn (row đã đổi) thì không
+  /// được ghi synced=1 cho chương cũ — nếu không, tiến trình mới sẽ bị
+  /// tưởng đã sync trong khi server đang giữ chương cũ.
+  Future<void> markProgressSyncedForChapter(
+      String storyId, int lastChapter) {
+    return (update(readingProgressTable)
+          ..where((t) =>
+              t.storyId.equals(storyId) & t.lastChapter.equals(lastChapter)))
+        .write(ReadingProgressTableCompanion(synced: const Value(1)));
   }
 
   /// Xoá toàn bộ reading progress local — dùng khi đăng xuất để không
@@ -365,6 +392,18 @@ class AppDatabase extends _$AppDatabase {
     return (select(downloadQueue)
           ..orderBy([(t) => OrderingTerm.asc(t.queuedAt)]))
         .get();
+  }
+
+  Future<DownloadQueueData?> getDownloadQueueRow(int id) {
+    return (select(downloadQueue)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+  }
+
+  /// Reset các row kẹt ở trạng thái 'downloading' (app bị kill giữa
+  /// chừng) về 'retry' để download manager xử lý lại khi khởi động.
+  Future<void> resetStuckDownloadingRows() {
+    return (update(downloadQueue)..where((t) => t.status.equals('downloading')))
+        .write(DownloadQueueCompanion(status: const Value('retry')));
   }
 
   Future<int> enqueueDownload(DownloadQueueCompanion entry) {

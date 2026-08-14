@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/network/api_client.dart';
+import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
 
@@ -56,6 +57,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           data: (page) => page.notifications.isEmpty
               ? const _EmptyState()
               : ListView.separated(
+                  physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: page.notifications.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, i) {
@@ -290,7 +292,9 @@ class NotificationsNotifier
       final repo = _ref.read(storyRepositoryProvider);
       await repo.markNotificationRead(id);
       await refresh();
-    } catch (_) {}
+    } catch (e) {
+      AppLogger.warning('NotificationsNotifier.markRead failed', e);
+    }
   }
 
   Future<void> markAllRead() async {
@@ -298,6 +302,8 @@ class NotificationsNotifier
       final repo = _ref.read(storyRepositoryProvider);
       await repo.markAllNotificationsRead();
       await refresh();
-    } catch (_) {}
+    } catch (e) {
+      AppLogger.warning('NotificationsNotifier.markAllRead failed', e);
+    }
   }
 }

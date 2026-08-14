@@ -20,6 +20,7 @@ class ChatChapterView extends StatefulWidget {
     this.scrollController,
     this.onNext,
     this.onPrev,
+    this.onAllRevealed,
   });
 
   final List<ChatParticipant> participants;
@@ -28,17 +29,38 @@ class ChatChapterView extends StatefulWidget {
   final VoidCallback? onNext;
   final VoidCallback? onPrev;
 
+  /// Fired once when all messages have been revealed — the reader body
+  /// uses it to mark reading progress (the chat list doesn't attach to
+  /// the shared scroll controller).
+  final VoidCallback? onAllRevealed;
+
   @override
   State<ChatChapterView> createState() => _ChatChapterViewState();
 }
 
 class _ChatChapterViewState extends State<ChatChapterView> {
   int _revealed = 0;
-  final _scrollController = ScrollController();
+  final _fallbackScrollController = ScrollController();
+  bool _allRevealedFired = false;
+
+  ScrollController get _controller =>
+      widget.scrollController ?? _fallbackScrollController;
+
+  @override
+  void didUpdateWidget(covariant ChatChapterView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset the progressive reveal when the chapter changes — without
+    // this the new chapter opens with the old chapter's reveal count
+    // (messages already visible, or even stuck at "hết chương").
+    if (oldWidget.messages != widget.messages) {
+      _revealed = 0;
+      _allRevealedFired = false;
+    }
+  }
 
   @override
   void dispose() {
-    _scrollController.dispose();
+    _fallbackScrollController.dispose();
     super.dispose();
   }
 
@@ -75,12 +97,18 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     if (_revealed < widget.messages.length) {
       setState(() {
         _revealed++;
+        if (_revealed >= widget.messages.length) {
+          _allRevealedFired = true;
+        }
       });
+      if (_allRevealedFired) {
+        widget.onAllRevealed?.call();
+      }
       // Auto-scroll to the new message
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
+        if (_controller.hasClients) {
+          _controller.animateTo(
+            _controller.position.maxScrollExtent,
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
           );
@@ -92,11 +120,13 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   void _revealAll() {
     setState(() {
       _revealed = widget.messages.length;
+      _allRevealedFired = true;
     });
+    widget.onAllRevealed?.call();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+      if (_controller.hasClients) {
+        _controller.animateTo(
+          _controller.position.maxScrollExtent,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -116,7 +146,7 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       child: Stack(
         children: [
           ListView.builder(
-            controller: _scrollController,
+            controller: _controller,
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
             itemCount: visibleMessages.length + (hasMore ? 0 : 1),
             itemBuilder: (_, i) {

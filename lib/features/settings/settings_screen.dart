@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
+import '../../services/manga_image_downloader.dart';
 import '../reader/reader_settings_provider.dart';
 
 /// Settings screen — plan §5.7. Includes:
@@ -194,6 +195,9 @@ class SettingsScreen extends ConsumerWidget {
     final db = ref.read(appDatabaseProvider);
     await db.deleteAllDownloadedChapters();
     await db.clearDownloadQueue();
+    // File ảnh manga + bảng downloaded_chapter_images — trước đây không
+    // được xoá → hàng trăm MB ảnh bị bỏ lại vĩnh viễn trên disk.
+    await ref.read(mangaImageDownloaderProvider).deleteAllImages();
 
     if (context.mounted) {
       _toast(context, 'Đã xoá tất cả truyện đã tải.');

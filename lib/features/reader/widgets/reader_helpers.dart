@@ -113,6 +113,7 @@ Widget buildChapterContent(
   VoidCallback? onNext,
   VoidCallback? onPrev,
   void Function(String plainText)? onParagraphLongPress,
+  VoidCallback? onAllRevealed,
   Map<String, String> mangaLocalImagePaths = const {},
 }) {
   return switch (chapter) {
@@ -151,6 +152,7 @@ Widget buildChapterContent(
       scrollController: scrollController,
       onNext: onNext,
       onPrev: onPrev,
+      onAllRevealed: onAllRevealed,
     ),
     VideoChapterContent(:final video, :final captionMarkdown) =>
       VideoChapterView(

@@ -33,22 +33,36 @@ class DownloadManager {
   // ignore: unused_field
   final ApiClient _api;
   final MangaImageDownloader _mangaImageDownloader;
-  StreamController<List<DownloadQueueData>>? _controller;
 
-  /// Stream of queue state — emits the latest snapshot on every change.
-  Stream<List<DownloadQueueData>> watchQueue() {
-    _controller ??= StreamController<List<DownloadQueueData>>.broadcast(
-      onListen: () {
-        unawaited(_emit());
-      },
-    );
-    return _controller!.stream;
+  /// Serializes [\_processQueue] — without this, two concurrent
+  /// `_processQueue()` runs (e.g. rapid enqueues from the story detail
+  /// + a retry tap) would both snapshot the same 'pending' rows and
+  /// fetch/save the same chapter twice (and download manga images to
+  /// the same files concurrently).
+  bool _processing = false;
+  bool _rerunRequested = false;
+
+  /// Recover queue rows stuck in 'downloading' after an app kill —
+  /// reset them to 'retry' and resume processing. Called when the
+  /// downloads screen opens (the queue is invisible until then).
+  Future<void> recoverInterrupted() async {
+    await _db.resetStuckDownloadingRows();
+    unawaited(_processQueue());
   }
 
-  Future<void> _emit() async {
-    if (_controller == null || _controller!.isClosed) return;
-    final rows = await _db.getDownloadQueue();
-    _controller!.add(rows);
+  /// Re-queue a failed row without creating a duplicate queue row.
+  /// `enqueueChapter` would insert a NEW row for the same chapter
+  /// because it only skips rows already in 'pending'/'retry'/
+  /// 'downloading' — the old 'failed' row would linger forever.
+  Future<void> retry(int queueId) async {
+    await _db.updateDownloadQueueRow(
+      queueId,
+      DownloadQueueCompanion(
+        status: const Value('retry'),
+        errorMessage: const Value(null),
+      ),
+    );
+    unawaited(_processQueue());
   }
 
   /// Enqueue a single chapter for download.
@@ -68,10 +82,23 @@ class DownloadManager {
 
     // Skip if already in the queue (pending or retry).
     final queue = await _db.getDownloadQueue();
-    final alreadyQueued = queue.any((q) =>
-        q.chapterId == chapterId &&
-        (q.status == 'pending' || q.status == 'retry' || q.status == 'downloading'));
-    if (alreadyQueued) return -1;
+    for (final q in queue) {
+      if (q.chapterId != chapterId) continue;
+      if (q.status == 'pending' || q.status == 'retry' || q.status == 'downloading') {
+        return -1;
+      }
+      // A 'failed'/'cancelled' row exists — re-activate it instead of
+      // inserting a duplicate queue row for the same chapter.
+      await _db.updateDownloadQueueRow(
+        q.id,
+        DownloadQueueCompanion(
+          status: const Value('retry'),
+          errorMessage: const Value(null),
+        ),
+      );
+      unawaited(_processQueue());
+      return q.id;
+    }
 
     final id = await _db.enqueueDownload(DownloadQueueCompanion.insert(
       storyId: storyId,
@@ -84,7 +111,6 @@ class DownloadManager {
       storySynopsis: Value(storySynopsis),
       queuedAt: DateTime.now().toIso8601String(),
     ));
-    await _emit();
     unawaited(_processQueue());
     return id;
   }
@@ -105,12 +131,16 @@ class DownloadManager {
             q.status == 'pending' || q.status == 'retry' || q.status == 'downloading')
         .map((q) => q.chapterId)
         .toSet();
+    // One batched query for already-downloaded chapters — previously this
+    // was N sequential `getDownloadedChapter` reads (one per chapter).
+    final downloadedIds = (await _db.getDownloadedChaptersForStory(storyId))
+        .map((c) => c.chapterId)
+        .toSet();
 
     int enqueued = 0;
     for (final cs in chapters) {
       // Skip if already downloaded.
-      final existing = await _db.getDownloadedChapter(cs.id);
-      if (existing != null) continue;
+      if (downloadedIds.contains(cs.id)) continue;
       // Skip if already in the queue.
       if (queuedIds.contains(cs.id)) continue;
 
@@ -125,9 +155,9 @@ class DownloadManager {
         storySynopsis: Value(storySynopsis),
         queuedAt: DateTime.now().toIso8601String(),
       ));
+      queuedIds.add(cs.id);
       enqueued++;
     }
-    await _emit();
     unawaited(_processQueue());
     return enqueued;
   }
@@ -136,10 +166,27 @@ class DownloadManager {
   Future<void> cancel(int queueId) async {
     await _db.updateDownloadQueueRow(queueId,
         DownloadQueueCompanion(status: const Value('cancelled')));
-    await _emit();
   }
 
   Future<void> _processQueue() async {
+    if (_processing) {
+      // A run is in flight — request one more pass when it finishes so
+      // rows enqueued meanwhile are not left behind.
+      _rerunRequested = true;
+      return;
+    }
+    _processing = true;
+    try {
+      do {
+        _rerunRequested = false;
+        await _processQueueOnce();
+      } while (_rerunRequested);
+    } finally {
+      _processing = false;
+    }
+  }
+
+  Future<void> _processQueueOnce() async {
     final queue = await _db.getDownloadQueue();
     final pending = queue
         .where((q) => q.status == 'pending' || q.status == 'retry')
@@ -164,7 +211,17 @@ class DownloadManager {
     }
   }
 
+  Future<bool> _isCancelled(int queueId) async {
+    final current = await _db.getDownloadQueueRow(queueId);
+    return current == null || current.status == 'cancelled';
+  }
+
   Future<void> _saveChapter(DownloadQueueData row, ChapterContent chapter) async {
+    // User cancelled while the fetch was in flight — don't write the
+    // chapter back. Without this re-check, cancel() was ineffective:
+    // the in-flight _processSingle always finished and overwrote the
+    // 'cancelled' status with 'completed'.
+    if (await _isCancelled(row.id)) return;
     final json = chapter.toJson();
     await _db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
       chapterId: chapter.id,
@@ -204,6 +261,9 @@ class DownloadManager {
             'DownloadManager: manga image fetch failed for chapter ${chapter.id}', e, s);
       }
     }
+    // Re-check once more — the user may have cancelled while the manga
+    // images were downloading.
+    if (await _isCancelled(row.id)) return;
     await _db.updateDownloadQueueRow(
         row.id,
         DownloadQueueCompanion(
@@ -211,11 +271,18 @@ class DownloadManager {
           progress: const Value(1.0),
           completedAt: Value(DateTime.now().toIso8601String()),
         ));
-    await _emit();
   }
 
   Future<void> _processSingle(DownloadQueueData row) async {
     try {
+      // Re-read the row: it may have been cancelled while queued, or
+      // re-queued by a batch fallback after another run resolved it.
+      final current = await _db.getDownloadQueueRow(row.id);
+      if (current == null ||
+          (current.status != 'pending' && current.status != 'retry')) {
+        return;
+      }
+
       final existing = await _db.getDownloadedChapter(row.chapterId);
       if (existing != null) {
         await _db.updateDownloadQueueRow(
@@ -225,7 +292,6 @@ class DownloadManager {
               progress: const Value(1.0),
               completedAt: Value(DateTime.now().toIso8601String()),
             ));
-        await _emit();
         return;
       }
 
@@ -242,7 +308,6 @@ class DownloadManager {
               errorMessage: const Value(
                   'Chương VIP — cần được tác giả cấp quyền để tải offline'),
             ));
-        await _emit();
         return;
       }
 
@@ -253,19 +318,25 @@ class DownloadManager {
             startedAt: Value(DateTime.now().toIso8601String()),
             progress: const Value(0.1),
           ));
-      await _emit();
 
       final chapter = await _repo.fetchChapter(row.chapterId);
       await _saveChapter(row, chapter);
     } catch (e, s) {
       AppLogger.warning('DownloadManager._processSingle failed for row ${row.id}', e, s);
-      await _db.updateDownloadQueueRow(
-          row.id,
-          DownloadQueueCompanion(
-            status: const Value('failed'),
-            errorMessage: Value(e.toString()),
-          ));
-      await _emit();
+      // Best-effort error marking — if this DB write itself fails,
+      // don't let the exception escape into the unawaited
+      // _processQueue() future (unhandled async error).
+      try {
+        await _db.updateDownloadQueueRow(
+            row.id,
+            DownloadQueueCompanion(
+              status: const Value('failed'),
+              errorMessage: Value(e.toString()),
+            ));
+      } catch (dbErr, dbStack) {
+        AppLogger.warning(
+            'DownloadManager: failed to mark row ${row.id} failed', dbErr, dbStack);
+      }
     }
   }
 
@@ -289,7 +360,6 @@ class DownloadManager {
               ));
         }
       }
-      await _emit();
       if (accessibleRows.isEmpty) return;
       final accessibleIds = accessibleRows.map((r) => r.chapterId).toList();
 
@@ -303,7 +373,6 @@ class DownloadManager {
               progress: const Value(0.3),
             ));
       }
-      await _emit();
 
       final chapters = await _repo.fetchChaptersBatch(accessibleIds);
       final byId = {for (final c in chapters) c.id: c};
@@ -320,11 +389,12 @@ class DownloadManager {
                 status: const Value('failed'),
                 errorMessage: const Value('Không tìm thấy chương trên máy chủ'),
               ));
-          await _emit();
         }
       }
     } catch (e, s) {
-      // Batch failed — fall back to individual fetches.
+      // Batch failed — fall back to individual fetches. _processSingle
+      // re-reads each row's status, so rows already resolved
+      // (completed/failed/cancelled) are skipped automatically.
       AppLogger.warning('DownloadManager._processBatch failed, falling back to single', e, s);
       for (final row in rows) {
         await _processSingle(row);

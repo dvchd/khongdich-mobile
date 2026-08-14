@@ -16,11 +16,26 @@ import 'offline_library_screen.dart' show offlineLibraryStreamProvider;
 ///
 /// Both sections auto-update in real-time via Drift's `watch()` stream
 /// — no manual refresh needed.
-class DownloadsScreen extends ConsumerWidget {
+class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DownloadsScreen> createState() => _DownloadsScreenState();
+}
+
+class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // App bị kill giữa chừng → row kẹt ở 'downloading' vĩnh viễn (UI
+    // hiện "Đang tải…" mà không retry được). Mở màn hình này là lúc
+    // queue hiện ra → reset các row kẹt về 'retry' + resume xử lý.
+    Future.microtask(
+        () => ref.read(downloadManagerProvider).recoverInterrupted());
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final queueAsync = ref.watch(downloadQueueStreamProvider);
     final libraryAsync = ref.watch(offlineLibraryStreamProvider);
 
@@ -193,12 +208,10 @@ class _DownloadRow extends ConsumerWidget {
                   : Icons.delete_outline),
               onPressed: () async {
                 if (row.status == 'failed') {
-                  await ref.read(downloadManagerProvider).enqueueChapter(
-                        storyId: row.storyId,
-                        storySlug: row.storySlug,
-                        chapterId: row.chapterId,
-                        chapterNumber: row.chapterNumber,
-                      );
+                  // Re-queue chính row này — trước đây gọi enqueueChapter
+                  // → row 'failed' không chặn insert → tạo row TRÙNG cùng
+                  // chapterId (old failed + new completed).
+                  await ref.read(downloadManagerProvider).retry(row.id);
                 } else {
                   final db = ref.read(appDatabaseProvider);
                   await db.deleteDownloadQueueRow(row.id);

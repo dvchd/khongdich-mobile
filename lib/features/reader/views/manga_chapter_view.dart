@@ -79,41 +79,85 @@ class MangaChapterView extends StatelessWidget {
   void _openGallery(BuildContext context, int initialIndex) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          body: Stack(
-            children: [
-              PhotoViewGallery.builder(
-                backgroundDecoration: const BoxDecoration(color: Colors.black),
-                itemCount: images.length,
-                pageController: PageController(initialPage: initialIndex),
-                builder: (_, i) {
-                  final url = images[i];
-                  final localPath = localImagePaths[url];
-                  final ImageProvider imageProvider;
-                  if (localPath != null && File(localPath).existsSync()) {
-                    imageProvider = FileImage(File(localPath));
-                  } else {
-                    imageProvider = CachedNetworkImageProvider(url);
-                  }
-                  return PhotoViewGalleryPageOptions(
-                    imageProvider: imageProvider,
-                    minScale: PhotoViewComputedScale.contained,
-                    maxScale: PhotoViewComputedScale.covered * 2,
-                  );
-                },
-              ),
-              Positioned(
-                top: 16,
-                right: 16,
-                child: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ],
-          ),
+        builder: (_) => _MangaGallery(
+          images: images,
+          localImagePaths: localImagePaths,
+          initialIndex: initialIndex,
         ),
+      ),
+    );
+  }
+}
+
+/// Fullscreen pinch-to-zoom gallery. StatefulWidget để sở hữu (và
+/// dispose) PageController — trước đây controller được tạo inline trong
+/// route builder và không bao giờ dispose → leak mỗi lần mở gallery.
+class _MangaGallery extends StatefulWidget {
+  const _MangaGallery({
+    required this.images,
+    required this.localImagePaths,
+    required this.initialIndex,
+  });
+
+  final List<String> images;
+  final Map<String, String> localImagePaths;
+  final int initialIndex;
+
+  @override
+  State<_MangaGallery> createState() => _MangaGalleryState();
+}
+
+class _MangaGalleryState extends State<_MangaGallery> {
+  late final PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  ImageProvider _resolveProvider(int i) {
+    final url = widget.images[i];
+    final localPath = widget.localImagePaths[url];
+    if (localPath != null && File(localPath).existsSync()) {
+      return FileImage(File(localPath));
+    }
+    return CachedNetworkImageProvider(url);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          PhotoViewGallery.builder(
+            backgroundDecoration: const BoxDecoration(color: Colors.black),
+            itemCount: widget.images.length,
+            pageController: _pageController,
+            builder: (_, i) {
+              return PhotoViewGalleryPageOptions(
+                imageProvider: _resolveProvider(i),
+                minScale: PhotoViewComputedScale.contained,
+                maxScale: PhotoViewComputedScale.covered * 2,
+              );
+            },
+          ),
+          Positioned(
+            top: 16,
+            right: 16,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+        ],
       ),
     );
   }

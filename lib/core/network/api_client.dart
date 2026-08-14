@@ -105,10 +105,15 @@ class ApiClient {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // All mobile API routes live under /api/v1/mobile/* — no need
-          // to attach the token to other paths.
-          if (options.path.startsWith('/api/v1/mobile/') ||
-              options.path.contains('/api/v1/mobile/')) {
+          // Attach the Bearer JWT to every API route EXCEPT the
+          // token-exchange endpoint (`POST .../auth/token` authenticates
+          // with the Google id_token in the body, not the JWT). Some
+          // non-mobile routes are also called (e.g. `/api/v1/notifications/*`,
+          // `/api/v1/search`) — they need the token too, otherwise the
+          // backend rejects them and, worse, the 401 handler below could
+          // clear a perfectly valid JWT (silent logout).
+          final path = options.path;
+          if (path.startsWith('/api/v1/') && !path.endsWith('/auth/token')) {
             final token = await storage.read(key: _kJwt);
             if (token != null) {
               options.headers['Authorization'] = 'Bearer $token';
@@ -124,16 +129,35 @@ class ApiClient {
             // can prompt the user to re-sign-in. Without this, the app
             // would keep sending the expired JWT → permanent 401 loop
             // with no recovery path short of manual sign-out.
+            //
+            // BUT only clear the JWT when this request actually SENT a
+            // Bearer token. A 401 on an anonymous request (e.g. a
+            // permission error or a route we called without a token)
+            // must never nuke a valid JWT — that used to log users out
+            // silently (e.g. the `/api/v1/notifications/*` calls before
+            // the token was attached). Same for the token-exchange
+            // endpoint itself: a failed re-login must keep the old JWT.
             if (resp.statusCode == 401) {
-              try {
-                await storage.delete(key: _kJwt);
-                AppLogger.info(
-                  'ApiClient: cleared expired/revoked JWT after 401',
-                );
-              } catch (err) {
+              final sentBearer =
+                  resp.requestOptions.headers['Authorization'] is String;
+              final isTokenExchange =
+                  resp.requestOptions.path.contains('/auth/token');
+              if (sentBearer && !isTokenExchange) {
+                try {
+                  await storage.delete(key: _kJwt);
+                  AppLogger.info(
+                    'ApiClient: cleared expired/revoked JWT after 401',
+                  );
+                } catch (err) {
+                  AppLogger.warning(
+                    'ApiClient: failed to clear JWT after 401',
+                    err,
+                  );
+                }
+              } else {
                 AppLogger.warning(
-                  'ApiClient: failed to clear JWT after 401',
-                  err,
+                  'ApiClient: 401 on request without Bearer '
+                  '(path=${resp.requestOptions.path}) — JWT kept',
                 );
               }
             }
@@ -142,7 +166,10 @@ class ApiClient {
             if (data is Map) {
               message = data['error'] as String?;
             } else if (data is String && data.isNotEmpty) {
-              message = data;
+              // A reverse proxy (nginx) can answer 502/504 with an HTML
+              // error page — don't show raw HTML to the user.
+              final trimmed = data.trimLeft();
+              message = trimmed.startsWith('<') ? null : data;
             }
             message ??= _defaultMessageFor(resp.statusCode);
             return handler.reject(

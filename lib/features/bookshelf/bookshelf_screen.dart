@@ -180,6 +180,10 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                   ref.read(bookshelfProvider.notifier).refresh(),
               child: items.isEmpty
                   ? ListView(
+                      // AlwaysScrollable: kéo để refresh vẫn hoạt động
+                      // khi list ngắn hơn viewport (ClampingScrollPhysics
+                      // mặc định trên Android không cho kéo).
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         SizedBox(height: 120),
                         isDownloadedTab
@@ -199,6 +203,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                         // Trước đây 0.62 gây cover bị co khi text dài.
                         childAspectRatio: 0.52,
                       ),
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16),
                       itemCount: items.length,
                       itemBuilder: (_, i) {

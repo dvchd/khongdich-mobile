@@ -261,7 +261,9 @@ class _PanelContentState extends State<_PanelContent> {
                               ),
                             )
                           : DropdownButton<String>(
-                              value: _selectedEngine,
+                              value: _engines.contains(_selectedEngine)
+                                  ? _selectedEngine
+                                  : null,
                               hint: const Text('Mặc định hệ thống'),
                               isExpanded: true,
                               items: [
@@ -303,7 +305,15 @@ class _PanelContentState extends State<_PanelContent> {
                               ),
                             )
                           : DropdownButton<String>(
-                              value: _selectedVoice,
+                              // Sanitize: nếu voice đã lưu không còn
+                              // trong danh sách hiện tại (đổi engine, gỡ
+                              // giọng...) thì dùng null — trước đây
+                              // DropdownButton assert crash vì value
+                              // không match item nào.
+                              value: _voices.any(
+                                  (v) => v['name'] == _selectedVoice)
+                                  ? _selectedVoice
+                                  : null,
                               hint: const Text('Mặc định'),
                               isExpanded: true,
                               items: [

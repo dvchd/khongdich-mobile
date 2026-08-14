@@ -37,6 +37,10 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   bool _loadingMore = false;
   bool _posting = false;
   bool _newest = true;
+  // Generation counter: bump mỗi lần _load (refresh) bắt đầu — mọi
+  // mutation đang bay (_loadMore, _toggleLike) phải bỏ qua kết quả nếu
+  // epoch đã đổi, nếu không dữ liệu cũ sẽ ghi đè feed mới.
+  int _feedEpoch = 0;
   final TextEditingController _composer = TextEditingController();
   CommentItem? _replyingTo;
 
@@ -55,6 +59,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   StoryRepository get _repo => ref.read(storyRepositoryProvider);
 
   Future<void> _load() async {
+    final epoch = ++_feedEpoch;
     setState(() {
       _loading = true;
       _error = null;
@@ -65,13 +70,13 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         page: 1,
         sort: _newest ? 'newest' : 'oldest',
       );
-      if (!mounted) return;
+      if (!mounted || epoch != _feedEpoch) return;
       setState(() {
         _feed = feed;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || epoch != _feedEpoch) return;
       setState(() {
         _error = '$e';
         _loading = false;
@@ -83,6 +88,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     final feed = _feed;
     if (feed == null || _loadingMore) return;
     if (feed.page >= feed.totalPages) return;
+    final epoch = _feedEpoch;
     setState(() => _loadingMore = true);
     try {
       final next = await _repo.fetchChapterComments(
@@ -90,10 +96,19 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         page: feed.page + 1,
         sort: _newest ? 'newest' : 'oldest',
       );
-      if (!mounted) return;
+      if (!mounted || epoch != _feedEpoch) return;
       setState(() {
+        final current = _feed;
+        if (current == null) return;
+        // Append + dedupe: với sort=newest, comment mới đăng giữa 2 lần
+        // fetch làm item cuối page trượt xuống page sau → trùng item.
+        final known = {for (final c in current.comments) c.id};
+        final merged = [
+          ...current.comments,
+          ...next.comments.where((c) => !known.contains(c.id)),
+        ];
         _feed = PaginatedComments(
-          comments: [...feed.comments, ...next.comments],
+          comments: merged,
           total: next.total,
           page: next.page,
           perPage: next.perPage,
@@ -102,7 +117,9 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         _loadingMore = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _loadingMore = false);
+      if (mounted && epoch == _feedEpoch) {
+        setState(() => _loadingMore = false);
+      }
     }
   }
 
@@ -134,12 +151,16 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
               content: text,
               parentId: parent?.id,
             );
+      // Check mounted TRƯỚC khi chạm vào controller/state — trước đây
+      // _composer.clear() + setState chạy trước check mounted → nếu user
+      // rời màn hình trong lúc POST đang bay → setState after dispose +
+      // assert crash.
+      if (!mounted) return;
       _composer.clear();
       setState(() {
         _replyingTo = null;
         _posting = false;
       });
-      if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(

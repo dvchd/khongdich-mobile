@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +7,7 @@ import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
+import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import 'publish_web_sheet.dart';
 import 'widgets/home_hero.dart';
 import 'widgets/market_section.dart';
@@ -38,8 +40,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     Future.microtask(() => ref.read(homeProvider.notifier).refresh());
   }
 
-  void _maybeRedirectOffline() {
+  void _maybeRedirectOffline(Object error) {
     if (_redirected) return;
+    // Chỉ redirect khi lỗi là lỗi MẠNG (offline/timeout) — lỗi server
+    // (5xx, 401...) phải giữ lại màn hình lỗi + nút "Thử lại" để user
+    // có thể retry. Trước đây redirect trên MỌI lỗi → nút retry không
+    // bao giờ chạm được.
+    final isNetworkError = error is DioException &&
+        (error.type == DioExceptionType.connectionError ||
+            error.type == DioExceptionType.connectionTimeout ||
+            error.type == DioExceptionType.receiveTimeout ||
+            error.type == DioExceptionType.sendTimeout);
+    if (!isNetworkError) return;
+    // Chỉ redirect khi có ít nhất 1 chương đã tải — như search screen.
+    final downloads =
+        ref.read(offlineLibraryStreamProvider).valueOrNull ?? [];
+    if (downloads.isEmpty) return;
     _redirected = true;
     // Set the tab intent to the "Downloaded" tab (last index in the
     // bookshelf) so the user lands on their offline library directly
@@ -52,10 +68,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
-    // On first error (offline), auto-redirect to bookshelf downloaded tab
-    state.whenOrNull(
-      error: (_, __) => Future.microtask(_maybeRedirectOffline),
-    );
+    // First error (offline) → auto-redirect to bookshelf downloaded tab.
+    // ref.listen thay vì side-effect trong build — trước đây
+    // Future.microtask chạy lại mỗi lần rebuild (đổi theme...).
+    ref.listen(homeProvider, (prev, next) {
+      next.whenOrNull(error: (e, _) => _maybeRedirectOffline(e));
+    });
     return Scaffold(
       appBar: AppBar(
         title: const Text('Không Dịch'),

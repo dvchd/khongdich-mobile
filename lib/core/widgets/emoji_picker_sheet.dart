@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -30,6 +32,10 @@ class _EmojiPickerSheetState extends ConsumerState<_EmojiPickerSheet> {
   bool _loadingMore = false;
   bool _hasMore = false;
   int _popularOffset = 0;
+  // Search debounce + stale-response guard: mỗi ký tự trước đây fire 1
+  // request, response cũ về sau ghi đè kết quả mới (out-of-order).
+  Timer? _searchDebounce;
+  int _searchRequestId = 0;
 
   @override
   void initState() {
@@ -39,6 +45,7 @@ class _EmojiPickerSheetState extends ConsumerState<_EmojiPickerSheet> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -59,14 +66,23 @@ class _EmojiPickerSheetState extends ConsumerState<_EmojiPickerSheet> {
     }
   }
 
-  Future<void> _onSearch(String q) async {
+  void _onSearch(String q) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_runSearch(q));
+    });
+  }
+
+  Future<void> _runSearch(String q) async {
     final trimmed = q.trim();
     if (trimmed.isEmpty) {
-      setState(() => _searchResults = []);
+      _searchRequestId++;
+      if (mounted) setState(() => _searchResults = []);
       return;
     }
+    final requestId = ++_searchRequestId;
     final results = await ref.read(emojiServiceProvider).search(trimmed);
-    if (!mounted) return;
+    if (!mounted || requestId != _searchRequestId) return;
     setState(() => _searchResults = results);
   }
 

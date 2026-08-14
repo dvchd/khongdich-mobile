@@ -58,6 +58,11 @@ class MangaImageDownloader {
           final bytes = await _fetchBytes(url);
           await file.writeAsBytes(bytes, flush: true);
         }
+        // Bảng downloaded_chapter_images không có unique constraint
+        // (chỉ autoIncrement PK) nên `insertOnConflictUpdate` không bao
+        // giờ conflict → re-download để lại duplicate rows. Xoá mapping
+        // cũ của URL này trước khi insert.
+        await _db.deleteDownloadedImageByUrl(chapterId, url);
         await _db.upsertDownloadedImage(
           DownloadedChapterImagesCompanion.insert(
             chapterId: chapterId,
@@ -125,6 +130,23 @@ class MangaImageDownloader {
     } catch (_) {
       /* best-effort */
     }
+  }
+
+  /// Xoá TOÀN BỘ ảnh manga đã tải + mappings. Gọi khi đăng xuất hoặc
+  /// "xoá tất cả truyện đã tải" — trước đây 2 luồng này chỉ xoá bảng
+  /// downloaded_chapters nên file ảnh (hàng trăm MB) + rows trong
+  /// downloaded_chapter_images bị bỏ lại vĩnh viễn trên disk.
+  Future<void> deleteAllImages() async {
+    try {
+      final base = await getApplicationSupportDirectory();
+      final dir = Directory(p.join(base.path, 'manga'));
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (e, s) {
+      AppLogger.warning('MangaImageDownloader.deleteAllImages failed', e, s);
+    }
+    await _db.clearDownloadedImages();
   }
 
   Future<Directory> _mangaDirFor(String chapterId) async {

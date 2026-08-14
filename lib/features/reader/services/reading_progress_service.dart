@@ -20,6 +20,13 @@ class ReadingProgressService {
   final StoryRepository _repo;
   final ApiClient _api;
 
+  /// Serialized PUT chain per story — đảm bảo các request lên server
+  /// theo ĐÚNG thứ tự người dùng tạo ra. Không có chain này, 2 PUT
+  /// bay song song có thể về server ngược thứ tự (PUT ch.6 về trước,
+  /// PUT ch.5 về sau) → server giữ chương CŨ trong khi local tưởng đã
+  /// sync xong → tiến trình thụt lùi vĩnh viễn.
+  final Map<String, Future<void>> _saveChains = {};
+
   Future<void> markChapterOpened(String storyId, int chapterNumber) async {
     final now = DateTime.now().toIso8601String();
     await _db.upsertReadingProgress(
@@ -67,6 +74,21 @@ class ReadingProgressService {
     String anchor,
   ) async {
     if (!await _api.isAuthenticated()) return;
+    // Chain onto the previous save for this story so PUTs reach the
+    // server in order. A failed save must not break the chain — errors
+    // are logged inside and the next save still runs.
+    final prev = _saveChains[storyId] ?? Future<void>.value();
+    final next = prev.then((_) => _doSave(storyId, chapter, ratio, anchor));
+    _saveChains[storyId] = next;
+    await next;
+  }
+
+  Future<void> _doSave(
+    String storyId,
+    int chapter,
+    double ratio,
+    String anchor,
+  ) async {
     try {
       await _repo.saveReadingProgress(
         storyId: storyId,
@@ -74,17 +96,15 @@ class ReadingProgressService {
         scrollRatio: ratio,
         anchor: anchor,
       );
-      await _db.upsertReadingProgress(ReadingProgressTableCompanion.insert(
-        storyId: storyId,
-        lastChapter: chapter,
-        scrollRatio: Value(ratio),
-        anchor: Value(anchor),
-        updatedAt: DateTime.now().toIso8601String(),
-        synced: const Value(1),
-      ));
+      // Conditional mark: chỉ đặt synced=1 nếu row local VẪN là chương
+      // vừa push. Nếu user đã chuyển sang chương mới hơn trong lúc
+      // request đang bay, row mới phải giữ synced=0 để flushPending
+      // push lại — trước đây upsert vô điều kiện đã ghi đè chương mới
+      // bằng chương cũ + synced=1 → mất tiến trình + không bao giờ
+      // flush lại.
+      await _db.markProgressSyncedForChapter(storyId, chapter);
     } catch (e, s) {
       AppLogger.warning('ReadingProgressService._saveToServer failed', e, s);
-      rethrow;
     }
   }
 
@@ -122,16 +142,11 @@ class ReadingProgressService {
             scrollRatio: entry.value.scrollRatio,
             anchor: entry.value.anchor,
           );
-          // Mark synced=1 cho story này (tất cả row cũ cũng mark, vì
-          // backend chỉ giữ 1 row/user/story).
-          await _db.upsertReadingProgress(ReadingProgressTableCompanion.insert(
-            storyId: entry.key,
-            lastChapter: entry.value.lastChapter,
-            scrollRatio: Value(entry.value.scrollRatio),
-            anchor: Value(entry.value.anchor),
-            updatedAt: DateTime.now().toIso8601String(),
-            synced: const Value(1),
-          ));
+          // Conditional mark (xem _doSave): chỉ synced=1 nếu row local
+          // vẫn là chương vừa push — chương mới hơn xuất hiện trong lúc
+          // flush thì giữ synced=0 để flush lần sau.
+          await _db.markProgressSyncedForChapter(
+              entry.key, entry.value.lastChapter);
           AppLogger.info('ReadingProgress: synced story ${entry.key} '
               'chapter ${entry.value.lastChapter}');
         } catch (e, s) {

@@ -60,6 +60,16 @@ class MarketRepository {
     void Function(MarketStreamEvent event) onEvent,
   ) {
     final controller = StreamController<MarketStreamEvent>();
+    // Abort the in-flight SSE request when the caller cancels the
+    // subscription. Without this the reconnect loop keeps running
+    // forever after the screen is disposed (the controller was never
+    // closed), draining battery/data and buffering events into a
+    // listener-less single-subscription controller.
+    final cancelToken = CancelToken();
+    controller.onCancel = () {
+      cancelToken.cancel('subscription cancelled');
+      return controller.close();
+    };
 
     Future<void> connect() async {
       try {
@@ -70,25 +80,28 @@ class MarketRepository {
             headers: {'Accept': 'text/event-stream'},
             receiveTimeout: const Duration(hours: 1),
           ),
+          cancelToken: cancelToken,
         );
+        if (controller.isClosed) return;
         // Catch-up: EventSource does not replay messages sent while the
         // connection was down — pull the latest history on every connect.
         try {
           final history = await fetchHistory();
           for (final m in history) {
-            if (!controller.isClosed) {
-              controller.add(MarketMessageEvent(message: m, storyAdded: false));
-            }
+            if (controller.isClosed) return;
+            controller.add(MarketMessageEvent(message: m, storyAdded: false));
           }
         } catch (_) {
           // Best-effort: live events still flow if history fails.
         }
+        if (controller.isClosed) return;
         final stream = response.data!.stream
             .cast<List<int>>()
             .transform(utf8.decoder)
             .transform(const LineSplitter());
         var eventName = 'chat';
         await for (final line in stream) {
+          if (controller.isClosed) return;
           if (line.startsWith('event:')) {
             eventName = line.substring(6).trim();
             continue;

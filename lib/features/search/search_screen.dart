@@ -244,19 +244,28 @@ final searchProvider =
 class SearchNotifier extends StateNotifier<SearchState> {
   SearchNotifier(this._ref) : super(const SearchIdle());
   final Ref _ref;
+  // Request token chống race: submit "abc" rồi "xyz" nhanh — response
+  // của "abc" về sau "xyz" sẽ bị bỏ qua (last-completion-wins sai).
+  int _latestRequestId = 0;
 
   Future<void> run(String q) async {
+    final requestId = ++_latestRequestId;
     state = const SearchLoading();
     try {
       final repo = _ref.read(storyRepositoryProvider);
       final result = await repo.search(q);
+      if (requestId != _latestRequestId) return;
       state = SearchSuccess(result);
     } catch (e) {
+      if (requestId != _latestRequestId) return;
       state = SearchError('$e');
     }
   }
 
-  void clear() => state = const SearchIdle();
+  void clear() {
+    _latestRequestId++;
+    state = const SearchIdle();
+  }
 }
 
 // ─── Random stories (initial browse) ────────────────────────────
