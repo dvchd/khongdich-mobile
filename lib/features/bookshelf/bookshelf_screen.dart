@@ -366,10 +366,20 @@ class BookshelfNotifier
 
       if (isAuthenticated) {
         final repo = _ref.read(storyRepositoryProvider);
-        final page = await repo.listBookmarks(perPage: 100);
+        // Fetch TẤT CẢ các trang bookmark — trước đây chỉ lấy page 1
+        // (tối đa 100) → user >100 bookmark bị cắt âm thầm.
+        final all = <BookmarkItem>[];
+        var pageNum = 1;
+        while (true) {
+          final page = await repo.listBookmarks(page: pageNum, perPage: 100);
+          all.addAll(page.bookmarks);
+          if (pageNum >= page.totalPages) break;
+          pageNum++;
+        }
         // Cache locally for offline access.
         final db = _ref.read(appDatabaseProvider);
-        for (final b in page.bookmarks) {
+        final seenIds = {for (final b in all) b.storyId};
+        for (final b in all) {
           await db.upsertBookmark(LocalBookmarksCompanion.insert(
             storyId: b.storyId,
             listType: b.listType,
@@ -381,7 +391,15 @@ class BookshelfNotifier
             updatedAt: b.bookmarkedAt.toIso8601String(),
           ));
         }
-        state = AsyncValue.data(page.bookmarks);
+        // Prune local rows bị xoá ở thiết bị khác — nếu không, fallback
+        // offline sẽ hiện bookmark ma không còn tồn tại trên server.
+        final locals = await db.getBookmarks();
+        for (final l in locals) {
+          if (!seenIds.contains(l.storyId)) {
+            await db.deleteBookmark(l.storyId);
+          }
+        }
+        state = AsyncValue.data(all);
       } else {
         // Local bookmarks — use the new metadata columns.
         final db = _ref.read(appDatabaseProvider);
