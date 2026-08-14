@@ -115,10 +115,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
                 extra: c.title,
               ),
               onParagraphLongPress: (plain) => _openSegmentComposer(c, plain),
-              onToggleTts: chapter is TextChapterContent ||
-                      chapter is VisualChapterContent
-                  ? () => _toggleTts(c)
-                  : null,
+              onToggleTts: chapterSupportsTts(c) ? () => _toggleTts(c) : null,
               onChapterNearEnd: () {
                 ref
                     .read(readingProgressServiceProvider)
@@ -294,6 +291,18 @@ String? chapterMarkdownOrNull(ChapterContent? chapter) {
     _ => null,
   };
 }
+
+/// Whether the TTS (headphone) toggle is available for [chapter].
+///
+/// `text` and `visual` (Bách khoa) chapters share the text pipeline;
+/// manga / chat / video have no TTS. Both readers (online + offline)
+/// use this to gate the "Nghe audio" button. Previously the online
+/// reader checked the provider's `AsyncValue` instead of the unwrapped
+/// chapter (`chapter is TextChapterContent` where `chapter` was the
+/// AsyncValue) → the check was always false → the headphone button
+/// silently disappeared from the online reader.
+bool chapterSupportsTts(ChapterContent? chapter) =>
+    chapter is TextChapterContent || chapter is VisualChapterContent;
 
 /// Online chapter-list sheet — fetches the chapter list from the API
 /// and forwards selection to the shared [ChapterListSheet].

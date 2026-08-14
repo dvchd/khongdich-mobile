@@ -496,10 +496,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           context.push('/chapter-comments/${chapter.id}', extra: chapter.title);
         },
         onParagraphLongPress: (plain) => _openSegmentComposer(chapter, plain),
-        onToggleTts: chapter is TextChapterContent ||
-          chapter is VisualChapterContent
-      ? () => _toggleTts(chapter)
-      : null,
+        onToggleTts: chapterSupportsTts(chapter) ? () => _toggleTts(chapter) : null,
         mangaLocalImagePaths: _mangaLocalImagePaths,
         onChapterNearEnd: () async {
           // Mark chapter as read in local Drift DB (cho LRU evict +
