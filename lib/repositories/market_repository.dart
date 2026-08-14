@@ -98,18 +98,28 @@ class MarketRepository {
             if (payload.isEmpty) continue;
             try {
               final event = jsonDecode(payload) as Map<String, dynamic>;
-              if (eventName == 'reset') {
-                controller.add(MarketResetEvent(
-                  masterId: event['master_id'] as String?,
-                  masterUsername: event['master_username'] as String?,
-                  masterDisplayName: event['master_display_name'] as String?,
-                ));
-              } else {
-                final raw = event['message'] as Map<String, dynamic>;
-                controller.add(MarketMessageEvent(
-                  message: MarketMessage.fromJson(raw),
-                  storyAdded: event['story_added'] as bool? ?? false,
-                ));
+              switch (eventName) {
+                case 'reset':
+                  controller.add(MarketResetEvent(
+                    masterId: event['master_id'] as String?,
+                    masterUsername: event['master_username'] as String?,
+                    masterDisplayName: event['master_display_name'] as String?,
+                  ));
+                case 'edit':
+                  final raw = event['message'] as Map<String, dynamic>;
+                  controller.add(
+                    MarketEditEvent(message: MarketMessage.fromJson(raw)),
+                  );
+                case 'delete':
+                  controller.add(
+                    MarketDeleteEvent(id: event['id'] as String),
+                  );
+                default:
+                  final raw = event['message'] as Map<String, dynamic>;
+                  controller.add(MarketMessageEvent(
+                    message: MarketMessage.fromJson(raw),
+                    storyAdded: event['story_added'] as bool? ?? false,
+                  ));
               }
             } catch (_) {
               // Malformed event — skip, keep the stream alive.
@@ -168,6 +178,19 @@ class MarketResetEvent extends MarketStreamEvent {
   final String? masterId;
   final String? masterUsername;
   final String? masterDisplayName;
+}
+
+/// A message was edited (own edit response or another device) — replace
+/// the row in place.
+class MarketEditEvent extends MarketStreamEvent {
+  const MarketEditEvent({required this.message});
+  final MarketMessage message;
+}
+
+/// A message was soft-deleted — remove the row.
+class MarketDeleteEvent extends MarketStreamEvent {
+  const MarketDeleteEvent({required this.id});
+  final String id;
 }
 
 final marketRepositoryProvider = Provider<MarketRepository>((ref) {

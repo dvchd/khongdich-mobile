@@ -103,6 +103,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           // the fresh section (master, grid, history) in one request.
           setState(() => _messages.clear());
           unawaited(_refreshSection());
+        case MarketEditEvent(:final message):
+          setState(() {
+            final i = _messages.indexWhere((m) => m.id == message.id);
+            if (i >= 0) _messages[i] = message;
+          });
+        case MarketDeleteEvent(:final id):
+          setState(() => _messages.removeWhere((m) => m.id == id));
       }
     });
   }
@@ -466,8 +473,41 @@ class _MessageTile extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (message.edited)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: Text(
+                          '· đã sửa',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.4,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
+                if (message.isReply)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '↩ Trả lời '
+                            '${message.parentAuthor ?? 'tin đã xóa'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (message.storyTitle != null && message.storySlug != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 2, bottom: 2),

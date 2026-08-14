@@ -59,6 +59,9 @@ class MarketMessage {
     this.storyId,
     this.storyTitle,
     this.storySlug,
+    this.parentId,
+    this.parentAuthor,
+    this.editedAt,
   });
 
   final String id;
@@ -76,6 +79,19 @@ class MarketMessage {
   final String? storyTitle;
   final String? storySlug;
 
+  /// Reply-to-message id (`null` for top-level messages).
+  final String? parentId;
+
+  /// Display name of the replied-to message's author.
+  final String? parentAuthor;
+
+  /// Set when the author edited the message ("· đã sửa" marker).
+  final DateTime? editedAt;
+
+  bool get isReply => parentId != null;
+
+  bool get edited => editedAt != null;
+
   factory MarketMessage.fromJson(Map<String, dynamic> json) => MarketMessage(
     id: json['id'] as String,
     userId: json['user_id'] as String,
@@ -90,6 +106,9 @@ class MarketMessage {
     storyId: json['story_id'] as String?,
     storyTitle: json['story_title'] as String?,
     storySlug: json['story_slug'] as String?,
+    parentId: json['parent_id'] as String?,
+    parentAuthor: json['parent_author'] as String?,
+    editedAt: DateTime.tryParse(json['edited_at'] as String? ?? ''),
   );
 
   /// Relative time label, e.g. "2 phút trước" — same rules as the
