@@ -94,6 +94,10 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       if (!mounted) return;
       switch (event) {
         case MarketMessageEvent(:final message, :final storyAdded):
+          // Mirror the web: only auto-scroll when already near the bottom,
+          // so an incoming message doesn't yank readers who scrolled up.
+          final nearBottom = _scroll.hasClients &&
+              _scroll.position.maxScrollExtent - _scroll.position.pixels < 120;
           setState(() {
             if (_messages.any((m) => m.id == message.id)) return;
             _messages.add(message);
@@ -105,7 +109,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
             // Refresh the story grid when a message attached a new story.
             unawaited(_refreshStories());
           }
-          _scrollToBottom();
+          if (nearBottom) _scrollToBottom();
         case MarketResetEvent():
           // Weekly wipe / Chủ Chợ change: drop the stale session and pull
           // the fresh section (master, grid, history) in one request.
