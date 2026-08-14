@@ -162,6 +162,7 @@ class MarketHomeSection extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
+                          '${m.isReply ? '↩ ${m.parentAuthor ?? 'tin đã xóa'} · ' : ''}'
                           '${m.displayName.isEmpty ? m.username : m.displayName}: ',
                           style: theme.textTheme.labelSmall?.copyWith(
                             fontWeight: FontWeight.w700,

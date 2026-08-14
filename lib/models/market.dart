@@ -61,6 +61,7 @@ class MarketMessage {
     this.storySlug,
     this.parentId,
     this.parentAuthor,
+    this.parentPreview,
     this.editedAt,
   });
 
@@ -85,6 +86,10 @@ class MarketMessage {
   /// Display name of the replied-to message's author.
   final String? parentAuthor;
 
+  /// First 60 characters of the replied-to message's content — the
+  /// reply-chip preview.
+  final String? parentPreview;
+
   /// Set when the author edited the message ("· đã sửa" marker).
   final DateTime? editedAt;
 
@@ -108,6 +113,7 @@ class MarketMessage {
     storySlug: json['story_slug'] as String?,
     parentId: json['parent_id'] as String?,
     parentAuthor: json['parent_author'] as String?,
+    parentPreview: json['parent_preview'] as String?,
     editedAt: DateTime.tryParse(json['edited_at'] as String? ?? ''),
   );
 

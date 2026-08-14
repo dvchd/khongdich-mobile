@@ -33,8 +33,11 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   bool _sending = false;
   String? _notice;
   Timer? _noticeTimer;
+  Timer? _flashTimer;
+  String? _flashId;
   StreamSubscription<MarketStreamEvent>? _sub;
   final List<MarketMessage> _messages = [];
+  final Map<String, GlobalKey> _msgKeys = {};
   final TextEditingController _composer = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
@@ -48,6 +51,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   void dispose() {
     _sub?.cancel();
     _noticeTimer?.cancel();
+    _flashTimer?.cancel();
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
@@ -131,6 +135,29 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     } catch (_) {
       /* best-effort */
     }
+  }
+
+  /// Scroll to the replied-to message and flash-highlight its tile. The
+  /// parent may have been trimmed from the on-screen list — notice when
+  /// it is not available.
+  void _jumpToParent(String? parentId) {
+    if (parentId == null) return;
+    final ctx = _msgKeys[parentId]?.currentContext;
+    if (ctx == null) {
+      _showNotice('Tin nhắn gốc nằm ngoài phạm vi hiển thị');
+      return;
+    }
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.4,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
+    setState(() => _flashId = parentId);
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _flashId = null);
+    });
   }
 
   Future<void> _refreshStories() async {
@@ -345,7 +372,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
               ),
             ),
           ),
-        for (final m in _messages) _MessageTile(message: m),
+        for (final m in _messages)
+          _MessageTile(
+            key: _msgKeys.putIfAbsent(m.id, GlobalKey.new),
+            message: m,
+            flash: _flashId == m.id,
+            onJumpParent: _jumpToParent,
+          ),
         const SizedBox(height: 12),
       ],
     );
@@ -413,126 +446,200 @@ class _StoryRail extends StatelessWidget {
 }
 
 class _MessageTile extends StatelessWidget {
-  const _MessageTile({required this.message});
+  const _MessageTile({
+    super.key,
+    required this.message,
+    required this.flash,
+    required this.onJumpParent,
+  });
 
   final MarketMessage message;
+  final bool flash;
+  final void Function(String? parentId) onJumpParent;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final name = message.displayName.isEmpty
         ? message.username
         : message.displayName;
     final initial = name.isEmpty ? '?' : name.characters.first;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
-            child: message.avatarUrl == null || message.avatarUrl!.isEmpty
-                ? Text(initial, style: const TextStyle(fontSize: 13))
-                : ClipOval(
-                    child: Image.network(
-                      message.avatarUrl!,
-                      width: 32,
-                      height: 32,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Text(
-                        initial,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w700,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+      color: flash ? AppTheme.primary.withValues(alpha: 0.14) : Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+              child: message.avatarUrl == null || message.avatarUrl!.isEmpty
+                  ? Text(initial, style: const TextStyle(fontSize: 13))
+                  : ClipOval(
+                      child: Image.network(
+                        message.avatarUrl!,
+                        width: 32,
+                        height: 32,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Text(
+                          initial,
+                          style: const TextStyle(fontSize: 13),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      message.relTime(),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withValues(
-                          alpha: 0.4,
-                        ),
-                      ),
-                    ),
-                    if (message.edited)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 6),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
                         child: Text(
-                          '· đã sửa',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.4,
-                            ),
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
-                  ],
-                ),
-                if (message.isReply)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Row(
-                      children: [
-                        Expanded(
+                      const SizedBox(width: 6),
+                      Text(
+                        message.relTime(),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurface.withValues(
+                            alpha: 0.4,
+                          ),
+                        ),
+                      ),
+                      if (message.edited)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
                           child: Text(
-                            '↩ Trả lời '
-                            '${message.parentAuthor ?? 'tin đã xóa'}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            '· đã sửa',
                             style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withValues(
-                                alpha: 0.5,
+                              color: scheme.onSurface.withValues(
+                                alpha: 0.4,
                               ),
                             ),
                           ),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
-                if (message.storyTitle != null && message.storySlug != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2, bottom: 2),
-                    child: InkWell(
-                      onTap: () => context.push('/story/${message.storySlug}'),
-                      child: Text(
-                        '📖 ${message.storyTitle!} →',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.primary,
-                          fontWeight: FontWeight.w600,
+                  if (message.isReply)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: _ReplyChip(
+                        message: message,
+                        onTap: () => onJumpParent(message.parentId),
+                      ),
+                    ),
+                  if (message.storyTitle != null && message.storySlug != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2, bottom: 2),
+                      child: InkWell(
+                        onTap: () => context.push('/story/${message.storySlug}'),
+                        child: Text(
+                          '📖 ${message.storyTitle!} →',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
+                  EmojiText(
+                    text: message.content,
+                    contentHtml: message.contentHtml,
+                    style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
                   ),
-                EmojiText(
-                  text: message.content,
-                  contentHtml: message.contentHtml,
-                  style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pill chip "↩ @tên: nội dung…" — identifies the replied-to message in
+/// the flat chat flow. Tapping jumps to the parent tile and flashes it.
+class _ReplyChip extends StatelessWidget {
+  const _ReplyChip({required this.message, required this.onTap});
+
+  final MarketMessage message;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final preview = message.parentPreview ?? '';
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        constraints: const BoxConstraints(minHeight: 28),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.subdirectory_arrow_left,
+              size: 13,
+              color: scheme.onSurface.withValues(alpha: 0.55),
+            ),
+            const SizedBox(width: 5),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: Text(
+                message.parentAuthor ?? 'tin đã xóa',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            if (preview.isNotEmpty) ...[
+              const SizedBox(width: 7),
+              Container(
+                width: 1,
+                height: 10,
+                color: scheme.outlineVariant,
+              ),
+              const SizedBox(width: 7),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 130),
+                child: Text(
+                  preview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurface.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
