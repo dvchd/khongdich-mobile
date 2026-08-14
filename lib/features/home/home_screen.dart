@@ -96,7 +96,8 @@ class _HomeContent extends ConsumerWidget {
         home.hot.isNotEmpty ||
         home.fresh.isNotEmpty ||
         home.completed.isNotEmpty ||
-        home.picks.isNotEmpty;
+        home.picks.isNotEmpty ||
+        home.random.isNotEmpty;
     return ListView(
       children: [
         const HomeHero(),
@@ -148,6 +149,16 @@ class _HomeContent extends ConsumerWidget {
             trailing: '${home.completed.length} truyện',
             items: [
               for (final s in home.completed)
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
+            ],
+          ),
+        if (home.random.isNotEmpty)
+          StorySection(
+            title: 'Truyện ngẫu nhiên',
+            icon: Icons.casino,
+            trailing: '${home.random.length} truyện',
+            items: [
+              for (final s in home.random)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
@@ -379,12 +390,17 @@ class HomeFeed {
     required this.fresh,
     required this.completed,
     required this.picks,
+    required this.random,
     required this.continueReading,
   });
   final List<StorySummary> hot;
   final List<StorySummary> fresh;
   final List<StorySummary> completed;
   final List<StorySummary> picks;
+
+  /// Truyện ngẫu nhiên — khám phá tình cờ, giống web (`sort=random`
+  /// với seed mới mỗi lần refresh).
+  final List<StorySummary> random;
   final List<ContinueReadingItem> continueReading;
 }
 
@@ -411,6 +427,11 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
         repo.listStories(sort: 'fresh', perPage: 15),
         repo.listStories(sort: 'completed', perPage: 15),
         repo.listStories(sort: 'picks', perPage: 15),
+        repo.listStories(
+          sort: 'random',
+          perPage: 15,
+          seed: DateTime.now().millisecondsSinceEpoch.toString(),
+        ),
         repo.fetchContinueReading().catchError((_) => <ContinueReadingItem>[]),
       ]);
       state = AsyncValue.data(HomeFeed(
@@ -418,7 +439,8 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
         fresh: (results[1] as PaginatedStories).stories,
         completed: (results[2] as PaginatedStories).stories,
         picks: (results[3] as PaginatedStories).stories,
-        continueReading: results[4] as List<ContinueReadingItem>,
+        random: (results[4] as PaginatedStories).stories,
+        continueReading: results[5] as List<ContinueReadingItem>,
       ));
     } catch (e, s) {
       state = AsyncValue.error(e, s);

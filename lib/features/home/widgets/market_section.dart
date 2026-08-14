@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/emoji_text.dart';
 import '../../../models/market.dart';
 import '../../../repositories/market_repository.dart';
+import 'story_card.dart';
 
 /// Home "Chợ Phiên" section — mirrors the web home market section:
 /// header with this week's Chủ Chợ, story grid, a preview of the latest
@@ -69,59 +69,18 @@ class MarketHomeSection extends ConsumerWidget {
                 const SizedBox(height: 10),
                 if (section.stories.isNotEmpty)
                   SizedBox(
-                    height: 100,
+                    height: 246,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: section.stories.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 10),
+                      separatorBuilder: (_, _) => const SizedBox(width: 12),
                       itemBuilder: (context, i) {
                         final s = section.stories[i];
                         return SizedBox(
-                          width: 70,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(8),
+                          width: 120,
+                          child: StoryCard(
+                            story: s,
                             onTap: () => context.push('/story/${s.slug}'),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: s.coverUrl == null
-                                        ? Container(
-                                            color: AppTheme.primary.withValues(
-                                              alpha: 0.15,
-                                            ),
-                                            child: const Icon(
-                                              Icons.book,
-                                              size: 28,
-                                            ),
-                                          )
-                                        : Image.network(
-                                            s.coverUrl!,
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (_, _, _) =>
-                                                Container(
-                                                  color: AppTheme.primary
-                                                      .withValues(alpha: 0.15),
-                                                  child: const Icon(
-                                                    Icons.book,
-                                                    size: 28,
-                                                  ),
-                                                ),
-                                          ),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  s.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.center,
-                                  style: theme.textTheme.labelSmall,
-                                ),
-                              ],
-                            ),
                           ),
                         );
                       },

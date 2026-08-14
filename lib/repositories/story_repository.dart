@@ -295,6 +295,27 @@ class StoryRepository {
     );
   }
 
+  /// Post a reader suggestion (góp ý sửa đoạn) for a paragraph. Like
+  /// segment comments, `paraKey` may be empty — the backend resolves the
+  /// anchor from the quote text.
+  /// Hits `POST /api/v1/mobile/chapters/{id}/suggestions`.
+  Future<void> postSuggestion({
+    required String chapterId,
+    String paraKey = '',
+    required String quoteText,
+    required String suggestedText,
+  }) async {
+    await _dio.post(
+      '/api/v1/mobile/chapters/$chapterId/suggestions',
+      data: {
+        'chapter_id': chapterId,
+        'para_key': paraKey,
+        'quote_text': quoteText,
+        'suggested_text': suggestedText,
+      },
+    );
+  }
+
   /// Toggle a like on a regular comment.
   /// Hits `POST /api/v1/mobile/comments/{id}/like`.
   Future<(bool liked, int count)> toggleCommentLike(String commentId) async {

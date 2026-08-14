@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/database/app_database.dart';
 import '../../core/markdown/markdown.dart';
 import '../../core/observability/app_logger.dart';
+import '../../core/utils/notification_permission.dart';
 import '../reader/services/reading_progress_service.dart';
 
 /// Foreground-service-backed TTS player for Không Dịch.
@@ -60,7 +61,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   final ReadingProgressService _progressService;
 
   final FlutterTts _tts = FlutterTts();
-  List<String> _chunks = const [];
+  List<TtsChunk> _chunks = const [];
   int _currentChunk = 0;
   String? _currentChapterId;
   String? _currentStoryId;
@@ -71,6 +72,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   bool _isSpeaking = false; // Guard against re-entrant completion handlers
   // Future của speak loop hiện tại — dùng để cancel khi stop/pause.
   Future<void>? _speakLoopFuture;
+  // Timers cho các sự kiện highlight trung gian TRONG một chunk (chunk
+  // có thể chứa nhiều block ngắn — timers advance highlight qua từng
+  // block tỷ lệ theo độ dài chữ). Cancel khi chunk xong / pause / stop.
+  final List<Timer> _blockAdvanceTimers = [];
   // Callback khi TTS đọc xong 1 chương — reader screen dùng để load
   // chương tiếp theo và tự play tiếp.
   void Function(String storyId, int nextChapterNumber)? onChapterComplete;
@@ -112,7 +117,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// Read-only access to the chunk list of the currently-loaded chapter.
   /// Used by the reader to map chunk index → markdown block for highlight
   /// + auto-scroll. Returns an empty list when no chapter is loaded.
-  List<String> get chunks => List.unmodifiable(_chunks);
+  List<String> get chunks => [for (final c in _chunks) c.text];
+
+  /// Block-aligned chunk models of the currently-loaded chapter (the same
+  /// length as [chunks]). Each entry carries the exact rendered-block
+  /// indices the chunk covers.
+  List<TtsChunk> get chunkModels => List.unmodifiable(_chunks);
 
   /// Index of the chunk currently being spoken. -1 when idle.
   int get currentChunkIndex => _currentChunk;
@@ -496,7 +506,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     if (_speakLoopFuture != null) {
       await _speakLoopFuture;
     }
-    _chunks = TtsMarkdownPreprocessor.process(contentMarkdown);
+    _cancelBlockAdvanceTimer();
+    _chunks = TtsMarkdownPreprocessor.processWithBlocks(contentMarkdown);
     AppLogger.info('TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
     _currentChapterId = chapterId;
     _currentStoryId = storyId;
@@ -552,6 +563,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
     // Request audio focus (không đè nhạc/video khác đang phát).
     await _activateAudioSession();
+    // Android 13+: nếu chưa cấp POST_NOTIFICATIONS, notification của
+    // foreground service (thanh quản lý audio) bị hệ thống ẩn — xin
+    // quyền trước khi phát. Best-effort, không block hot path.
+    unawaited(NotificationPermission.request());
     // Check if the loop is already running BEFORE setting _isSpeaking.
     // If we set _isSpeaking first and then return, the guard works but
     // the ordering is confusing — _isSpeaking would be true even though
@@ -575,11 +590,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       ),
     );
     _chunkProgressController.add(
-      TtsChunkProgress(
-        chapterId: _currentChapterId!,
-        chunkIndex: _currentChunk,
-        totalChunks: _chunks.length,
-      ),
+      _chunkProgressEvent(_currentChunk),
     );
     _speakLoopFuture = _speakLoop();
     // Fire-and-forget — loop tự kết thúc khi chapter complete hoặc stop.
@@ -593,6 +604,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   @override
   Future<void> pause() async {
     _isSpeaking = false;
+    _cancelBlockAdvanceTimer();
     await _tts.stop();
     // Đợi loop hiện tại exit (nó sẽ exit do _isSpeaking = false).
     if (_speakLoopFuture != null) {
@@ -615,6 +627,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   @override
   Future<void> stop() async {
     _isSpeaking = false;
+    _cancelBlockAdvanceTimer();
     await _tts.stop();
     // Đợi loop hiện tại exit.
     if (_speakLoopFuture != null) {
@@ -639,10 +652,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// `awaitSpeakCompletion(true)`. Mỗi iteration:
   ///   1. Check _isSpeaking + bounds
   ///   2. Fire-and-forget save state (không block hot path)
-  ///   3. Emit chunk progress
-  ///   4. await _tts.speak(chunk) — resolve khi chunk xong
-  ///   5. Check speak() return value — nếu != 1, surface error
-  ///   6. Advance _currentChunk
+  ///   3. Emit chunk progress (kèm block index chính xác)
+  ///   4. Lên lịch advance highlight qua từng block trong chunk (nếu
+  ///      chunk gộp nhiều block ngắn) tỷ lệ theo độ dài chữ
+  ///   5. await _tts.speak(chunk) — resolve khi chunk xong
+  ///   6. Check speak() return value — nếu != 1, surface error
+  ///   7. Advance _currentChunk
   /// Loop exit khi: _isSpeaking = false (pause/stop), hoặc hết chunks
   /// (chapter complete → gọi _onChapterComplete).
   Future<void> _speakLoop() async {
@@ -650,18 +665,14 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       final chunk = _chunks[_currentChunk];
       // Fire-and-forget — không block hot path giữa các chunk.
       unawaited(_savePlaybackState(isPlaying: true));
-      _chunkProgressController.add(
-        TtsChunkProgress(
-          chapterId: _currentChapterId!,
-          chunkIndex: _currentChunk,
-          totalChunks: _chunks.length,
-        ),
-      );
+      _chunkProgressController.add(_chunkProgressEvent(_currentChunk));
+      _scheduleBlockAdvance(chunk);
       AppLogger.info(
-        'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.length} chars)',
+        'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.text.length} chars)',
       );
       // speak() với awaitSpeakCompletion(true) resolve khi chunk xong.
-      final result = await _tts.speak(chunk);
+      final result = await _tts.speak(chunk.text);
+      _cancelBlockAdvanceTimer();
       // Check return value: 1 = success, 0 = failure (no voice, engine
       // not ready, text too long...). Trước đây ignore → TTS hang silently.
       if (result != 1) {
@@ -689,9 +700,66 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
   }
 
+  /// Build the progress event for chunk [chunkIndex]. Carries the exact
+  /// rendered-block index where the chunk starts (the reader highlights
+  /// it directly — no fuzzy text matching).
+  TtsChunkProgress _chunkProgressEvent(int chunkIndex) {
+    final blocks = _chunks[chunkIndex].blocks;
+    return TtsChunkProgress(
+      chapterId: _currentChapterId!,
+      chunkIndex: chunkIndex,
+      totalChunks: _chunks.length,
+      blockIndex: blocks.isEmpty ? -1 : blocks.first.blockIndex,
+    );
+  }
+
+  /// A chunk may bundle several short blocks (dialogue lines etc.).
+  /// flutter_tts reports no per-word progress, so we approximate: each
+  /// block inside the chunk gets its own highlight event, scheduled
+  /// proportionally to its share of the chunk's characters at the
+  /// current speech speed. Drift is at most a few seconds and resets at
+  /// every chunk boundary (where we emit the exact position).
+  ///
+  /// Estimated Vietnamese TTS rate: ~12 chars/s at 1×.
+  void _scheduleBlockAdvance(TtsChunk chunk) {
+    _cancelBlockAdvanceTimer();
+    final parts = chunk.blocks;
+    if (parts.length < 2) return;
+    final totalChars = chunk.text.length;
+    if (totalChars == 0) return;
+    final rate = 12.0 * _speed;
+    var elapsed = Duration.zero;
+    for (var i = 1; i < parts.length; i++) {
+      final prev = parts[i - 1];
+      elapsed += Duration(
+        milliseconds: (prev.text.length / rate * 1000).round(),
+      );
+      final blockIndex = parts[i].blockIndex;
+      _blockAdvanceTimers.add(Timer(elapsed, () {
+        if (!_isSpeaking) return;
+        _chunkProgressController.add(
+          TtsChunkProgress(
+            chapterId: _currentChapterId!,
+            chunkIndex: _currentChunk,
+            totalChunks: _chunks.length,
+            blockIndex: blockIndex,
+          ),
+        );
+      }));
+    }
+  }
+
+  void _cancelBlockAdvanceTimer() {
+    for (final t in _blockAdvanceTimers) {
+      t.cancel();
+    }
+    _blockAdvanceTimers.clear();
+  }
+
   Future<void> _onChapterComplete() async {
     AppLogger.info('TTS: chapter complete');
     _isSpeaking = false;
+    _cancelBlockAdvanceTimer();
     // Release audio focus — chapter đã xong, không cần giữ nữa.
     unawaited(_deactivateAudioSession());
     // Save state với chunk index cuối TRƯỚC khi stop() reset _currentChunk = 0.
@@ -755,10 +823,15 @@ class TtsChunkProgress {
     required this.chapterId,
     required this.chunkIndex,
     required this.totalChunks,
+    this.blockIndex = -1,
   });
   final String chapterId;
   final int chunkIndex;
   final int totalChunks;
+
+  /// Exact rendered-block index (into the `MarkdownParser` block list)
+  /// currently being spoken. -1 when the chunk maps to no block.
+  final int blockIndex;
 }
 
 /// Provider cho TtsAudioHandler. Nếu init fail, vẫn return handler nhưng

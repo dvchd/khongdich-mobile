@@ -61,13 +61,6 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   StreamSubscription<TtsChunkProgress>? _ttsSub;
   StreamSubscription<PlaybackState>? _playbackSub;
   int? _activeBlockIndex;
-  // Cache of normalized plain text per block — computing it on every chunk
-  // event would be wasteful since blocks don't change between chunks.
-  late List<String> _blockPlainTextCache;
-  // Monotonic cursor: _findBlockForChunk only searches from this index
-  // forward, so the highlight never jumps backwards. Reset in
-  // didUpdateWidget when the chapter changes.
-  int _searchFromBlock = 0;
   // Content width captured from LayoutBuilder in scroll mode — needed
   // by _measureBlockHeight for accurate scroll offset calculation.
   // In page mode, _lastSize.width is used instead.
@@ -77,7 +70,6 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   void initState() {
     super.initState();
     _blocks = MarkdownParser().parse(widget.markdown);
-    _blockPlainTextCache = [for (final b in _blocks) _normalize(b.plainText)];
     _pageController = widget.pageController ?? PageController();
     // Subscribe to TTS chunk progress. We'll filter by chapterId in the
     // listener so a different chapter's TTS doesn't trigger a highlight
@@ -96,8 +88,11 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         // highlight the current block immediately.
         if (handler.currentChapterId == widget.chapterId &&
             handler.currentChunkIndex >= 0 &&
-            handler.chunks.isNotEmpty) {
-          _applyChunk(handler.currentChunkIndex, handler.chunks);
+            handler.chunkModels.isNotEmpty) {
+          final chunk = handler.chunkModels[handler.currentChunkIndex];
+          _applyBlock(
+            chunk.blocks.isEmpty ? -1 : chunk.blocks.first.blockIndex,
+          );
         }
       } catch (_) {
         // TTS init may fail — silently ignore; the reader still works.
@@ -121,13 +116,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     //      because its current page index exceeded the new itemCount.
     if (oldWidget.markdown != widget.markdown) {
       _blocks = MarkdownParser().parse(widget.markdown);
-      _blockPlainTextCache = [for (final b in _blocks) _normalize(b.plainText)];
       _lastSize = null;
-      // Clear highlight + reset monotonic cursor when chapter changes —
-      // the new chunk event for the new chapter will set a fresh
-      // highlight starting from block 0.
+      // Clear highlight when chapter changes — the new chunk event for
+      // the new chapter will set a fresh highlight starting from block 0.
       _activeBlockIndex = null;
-      _searchFromBlock = 0;
       // Reset to page 0 on the next frame, after _pageBlockIndices
       // has been re-computed by _computePages() during the next
       // LayoutBuilder pass. Using WidgetsBinding.addPostFrameCallback
@@ -435,9 +427,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       }
       return;
     }
-    final handler = ref.read(ttsHandlerProvider).valueOrNull;
-    if (handler == null) return;
-    _applyChunk(p.chunkIndex, handler.chunks);
+    _applyBlock(p.blockIndex);
   }
 
   /// Listen to playbackState changes so we can clear the highlight when
@@ -453,109 +443,24 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       if (_activeBlockIndex != null) {
         setState(() {
           _activeBlockIndex = null;
-          _searchFromBlock = 0;
         });
       }
     }
   }
 
-  void _applyChunk(int chunkIndex, List<String> chunks) {
-    if (chunkIndex < 0 || chunkIndex >= chunks.length) return;
-    final chunkText = chunks[chunkIndex];
-    final newActive = _findBlockForChunk(chunkText);
-    if (newActive == _activeBlockIndex) return;
-    // Advance the monotonic cursor so future chunk searches only look
-    // forward — prevents the highlight from jumping backwards if a
-    // later chunk's text happens to match an earlier block.
-    if (newActive != null) {
-      _searchFromBlock = newActive;
-    }
-    setState(() => _activeBlockIndex = newActive);
+  /// Highlight the exact block being spoken. [blockIndex] comes straight
+  /// from the block-aligned TTS chunker — no text matching, so the
+  /// highlight can never drift to the wrong paragraph.
+  void _applyBlock(int blockIndex) {
+    if (blockIndex < 0 || blockIndex >= _blocks.length) return;
+    if (blockIndex == _activeBlockIndex) return;
+    setState(() => _activeBlockIndex = blockIndex);
     // After the next frame (so the renderer has laid out the new
     // highlighted block), scroll or page-flip to keep it in view.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _scrollOrFlipToActive();
     });
-  }
-
-  /// Find which block the TTS chunk starts in.
-  ///
-  /// Strategy: take the first 40 chars of the chunk's normalized plain
-  /// text as a "fingerprint", then walk through blocks comparing their
-  /// normalized plain text's first chars. The chunk's first chars should
-  /// match the block it starts in (the TTS preprocessor splits on
-  /// paragraph boundaries, so each chunk typically begins at a block
-  /// boundary). Returns null if no match — happens for chunks that
-  /// span only horizontal rules or stripped code blocks.
-  int? _findBlockForChunk(String chunkText) {
-    final needle = _normalize(chunkText);
-    if (needle.isEmpty) return null;
-    // Use up to 40 chars as fingerprint, but allow short chunks (even 1 char)
-    // to match. Previously required length >= 5 which caused short paragraphs
-    // (e.g. "OK.", "Hmm...", single-word dialogue) to never highlight.
-    final fpLen = needle.length.clamp(0, 40);
-    final fingerprint = needle.substring(0, fpLen);
-
-    // Pass 1: prefix match — chunk's first chars match block's first chars.
-    // This handles the common case where the chunk starts at a block
-    // boundary (paragraph, heading, list item, etc.).
-    //
-    // Monotonic: search from _searchFromBlock forward so the highlight
-    // never jumps backwards. This prevents a false match when a later
-    // chunk's text coincidentally matches an earlier block.
-    //
-    // Minimum match length is 1 (was 5 before) — short paragraphs like
-    // "OK." or "Hmm..." should still highlight.
-    for (var i = _searchFromBlock; i < _blockPlainTextCache.length; i++) {
-      final blockText = _blockPlainTextCache[i];
-      if (blockText.isEmpty) continue;
-      final cmpLen = fingerprint.length < blockText.length
-          ? fingerprint.length
-          : blockText.length;
-      if (cmpLen < 1) continue;
-      if (fingerprint.substring(0, cmpLen) == blockText.substring(0, cmpLen)) {
-        return i;
-      }
-    }
-
-    // Pass 2: substring match — chunk's first chars appear inside the
-    // block. This handles the case where the chunk starts mid-block
-    // (rare — happens when a long paragraph is split into multiple chunks
-    // by the preprocessor's 500-char limit).
-    // Also monotonic — search from _searchFromBlock forward.
-    // Use up to 20 chars but allow short chunks (min 1 char).
-    final shortLen = fingerprint.length.clamp(0, 20);
-    final short = fingerprint.substring(0, shortLen);
-    if (short.isEmpty) return null;
-    for (var i = _searchFromBlock; i < _blockPlainTextCache.length; i++) {
-      final blockText = _blockPlainTextCache[i];
-      if (blockText.contains(short)) return i;
-    }
-
-    // Pass 3 (fallback): search backward up to 3 blocks. Handles the
-    // edge case where a null match advanced the chunk but not the
-    // cursor, and the next chunk legitimately belongs to an earlier
-    // block (e.g. code blocks stripped from TTS, horizontal rules with
-    // empty plain text). Without this fallback the highlight would be
-    // lost for those blocks.
-    final backStart = (_searchFromBlock - 3).clamp(
-      0,
-      _blockPlainTextCache.length,
-    );
-    for (var i = _searchFromBlock - 1; i >= backStart; i--) {
-      final blockText = _blockPlainTextCache[i];
-      if (blockText.isNotEmpty && blockText.contains(short)) return i;
-    }
-    return null;
-  }
-
-  /// Normalize whitespace for fuzzy text matching: collapse runs of
-  /// whitespace into a single space and trim. Case is preserved because
-  /// Vietnamese diacritics make case-insensitive matching tricky on
-  /// some engines.
-  String _normalize(String s) {
-    return s.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   /// Auto-scroll (vertical mode) or page-flip (horizontal mode) so the

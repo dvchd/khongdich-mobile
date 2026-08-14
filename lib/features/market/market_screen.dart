@@ -11,6 +11,7 @@ import '../../core/widgets/emoji_text.dart';
 import '../../models/market.dart';
 import '../../models/story.dart';
 import '../../repositories/market_repository.dart';
+import '../home/widgets/story_card.dart';
 
 /// Chợ Phiên — Họp Chợ: realtime chat với tác giả, đọc giả, chủ chợ.
 ///
@@ -73,6 +74,9 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           ..addAll(section.messages);
         _loading = false;
       });
+      // Mở chat → tự cuộn xuống tin mới nhất (jump không animate để
+      // người dùng vào thẳng khung chat mới nhất như web).
+      _scrollToBottom(jump: true, retries: 2);
       _subscribe();
     } catch (e) {
       if (!mounted) return;
@@ -132,6 +136,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           ..clear()
           ..addAll(section.messages);
       });
+      _scrollToBottom(jump: true);
     } catch (_) {
       /* best-effort */
     }
@@ -180,14 +185,21 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool jump = false, int retries = 0}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
-        _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
+        if (jump) {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        } else {
+          _scroll.animateTo(
+            _scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      } else if (retries > 0) {
+        // ListView chưa attach controller (frame đầu) — thử lại frame sau.
+        _scrollToBottom(jump: jump, retries: retries - 1);
       }
     });
   }
@@ -393,50 +405,19 @@ class _StoryRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 92,
+      height: 246,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: stories.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
         itemBuilder: (context, i) {
           final s = stories[i];
           return SizedBox(
-            width: 64,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
+            width: 120,
+            child: StoryCard(
+              story: s,
               onTap: () => context.push('/story/${s.slug}'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: s.coverUrl == null
-                          ? Container(
-                              color: AppTheme.primary.withValues(alpha: 0.15),
-                              child: const Icon(Icons.book, size: 28),
-                            )
-                          : Image.network(
-                              s.coverUrl!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => Container(
-                                color: AppTheme.primary.withValues(alpha: 0.15),
-                                child: const Icon(Icons.book, size: 28),
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    s.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
-                ],
-              ),
             ),
           );
         },

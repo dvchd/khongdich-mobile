@@ -39,7 +39,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       final result = await auth.signInWithGoogle();
       if (mounted) {
         _toast('Đăng nhập thành công. Xin chào ${result.user.displayName}!');
-        context.go('/home');
+        // Quay lại màn hình đã push /auth (reader, chat, ...) nếu có —
+        // ngược lại về home. Trước đây luôn go('/home') làm mất ngữ cảnh
+        // (vd: long-press đoạn → đăng nhập → mất luôn vị trí đang đọc).
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/home');
+        }
       }
     } on AuthError catch (e) {
       if (!mounted) return;

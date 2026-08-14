@@ -6,8 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/chapter_content.dart';
+import '../../models/comment.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/chapter_cache_service.dart';
 import '../story/story_detail_screen.dart' show vipStatusProvider;
@@ -150,31 +152,50 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     );
   }
 
-  /// Long-press paragraph → bình luận đoạn composer. On success, bounce
-  /// to the chapter comments feed so the user sees their comment in place.
+  /// Long-press paragraph → bình luận đoạn / góp ý composer. Login-gated:
+  /// anonymous users are prompted to sign in instead of seeing the sheet
+  /// (bình luận đoạn + góp ý require an account, like the web).
   Future<void> _openSegmentComposer(
     ChapterContent chapter,
     String plainText,
   ) async {
+    // Capture UI handles before any await (lint + safety).
+    final messenger = ScaffoldMessenger.of(context);
+    final router = GoRouter.of(context);
+    final api = ref.read(apiClientProvider).valueOrNull;
+    if (api == null || !await api.isAuthenticated()) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Đăng nhập để bình luận đoạn và góp ý.'),
+        ),
+      );
+      router.push('/auth');
+      return;
+    }
+    if (!mounted) return;
     final result = await showSegmentComposer(
       context,
       chapterId: chapter.id,
       quoteText: plainText,
     );
     if (result == null || !mounted) return;
-    ScaffoldMessenger.of(context)
+    final message = switch (result) {
+      CommentPostResult(:final wasHidden) => wasHidden
+          ? 'Đã gửi — bình luận đang chờ kiểm duyệt.'
+          : 'Đã gửi bình luận đoạn.',
+      SuggestionPostResult() => 'Đã gửi góp ý cho tác giả.',
+      _ => null,
+    };
+    if (message == null) return;
+    messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(
-            result.wasHidden
-                ? 'Đã gửi — bình luận đang chờ kiểm duyệt.'
-                : 'Đã gửi bình luận đoạn.',
-          ),
-          duration: const Duration(seconds: 2),
-        ),
+        SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
       );
-    context.push('/chapter-comments/${chapter.id}', extra: chapter.title);
+    if (result is CommentPostResult) {
+      router.push('/chapter-comments/${chapter.id}', extra: chapter.title);
+    }
   }
 
   void _toggleTts(ChapterContent chapter) async {
