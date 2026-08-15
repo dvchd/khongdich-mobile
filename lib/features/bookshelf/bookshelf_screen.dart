@@ -42,6 +42,14 @@ class BookshelfScreen extends ConsumerStatefulWidget {
 class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   int _tab = 0;
 
+  /// Scroll chip row tới tab đang chọn — tab "Đã tải" là tab CUỐI cùng,
+  /// nằm ngoài tầm nhìn bên phải. Trước đây khi offline redirect set
+  /// _tab = 5, chip row vẫn cuộn ở đầu → user không thấy tab nào đang
+  /// chọn, chỉ thấy danh sách truyện đã tải.
+  final ScrollController _chipsController = ScrollController();
+  final List<GlobalKey> _chipKeys = List.generate(
+      _tabs.length, (_) => GlobalKey());
+
   static const _tabs = [
     ('all', 'Tất cả', Icons.apps),
     ('reading', 'Đang đọc', Icons.menu_book),
@@ -60,8 +68,29 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     if (intent != 0) {
       _tab = intent;
       Future.microtask(() => ref.read(bookshelfTabIntentProvider.notifier).state = 0);
+      // Scroll chip row tới tab intent (vd. "Đã tải" nằm cuối) sau
+      // frame đầu — chip chưa build xong nên phải chờ postFrame.
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _ensureChipVisible(_tab));
     }
     Future.microtask(() => ref.read(bookshelfProvider.notifier).refresh());
+  }
+
+  @override
+  void dispose() {
+    _chipsController.dispose();
+    super.dispose();
+  }
+
+  void _ensureChipVisible(int index) {
+    final ctx = _chipKeys[index].currentContext;
+    if (ctx == null || !mounted) return;
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.5,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -157,21 +186,35 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
         children: [
           SizedBox(
             height: 48,
-            child: ListView(
+            // SingleChildScrollView + Row thay vì ListView: ListView build
+            // LAZY → chip "Đã tải" (cuối, ngoài tầm nhìn) chưa được build
+            // → GlobalKey.currentContext == null → _ensureChipVisible
+            // không scroll được trên màn hình hẹp. Row build EAGER cả 6
+            // chip nên ensureVisible luôn hoạt động.
+            child: SingleChildScrollView(
+              controller: _chipsController,
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              children: [
-                for (var i = 0; i < _tabs.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      label: Text(_tabs[i].$2),
-                      avatar: Icon(_tabs[i].$3, size: 18),
-                      selected: _tab == i,
-                      onSelected: (_) => setState(() => _tab = i),
+              child: Row(
+                children: [
+                  for (var i = 0; i < _tabs.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        key: _chipKeys[i],
+                        label: Text(_tabs[i].$2),
+                        avatar: Icon(_tabs[i].$3, size: 18),
+                        selected: _tab == i,
+                        onSelected: (_) {
+                          setState(() => _tab = i);
+                          // Bấm chip cuối/ngoài tầm nhìn → kéo chip row
+                          // cho chip đang chọn hiện giữa thanh.
+                          _ensureChipVisible(i);
+                        },
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
           Expanded(

@@ -21,7 +21,19 @@ class OfflineLibraryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final chaptersAsync = ref.watch(offlineLibraryStreamProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Truyện đã tải')),
+      appBar: AppBar(
+        title: const Text('Truyện đã tải'),
+        actions: [
+          // Lối vào màn Tải xuống (hàng chờ + tiến trình) — trước đây
+          // user không biết đi đâu để xem hàng chờ ngoài nút tải-all ở
+          // story detail khi đang chạy.
+          IconButton(
+            icon: const Icon(Icons.download_outlined),
+            tooltip: 'Xem hàng chờ tải xuống',
+            onPressed: () => context.push('/downloads'),
+          ),
+        ],
+      ),
       body: chaptersAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Lỗi: $e')),

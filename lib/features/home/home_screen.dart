@@ -40,22 +40,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     Future.microtask(() => ref.read(homeProvider.notifier).refresh());
   }
 
-  void _maybeRedirectOffline(Object error) {
+  Future<void> _maybeRedirectOffline(Object error) async {
     if (_redirected) return;
     // Chỉ redirect khi lỗi là lỗi MẠNG (offline/timeout) — lỗi server
     // (5xx, 401...) phải giữ lại màn hình lỗi + nút "Thử lại" để user
     // có thể retry. Trước đây redirect trên MỌI lỗi → nút retry không
     // bao giờ chạm được.
-    final isNetworkError = error is DioException &&
-        (error.type == DioExceptionType.connectionError ||
-            error.type == DioExceptionType.connectionTimeout ||
-            error.type == DioExceptionType.receiveTimeout ||
-            error.type == DioExceptionType.sendTimeout);
+    //
+    // DioException KHÔNG có response = không nhận được HTTP response
+    // nào (connectionError/timeout/socket) → chắc chắn lỗi mạng. Trước
+    // đây chỉ check 4 DioExceptionType cụ thể — Android airplane mode
+    // có thể trả về type khác → redirect không bao giờ chạy.
+    final isNetworkError =
+        error is DioException && error.response == null;
     if (!isNetworkError) return;
     // Chỉ redirect khi có ít nhất 1 chương đã tải — như search screen.
-    final downloads =
-        ref.read(offlineLibraryStreamProvider).valueOrNull ?? [];
-    if (downloads.isEmpty) return;
+    //
+    // PHẢI await .future của stream provider — trước đây dùng
+    // ref.read().valueOrNull: lúc home vừa lỗi, stream chưa từng được
+    // watch → valueOrNull == null → tưởng "chưa có truyện tải" → không
+    // redirect dù DB có hàng trăm chương đã tải.
+    try {
+      final downloads =
+          await ref.read(offlineLibraryStreamProvider.future);
+      if (downloads.isEmpty || !mounted) return;
+    } catch (_) {
+      return; // DB lỗi — không redirect được, giữ màn hình lỗi.
+    }
     _redirected = true;
     // Set the tab intent to the "Downloaded" tab (last index in the
     // bookshelf) so the user lands on their offline library directly
@@ -301,7 +312,7 @@ class _EmptyState extends StatelessWidget {
 /// network is down. This is the key UX fix: instead of just showing
 /// "Không tải được dữ liệu", we redirect the user to their offline
 /// library so they can keep reading downloaded chapters.
-class _OfflineOrErrorState extends StatelessWidget {
+class _OfflineOrErrorState extends ConsumerWidget {
   const _OfflineOrErrorState({
     required this.message,
     required this.onRetry,
@@ -310,7 +321,12 @@ class _OfflineOrErrorState extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Fallback button trong trường hợp auto-redirect không chạy được
+    // (vd. stream chưa kịp emit) — nút hiện NGAY khi có truyện đã tải.
+    final hasDownloads =
+        (ref.watch(offlineLibraryStreamProvider).valueOrNull ?? [])
+            .isNotEmpty;
     return ListView(
       children: [
         const SizedBox(height: 100),
@@ -326,16 +342,31 @@ class _OfflineOrErrorState extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Text(
-            'Đang chuyển đến truyện đã tải...',
+            hasDownloads
+                ? 'Đang chuyển đến truyện đã tải...'
+                : 'Bạn đang ngoại tuyến và chưa có truyện nào được tải. '
+                    'Kết nối mạng rồi thử lại, hoặc tải truyện trước để '
+                    'đọc offline.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
         const SizedBox(height: 20),
         Center(
-          child: OutlinedButton(
-            onPressed: onRetry,
-            child: const Text('Thử lại'),
+          child: Wrap(
+            spacing: 12,
+            children: [
+              if (hasDownloads)
+                FilledButton.icon(
+                  icon: const Icon(Icons.download_done),
+                  label: const Text('Xem truyện đã tải'),
+                  onPressed: () => context.go('/offline-library'),
+                ),
+              OutlinedButton(
+                onPressed: onRetry,
+                child: const Text('Thử lại'),
+              ),
+            ],
           ),
         ),
       ],

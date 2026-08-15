@@ -24,15 +24,40 @@ class DownloadsScreen extends ConsumerStatefulWidget {
   ConsumerState<DownloadsScreen> createState() => _DownloadsScreenState();
 }
 
-class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
   @override
   void initState() {
     super.initState();
-    // App bị kill giữa chừng → row kẹt ở 'downloading' vĩnh viễn (UI
-    // hiện "Đang tải…" mà không retry được). Mở màn hình này là lúc
-    // queue hiện ra → reset các row kẹt về 'retry' + resume xử lý.
-    Future.microtask(
-        () => ref.read(downloadManagerProvider).recoverInterrupted());
+    // Mở thẳng tab "Đã tải" khi không có download nào đang chạy — user
+    // vào màn này thường muốn XEM truyện đã tải, hàng chờ rỗng không
+    // có gì để xem. Có download active → chuyển về tab "Đang tải".
+    _tabController = TabController(length: 2, vsync: this, initialIndex: 1);
+    Future.microtask(() async {
+      try {
+        final db = ref.read(appDatabaseProvider);
+        final rows = await db.getDownloadQueue();
+        final hasActive = rows.any((q) =>
+            q.status == 'pending' ||
+            q.status == 'downloading' ||
+            q.status == 'retry');
+        if (mounted && hasActive && !_tabController.indexIsChanging) {
+          _tabController.animateTo(0);
+        }
+      } catch (_) {/* DB chưa sẵn sàng — giữ tab Đã tải */}
+      // App bị kill giữa chừng → row kẹt ở 'downloading' vĩnh viễn (UI
+      // hiện "Đang tải…" mà không retry được). Mở màn hình này là lúc
+      // queue hiện ra → reset các row kẹt về 'retry' + resume xử lý.
+      ref.read(downloadManagerProvider).recoverInterrupted();
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
@@ -40,24 +65,23 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final queueAsync = ref.watch(downloadQueueStreamProvider);
     final libraryAsync = ref.watch(offlineLibraryStreamProvider);
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Tải xuống'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.download), text: 'Đang tải'),
-              Tab(icon: Icon(Icons.library_books), text: 'Đã tải'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            _QueueTab(queueAsync: queueAsync),
-            _LibraryTab(libraryAsync: libraryAsync),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Tải xuống'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(icon: Icon(Icons.download), text: 'Đang tải'),
+            Tab(icon: Icon(Icons.library_books), text: 'Đã tải'),
           ],
         ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _QueueTab(queueAsync: queueAsync),
+          _LibraryTab(libraryAsync: libraryAsync),
+        ],
       ),
     );
   }
