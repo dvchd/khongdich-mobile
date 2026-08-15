@@ -96,6 +96,17 @@ import '../reader/services/reading_progress_service.dart';
 ///   màn hình nào mounted → không gì xảy ra. Giờ handler tự resolve +
 ///   load + play (online/offline), màn hình chỉ điều hướng. Thêm
 ///   `skipToPrevious` cho nút lùi chương.
+///
+/// - **#11 Straggler "speak.onCancel" giết loop mới**: flutter_tts
+///   Android gửi cancel event ASYNC (engine `onStop` sau `stop()`) —
+///   nó có thể tới TRỄ, khi loop mới đã relaunch (đổi tốc độ, pause→
+///   play nhanh). Trước đây cancel handler set `_isSpeaking = false` →
+///   loop mới chết sau đúng 1 chunk ("đổi tốc độ chỉ nghe được 1 đoạn
+///   là dừng"). Fix: `_pendingStopCancel` counter — mỗi lần chúng ta
+///   chủ động `stop()` một utterance đang chạy đều `_expectStopCancel()`
+///   TRƯỚC; cancel handler tiêu thụ 1 event rồi bỏ qua (các op đã tự
+///   emit state đúng). Cancel còn lại (genuine, không do chúng ta stop)
+///   mới được coi là "engine tự dừng" → flip state.
 class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   TtsAudioHandler(
     this._db,
@@ -144,9 +155,32 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// pause KHÔNG tắt (resume vẫn tiếp tục chuỗi).
   bool autoAdvanceEnabled = false;
 
-  /// Đang restart loop để áp dụng tốc độ/giọng mới ngay lập tức —
-  /// cancel/error handler check cờ này để không nhầm thành user stop.
-  bool _restartPending = false;
+  /// Chương mà user đã bấm nút X "dừng hẳn và đóng" — mini player ẩn cho
+  /// tới khi user tap headphone lại (play()) hoặc load chương mới.
+  String? _dismissedChapterId;
+
+  /// Xem [_dismissedChapterId].
+  String? get dismissedChapterId => _dismissedChapterId;
+
+  /// Số cancel event ("speak.onCancel") mà engine dự kiến gửi sau các
+  /// lần `_tts.stop()` do CHÍNH CHÚNG TA gọi (pause/stop/restart/skip/
+  /// loadChapter). flutter_tts Android gửi event này ASYNC (engine
+  /// `onStop`) — nó có thể tới SAU khi loop mới đã relaunch (restart
+  /// tốc độ, pause→play nhanh). Nếu cancel handler không nuốt chúng,
+  /// nó set `_isSpeaking = false` + emit `playing: false` trong khi
+  /// loop mới đang chạy → loop chết sau đúng 1 chunk (bug "đổi tốc độ
+  /// chỉ nghe được 1 đoạn là dừng"). Mỗi lần stop một utterance đang
+  /// chạy chỉ sinh tối đa 1 onStop (queueMode QUEUE_FLUSH) → depth 1.
+  /// Cap 3: engine không bao giờ gửi onStop sẽ không nuốt hết các
+  /// genuine-cancel sau này.
+  int _pendingStopCancel = 0;
+
+  /// Đăng ký MỘT cancel event sẽ đến (do `_tts.stop()` của chính chúng
+  /// ta) — gọi TRƯỚC mỗi lần stop một utterance đang chạy. Cancel
+  /// handler sẽ tiêu thụ + bỏ qua nó (các op đã tự emit state đúng).
+  void _expectStopCancel() {
+    if (_pendingStopCancel < 3) _pendingStopCancel++;
+  }
 
   /// Đã có restart đang chờ trong operation chain — tap tốc độ/giọng
   /// nhanh nhiều lần chỉ queue MỘT restart cuối (restart chạy sau cùng
@@ -486,8 +520,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
       _tts.setErrorHandler((msg) {
         AppLogger.error('TTS error: $msg');
+        // stop() bên dưới có thể sinh thêm một onStop ("speak.onCancel")
+        // từ engine — đăng ký trước để cancel handler không ghi đè
+        // error state vừa emit.
+        if (_isSpeaking) _expectStopCancel();
         _isSpeaking = false;
-        _restartPending = false;
         // Vô hiệu hoá loop đang chạy — nó sẽ thoát ngay khi thức dậy
         // thay vì phát tiếp chunk kế của chapter trong lúc error state.
         _invalidateSpeakLoop();
@@ -512,10 +549,22 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
       _tts.setCancelHandler(() {
         AppLogger.info('TTS: cancel handler fired');
-        // Đang restart để đổi tốc độ/giọng — đừng coi là user stop,
-        // giữ nguyên trạng thái "đang phát" cho UI (loop mới sẽ chạy
-        // lại ngay sau đó).
-        if (_restartPending) return;
+        // Cancel do chính `_tts.stop()` của chúng ta (pause/stop/restart/
+        // skip/loadChapter) — các op đó đã tự emit state đúng thứ tự.
+        // Event này đến ASYNC nên có thể tới SAU khi loop mới đã relaunch
+        // (bug "đổi tốc độ chỉ nghe được 1 đoạn là dừng") — nuốt nó.
+        if (_pendingStopCancel > 0) {
+          _pendingStopCancel--;
+          return;
+        }
+        // Không đang speaking (đã pause/stop trước đó) → cancel vô nghĩa.
+        // Bỏ qua để không ghi đè state idle/error — ví dụ stop() đã emit
+        // controls rỗng, cancel tới sau không được hồi sinh nút play.
+        if (!_isSpeaking) return;
+        // Genuine cancel từ engine (KHÔNG do chúng ta stop) — ví dụ app
+        // khác chiếm TTS engine. Engine không resolve speak() trong
+        // trường hợp này nên loop hiện tại sẽ treo — ít nhất UI phản
+        // ánh đúng trạng thái "đã dừng".
         _isSpeaking = false;
         playbackState.add(
           playbackState.value.copyWith(
@@ -621,7 +670,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   Future<void> _restartSpeakLoopInner() async {
     if (!_isSpeaking) return;
     if (_currentChapterId == null || _chunks.isEmpty) return;
-    _restartPending = true;
+    // stop() sẽ sinh một "speak.onCancel" async từ engine — đăng ký
+    // trước để handler nuốt nó (nó tới TRỄ, sau khi loop mới đã chạy).
+    _expectStopCancel();
     _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
     try {
@@ -630,7 +681,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       AppLogger.warning('TTS: stop during restart failed', e);
     }
     await _awaitSpeakLoop();
-    _restartPending = false;
     if (_currentChapterId == null || _chunks.isEmpty) return;
     _isSpeaking = true;
     playbackState.add(
@@ -775,11 +825,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     bool offline = false,
   }) async {
     await _init();
-    _restartPending = false;
     // Stop mọi playback đang chạy của chương cũ trước khi load chương mới.
     // Trước đây không có bước này → completion handler của chương cũ có
     // thể fire sau khi chương mới đã load, gây _currentChunk sai.
     if (_isSpeaking) {
+      // stop() sinh "speak.onCancel" async từ engine — đăng ký trước để
+      // cancel handler không ghi đè state của chương mới.
+      _expectStopCancel();
       _invalidateSpeakLoop();
       try {
         await _tts.stop();
@@ -803,6 +855,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _offlineMode = offline;
     _prevChapterNumber = prevChapterNumber;
     _nextChapterNumber = nextChapterNumber;
+    // Load chương mới = phiên nghe mới → bỏ trạng thái "đã đóng" của
+    // chương cũ để mini player hiện lại bình thường.
+    _dismissedChapterId = null;
     if (offline) {
       // Offline: prev/next phải nằm TRONG danh sách chương đã tải —
       // prev/next từ API không biết chương nào user đã download. DB là
@@ -863,6 +918,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       );
       return;
     }
+    // Bấm play tường minh (reader headphone / panel) = user muốn nghe
+    // lại → bỏ trạng thái "đã đóng mini player" nếu có.
+    _dismissedChapterId = null;
     await _init();
     // Nếu init vẫn fail (vd: engine không có giọng tiếng Việt), _initialised
     // sẽ false. Surface error thay vì cố play → fail silently.
@@ -913,7 +971,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   Future<void> pause() => _serialized(() => _pauseInner());
 
   Future<void> _pauseInner() async {
-    _restartPending = false;
+    // stop() sinh "speak.onCancel" async — có thể tới sau khi user bấm
+    // play lại → đăng ký trước để không giết loop mới (bug #7 follow-up).
+    final wasSpeaking = _isSpeaking;
+    if (wasSpeaking) _expectStopCancel();
     _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
     try {
@@ -938,7 +999,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   Future<void> stop() => _serialized(() => _stopInner());
 
   Future<void> _stopInner() async {
-    _restartPending = false;
+    final wasSpeaking = _isSpeaking;
+    if (wasSpeaking) _expectStopCancel();
     _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
     try {
@@ -998,6 +1060,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // và loadChapter của chương mới phải await _speakLoopFuture →
     // chuyển chương treo hàng chục giây + audio vẫn phát chương cũ.
     if (_isSpeaking) {
+      // stop() sinh "speak.onCancel" async — có thể tới trễ trong lúc
+      // resolve/load chương mới → đăng ký trước để không ghi đè state
+      // "đang phát" của chương mới.
+      _expectStopCancel();
       _invalidateSpeakLoop();
       _cancelBlockAdvanceTimer();
       try {
@@ -1157,6 +1223,16 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     await stop();
   }
 
+  /// Nút X của mini player: dừng hẳn + ẩn bottom bar. Khác với stop():
+  /// stop() vẫn giữ chương loaded để play lại (bar vẫn hiện); dismiss()
+  /// đánh dấu [_dismissedChapterId] để mini player ẩn đi cho tới khi
+  /// user tap headphone lại (play()) hoặc load chương mới.
+  Future<void> dismiss() async {
+    _dismissedChapterId = _currentChapterId;
+    autoAdvanceEnabled = false;
+    await stop();
+  }
+
   /// Speak loop — drive chunk chaining qua while-loop với
   /// `awaitSpeakCompletion(true)`. Mỗi iteration:
   ///   1. Check _isSpeaking + bounds
@@ -1305,7 +1381,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   ///    trên notification để user tiếp tục từ lockscreen).
   Future<void> _onChapterComplete() async {
     AppLogger.info('TTS: chapter complete');
-    _restartPending = false;
     _isSpeaking = false;
     _cancelBlockAdvanceTimer();
     // Release audio focus — chapter đã xong, không cần giữ nữa.

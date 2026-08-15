@@ -47,11 +47,25 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
         if (!mounted) return;
         _progressSub = handler.chunkProgress.listen((p) {
           if (!mounted) return;
-          setState(() => _progress = p);
+          // Chỉ nhận event của CHÍNH chương này — event của chương cũ/
+          // chương khác (auto-advance) không được hiện sai "Đoạn x/y".
+          setState(() {
+            _progress = p.chapterId == widget.chapterId ? p : null;
+          });
         });
         _playbackSub = handler.playbackState.listen((s) {
           if (!mounted) return;
-          setState(() => _playbackState = s);
+          setState(() {
+            _playbackState = s;
+            // Stop/idle/error/buffering → không còn "đang đọc" đoạn nào
+            // hợp lệ, xoá progress cũ để hiển thị fallback từ handler
+            // (sau stop chunk index đã reset về 0).
+            if (s.processingState == AudioProcessingState.idle ||
+                s.processingState == AudioProcessingState.error ||
+                s.processingState == AudioProcessingState.buffering) {
+              _progress = null;
+            }
+          });
         });
       } catch (_) {
         // TTS init fail — mini player không hiện, reader vẫn hoạt động.
@@ -84,13 +98,22 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
       orElse: () => _speedCycle.first,
     );
     await handler.setSpeed(next);
+    // setSpeed đổi handler.speed nhưng không có stream event nào đảm
+    // bảo rebuild (nhất là khi đang pause) → label "1.5x" phải tự
+    // setState để cập nhật ngay (bug "ấn tốc độ dưới thanh bar không
+    // thay đổi đúng").
+    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     final handlerAsync = ref.watch(ttsHandlerProvider);
     final handler = handlerAsync.valueOrNull;
-    if (handler == null || handler.currentChapterId != widget.chapterId) {
+    // Ẩn bar khi: chưa có handler / TTS đang phục vụ chương khác /
+    // user đã bấm X "dừng hẳn và đóng".
+    if (handler == null ||
+        handler.currentChapterId != widget.chapterId ||
+        handler.dismissedChapterId == widget.chapterId) {
       return const SizedBox.shrink();
     }
     final scheme = Theme.of(context).colorScheme;
@@ -187,6 +210,11 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
                 icon: const Icon(Icons.stop_circle_outlined, size: 26),
                 tooltip: 'Dừng (tắt tự chuyển chương)',
                 onPressed: () => handler.stopAutoAdvance(),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 22),
+                tooltip: 'Dừng hẳn và đóng',
+                onPressed: () => handler.dismiss(),
               ),
             ],
           ),

@@ -50,6 +50,7 @@ class _PanelContentState extends State<_PanelContent> {
   List<String> _engines = const [];
   TtsChunkProgress? _progress;
   StreamSubscription<TtsChunkProgress>? _progressSub;
+  StreamSubscription<PlaybackState>? _playbackSub;
 
   @override
   void initState() {
@@ -61,11 +62,23 @@ class _PanelContentState extends State<_PanelContent> {
     _progressSub = widget.handler.chunkProgress.listen((p) {
       if (mounted) setState(() => _progress = p);
     });
+    // Đồng bộ với mini player: khi stop/idle/error/buffering, xoá
+    // progress cũ — trước đây panel giữ nguyên "Đoạn x/y" cũ sau khi
+    // stop (bar dưới đã reset về Đoạn 1/N nhưng panel thì không).
+    _playbackSub = widget.handler.playbackState.listen((s) {
+      if (!mounted) return;
+      if (s.processingState == AudioProcessingState.idle ||
+          s.processingState == AudioProcessingState.error ||
+          s.processingState == AudioProcessingState.buffering) {
+        setState(() => _progress = null);
+      }
+    });
   }
 
   @override
   void dispose() {
     _progressSub?.cancel();
+    _playbackSub?.cancel();
     super.dispose();
   }
 
@@ -189,18 +202,27 @@ class _PanelContentState extends State<_PanelContent> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                // Progress bar
-                if (_progress != null) ...[
+                // Progress bar — fallback về trạng thái hiện tại của handler
+                // khi chưa có event stream nào (panel mở ngay sau khi play:
+                // event chunk progress đầu tiên bị bỏ lỡ vì subscribe sau).
+                if (_progress != null ||
+                    widget.handler.chunkModels.isNotEmpty) ...[
                   LinearProgressIndicator(
-                    value: _progress!.totalChunks > 0
-                        ? _progress!.chunkIndex / _progress!.totalChunks
+                    value: (_progress?.totalChunks ??
+                                widget.handler.chunkModels.length) >
+                            0
+                        ? (_progress?.chunkIndex ??
+                                widget.handler.currentChunkIndex) /
+                            (_progress?.totalChunks ??
+                                widget.handler.chunkModels.length)
                         : 0,
                     minHeight: 6,
                     borderRadius: BorderRadius.circular(3),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Đoạn ${_progress!.chunkIndex + 1}/${_progress!.totalChunks}',
+                    'Đoạn ${(_progress?.chunkIndex ?? widget.handler.currentChunkIndex) + 1}/'
+                    '${_progress?.totalChunks ?? widget.handler.chunkModels.length}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),

@@ -24,6 +24,20 @@ import 'package:khongdich_mobile/services/chapter_cache_service.dart';
 ///   - #10: skipToNext/skipToPrevious + auto-advance khi hết chương do
 ///     HANDLER tự resolve + load + play — không cần màn hình nào.
 ///
+/// Markdown ~3 chunks (mỗi đoạn ~390 ký tự → mỗi đoạn 1 chunk) để test
+/// speak loop chuyển chunk — đoạn ngắn 1 chunk sẽ kết thúc chương ngay.
+String multiChunkMarkdown() {
+  final paragraphs = <String>[];
+  for (var i = 1; i <= 3; i++) {
+    final buf = StringBuffer();
+    for (var j = 1; j <= 30; j++) {
+      buf.write('Đoạn $i câu $j.');
+    }
+    paragraphs.add(buf.toString().trim());
+  }
+  return paragraphs.join('\n\n');
+}
+
 /// FakeTts mô phỏng engine: `speak()` giữ future pending cho tới khi
 /// `stop()` được gọi (giống engine thật không resolve speak() sau stop
 /// giữa chừng) — nhờ đó test được race giữa các thao tác.
@@ -327,6 +341,128 @@ void main() {
           AudioProcessingState.error);
       expect(handler.playbackState.value.errorMessage, isNotNull);
     });
+
+    // ── Bug "đổi tốc độ chỉ nghe được 1 đoạn là dừng" ─────────────────
+    // Engine thật gửi "speak.onCancel" ASYNC sau stop() — nó đến TRỄ,
+    // khi loop mới đã relaunch. Trước fix, cancel handler set
+    // _isSpeaking = false → loop mới chết sau đúng 1 chunk.
+    test('straggler cancel sau restart tốc độ → loop mới vẫn đọc tiếp',
+        () async {
+      tts.deferCancelOnStop = true;
+      tts.speakCompletes = false;
+      await loadChapter(markdown: multiChunkMarkdown());
+      await handler.play();
+      expect(tts.spoken.length, 1);
+
+      await handler.setSpeed(1.5);
+      await pumpEventQueue(times: 10);
+      expect(tts.spoken.length, 2); // restart speak lại chunk hiện tại
+      expect(handler.playbackState.value.playing, isTrue);
+
+      // "speak.onCancel" của utterance CŨ tới trễ — sau khi loop mới chạy.
+      tts.fireDeferredCancel();
+      await pumpEventQueue(times: 5);
+      expect(handler.playbackState.value.playing, isTrue);
+
+      // Chunk đầu (đang treo) hoàn thành → loop phải TỰ chuyển chunk kế
+      // (trước fix: dừng tại đây vì _isSpeaking đã bị cancel handler đè).
+      tts.completeNextSpeak();
+      await pumpEventQueue(times: 5);
+      expect(tts.spoken.length, 3);
+      expect(handler.playbackState.value.playing, isTrue);
+      await handler.stop();
+    });
+
+    test('straggler cancel sau pause→play nhanh → vẫn phát tiếp', () async {
+      tts.deferCancelOnStop = true;
+      tts.speakCompletes = false;
+      await loadChapter(markdown: multiChunkMarkdown());
+      await handler.play();
+      expect(tts.spoken.length, 1);
+
+      await handler.pause();
+      await handler.play();
+      expect(tts.spoken.length, 2);
+
+      // onStop của lần pause tới trễ — sau khi loop mới đã chạy.
+      tts.fireDeferredCancel();
+      await pumpEventQueue(times: 5);
+      expect(handler.playbackState.value.playing, isTrue);
+
+      tts.completeNextSpeak();
+      await pumpEventQueue(times: 5);
+      expect(tts.spoken.length, 3);
+      expect(handler.playbackState.value.playing, isTrue);
+      await handler.stop();
+    });
+
+    test('straggler cancel sau stop → không hồi sinh nút điều khiển',
+        () async {
+      tts.deferCancelOnStop = true;
+      tts.speakCompletes = false;
+      await loadChapter(markdown: multiChunkMarkdown());
+      await handler.play();
+      await handler.stop();
+
+      expect(handler.playbackState.value.controls, isEmpty);
+      expect(handler.playbackState.value.playing, isFalse);
+
+      // "speak.onCancel" tới trễ — không được ghi đè state idle của stop.
+      tts.fireDeferredCancel();
+      await pumpEventQueue(times: 5);
+      expect(handler.playbackState.value.controls, isEmpty);
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(handler.playbackState.value.processingState,
+          AudioProcessingState.idle);
+    });
+
+    test('genuine cancel (không do chúng ta stop) → state paused', () async {
+      tts.speakCompletes = false;
+      await loadChapter(markdown: multiChunkMarkdown());
+      await handler.play();
+      expect(handler.playbackState.value.playing, isTrue);
+
+      // Engine tự cancel (vd: app khác chiếm TTS) — không có stop() nào
+      // trước đó → handler phải cập nhật UI thành "đã dừng".
+      tts.fireDeferredCancel();
+      await pumpEventQueue(times: 5);
+      expect(handler.playbackState.value.playing, isFalse);
+      await handler.stop();
+    });
+
+    // ── Nút X "dừng hẳn và đóng" ───────────────────────────────────────
+    test('dismiss → stop + đánh dấu đóng; play lại → mở lại', () async {
+      handler.autoAdvanceEnabled = true;
+      tts.speakCompletes = false;
+      await loadChapter(number: 1, next: 2);
+      await handler.play();
+      expect(handler.playbackState.value.playing, isTrue);
+
+      await handler.dismiss();
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(handler.playbackState.value.controls, isEmpty);
+      expect(handler.dismissedChapterId, 'ch-1');
+      expect(handler.autoAdvanceEnabled, isFalse);
+
+      // Tap headphone lại → play() bỏ trạng thái "đã đóng" (bar hiện lại).
+      await handler.play();
+      expect(handler.dismissedChapterId, isNull);
+      expect(handler.playbackState.value.playing, isTrue);
+      await handler.stop();
+    });
+
+    test('dismiss chương A → load chương B → dismissed bị clear', () async {
+      tts.speakCompletes = false;
+      await loadChapter(number: 1, next: 2);
+      await handler.play();
+      await handler.dismiss();
+      expect(handler.dismissedChapterId, 'ch-1');
+
+      await loadChapter(number: 2, prev: 1);
+      expect(handler.dismissedChapterId, isNull);
+      expect(handler.currentChapterId, 'ch-2');
+      await handler.stop();
+    });
   });
 }
 
@@ -342,6 +478,10 @@ class FakeTts extends FlutterTts {
   /// set = 1 để chương đầu hoàn thành nhưng chương kế treo → assert
   /// được trạng thái "đang phát chương 2".
   int autoCompleteCount = 1 << 20;
+  /// True = `stop()` KHÔNG gọi cancel handler ngay — mô phỏng engine
+  /// thật gửi "speak.onCancel" ASYNC (tới trễ, sau khi loop mới đã
+  /// relaunch). Test phải gọi [fireDeferredCancel] để mô phỏng event.
+  bool deferCancelOnStop = false;
   VoidCallback? onCancel;
   ErrorHandler? onError;
 
@@ -358,12 +498,27 @@ class FakeTts extends FlutterTts {
 
   @override
   Future<dynamic> stop() async {
-    onCancel?.call();
+    if (!deferCancelOnStop) onCancel?.call();
     for (final c in _pending) {
       if (!c.isCompleted) c.complete(1);
     }
     _pending.clear();
     return 1;
+  }
+
+  /// Mô phỏng "speak.onCancel" đến TRỄ từ engine (sau stop).
+  void fireDeferredCancel() {
+    onCancel?.call();
+  }
+
+  /// Hoàn thành utterance đang treo gần nhất (speak() resolve 1).
+  void completeNextSpeak() {
+    for (final c in _pending.reversed) {
+      if (!c.isCompleted) {
+        c.complete(1);
+        return;
+      }
+    }
   }
 
   @override
