@@ -12,6 +12,11 @@ abstract class ChapterFetcher {
   Future<ChapterContent> fetchChapter(String chapterId);
   Future<ChapterAccess> fetchChapterAccess(String chapterId);
   Future<List<ChapterContent>> fetchChaptersBatch(List<String> chapterIds);
+
+  /// Strict variant của fetchVipStatus — THROW khi fetch fail thay vì
+  /// nuốt lỗi (DownloadManager cần biết "không xác định được" để
+  /// fallback về check access per chapter — fail-closed).
+  Future<VipStatus> fetchVipStatusStrict(String storyId);
 }
 
 /// Unified read/write client for the Không Dịch backend's mobile JSON
@@ -129,8 +134,7 @@ class StoryRepository implements ChapterFetcher {
   /// Hits `GET /api/v1/mobile/stories/{id}/vip-status`.
   Future<VipStatus> fetchVipStatus(String storyId) async {
     try {
-      final r = await _dio.get('/api/v1/mobile/stories/$storyId/vip-status');
-      return VipStatus.fromJson(r.data as Map<String, dynamic>);
+      return await fetchVipStatusStrict(storyId);
     } on DioException catch (_) {
       // Best-effort — if the endpoint 404s (older backend), assume no VIP.
       return const VipStatus(
@@ -140,6 +144,16 @@ class StoryRepository implements ChapterFetcher {
         canDownloadOffline: true,
       );
     }
+  }
+
+  /// Strict variant — THROW khi fetch fail. DownloadManager dùng bản
+  /// này: nếu không xác định được lockedChapterIds thì phải fallback
+  /// về check access per chapter (fail-closed), không được skip check
+  /// (dữ liệu VIP có thể bị lộ).
+  @override
+  Future<VipStatus> fetchVipStatusStrict(String storyId) async {
+    final r = await _dio.get('/api/v1/mobile/stories/$storyId/vip-status');
+    return VipStatus.fromJson(r.data as Map<String, dynamic>);
   }
 
   /// Check whether the current user can read a chapter. Used by the

@@ -22,6 +22,28 @@ class FakeFetcher implements ChapterFetcher {
   final Map<String, ChapterContent> chapters = {};
   final List<List<String>> batchCalls = [];
   bool failBatch = false;
+
+  /// Fail batch call thứ N (tính từ 1). 0 = không fail. Dùng để test
+  /// fallback per-chunk.
+  int failBatchCallIndex = 0;
+
+  /// Throw khi fetchChapterAccess được gọi (để assert rằng việc
+  /// access-check được skip nhờ vip-status optimization).
+  bool throwOnAccessCheck = false;
+
+  /// Mô phỏng behavior của StoryRepository.fetchChapterAccess khi mạng
+  /// lỗi: fail-CLOSED, trả canRead=false + reason=access_check_failed
+  /// (không throw — DioException được repository bắt).
+  bool failClosedOnAccess = false;
+  final List<String> accessCheckCalls = [];
+  final Map<String, ChapterAccess> accessByChapter = {};
+
+  /// lockedChapterIds trả về bởi fetchVipStatusStrict.
+  Set<String> lockedIds = {};
+
+  /// Throw khi fetchVipStatusStrict được gọi (mô phỏng mạng lỗi).
+  bool failVipStatus = false;
+
   ChapterAccess Function(String id)? accessFn;
 
   @override
@@ -33,19 +55,41 @@ class FakeFetcher implements ChapterFetcher {
 
   @override
   Future<ChapterAccess> fetchChapterAccess(String chapterId) async {
+    accessCheckCalls.add(chapterId);
+    if (throwOnAccessCheck) {
+      throw StateError('access check network error');
+    }
+    if (failClosedOnAccess) {
+      return const ChapterAccess(
+          canRead: false, isLocked: true, reason: 'access_check_failed');
+    }
     if (accessFn != null) return accessFn!(chapterId);
-    return const ChapterAccess(canRead: true, isLocked: false);
+    return accessByChapter[chapterId] ??
+        const ChapterAccess(canRead: true, isLocked: false);
   }
 
   @override
   Future<List<ChapterContent>> fetchChaptersBatch(
       List<String> chapterIds) async {
     batchCalls.add(List.of(chapterIds));
-    if (failBatch) throw Exception('backend 400: Tối đa 50 chương mỗi lần');
+    if (failBatch || batchCalls.length == failBatchCallIndex) {
+      throw Exception('backend 400: Tối đa 50 chương mỗi lần');
+    }
     return [
       for (final id in chapterIds)
         if (chapters.containsKey(id)) chapters[id]!,
     ];
+  }
+
+  @override
+  Future<VipStatus> fetchVipStatusStrict(String storyId) async {
+    if (failVipStatus) throw StateError('vip-status network error');
+    return VipStatus(
+      isVip: lockedIds.isNotEmpty,
+      lockedChapterIds: lockedIds.toList(),
+      unlockedChapterIds: const [],
+      canDownloadOffline: true,
+    );
   }
 }
 
@@ -250,8 +294,10 @@ void main() {
   });
 
   test('access-check fail do mạng → message mạng, không nhầm "Chương VIP"', () async {
-    fetcher.accessFn = (_) => const ChapterAccess(
-        canRead: false, isLocked: true, reason: 'access_check_failed');
+    // c1 là chapter lock (nằm trong lockedIds) nên access check PHẢI
+    // chạy; repo fail-closed trả access_check_failed như mạng lỗi.
+    fetcher.lockedIds = {'c1'};
+    fetcher.failClosedOnAccess = true;
     await mgr.enqueueChapter(
       storyId: 's1',
       storySlug: 'truyen-test',
@@ -267,6 +313,7 @@ void main() {
   });
 
   test('chương VIP không có quyền → message VIP rõ ràng', () async {
+    fetcher.lockedIds = {'c1'};
     fetcher.accessFn = (_) => const ChapterAccess(
         canRead: false, isLocked: true, reason: 'vip_locked');
     await mgr.enqueueChapter(
@@ -296,5 +343,103 @@ void main() {
 
     final row = (await db.getDownloadQueue()).single;
     expect(row.storyTitle, 'Truyện test');
+  });
+
+  test('vip-status: chương không lock skip access check, chương lock vẫn check', () async {
+    fetcher.lockedIds = {'c2'};
+    // c2 lock → check trả vip_locked; c1/c3 KHÔNG được check — nếu gọi
+    // access cho chúng (optimization hỏng) thì throw làm test fail.
+    fetcher.accessFn = (id) {
+      if (id == 'c2') {
+        return const ChapterAccess(
+            canRead: false, isLocked: true, reason: 'vip_locked');
+      }
+      throw StateError('access check must be skipped for $id');
+    };
+    for (var i = 1; i <= 3; i++) {
+      fetcher.chapters['c$i'] = makeTextChapter('c$i', number: i);
+    }
+    await mgr.enqueueAllChapters(
+      storyId: 's1',
+      storySlug: 'truyen-test',
+      chapters: [for (var i = 1; i <= 3; i++) makeSummary('c$i', i)],
+      storyTitle: 'Truyện test',
+    );
+    await waitForQueueDone(db);
+
+    // Chỉ đúng chapter lock (c2) bị check access — c1/c3 skip nhờ
+    // lockedIds từ vip-status (216 request access cũ → 1 request).
+    expect(fetcher.accessCheckCalls, ['c2']);
+    final byId = {for (final r in await db.getDownloadQueue()) r.chapterId: r};
+    expect(byId['c1']!.status, 'completed');
+    expect(byId['c3']!.status, 'completed');
+    expect(byId['c2']!.status, 'failed');
+    expect(byId['c2']!.errorMessage, contains('Chương VIP'));
+  });
+
+  test('vip-status fetch fail → fallback check access per chapter (fail-closed)', () async {
+    fetcher.failVipStatus = true;
+    fetcher.failClosedOnAccess = true; // access cũng fail do mạng
+    fetcher.chapters['c1'] = makeTextChapter('c1', number: 1);
+    await mgr.enqueueChapter(
+      storyId: 's1',
+      storySlug: 'truyen-test',
+      chapterId: 'c1',
+      chapterNumber: 1,
+      storyTitle: 'Truyện test',
+    );
+    await waitForQueueDone(db);
+
+    // Không được skip check khi không xác định được lockedIds — nếu
+    // skip, chapter VIP sẽ bị tải lộ.
+    expect(fetcher.accessCheckCalls, ['c1']);
+    final row = (await db.getDownloadQueue()).single;
+    expect(row.status, 'failed');
+    expect(row.errorMessage, contains('kiểm tra mạng'));
+  });
+
+  test('1 access check lỗi giữa batch không hủy cả batch', () async {
+    fetcher.lockedIds = {'c1', 'c2', 'c3'}; // buộc check tất cả
+    fetcher.accessFn = (id) {
+      if (id == 'c2') throw StateError('network blip');
+      return const ChapterAccess(canRead: true, isLocked: false);
+    };
+    for (var i = 1; i <= 3; i++) {
+      fetcher.chapters['c$i'] = makeTextChapter('c$i', number: i);
+    }
+    await mgr.enqueueAllChapters(
+      storyId: 's1',
+      storySlug: 'truyen-test',
+      chapters: [for (var i = 1; i <= 3; i++) makeSummary('c$i', i)],
+      storyTitle: 'Truyện test',
+    );
+    await waitForQueueDone(db);
+
+    final byId = {for (final r in await db.getDownloadQueue()) r.chapterId: r};
+    expect(byId['c2']!.status, 'failed');
+    expect(byId['c2']!.errorMessage, contains('kiểm tra mạng'));
+    expect(byId['c1']!.status, 'completed');
+    expect(byId['c3']!.status, 'completed');
+    expect(fetcher.batchCalls.length, 1); // batch vẫn chạy cho c1+c3
+  });
+
+  test('chunk giữa batch fail → chỉ chunk đó fallback single, phần còn lại vẫn batch', () async {
+    for (var i = 1; i <= 60; i++) {
+      fetcher.chapters['c$i'] = makeTextChapter('c$i', number: i);
+    }
+    fetcher.failBatchCallIndex = 2; // chunk 1 (50) OK, chunk 2 (10) fail
+    await mgr.enqueueAllChapters(
+      storyId: 's1',
+      storySlug: 'truyen-test',
+      chapters: [for (var i = 1; i <= 60; i++) makeSummary('c$i', i)],
+      storyTitle: 'Truyện test',
+    );
+    await waitForQueueDone(db);
+
+    expect(fetcher.batchCalls.length, 2);
+    final queue = await db.getDownloadQueue();
+    expect(queue.every((q) => q.status == 'completed'), true,
+        reason: 'chunk fail chỉ fallback 10 row đó, không hủy cả 60');
+    expect((await db.getDownloadedChaptersForStory('s1')).length, 60);
   });
 }

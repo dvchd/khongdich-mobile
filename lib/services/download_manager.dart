@@ -228,15 +228,48 @@ class DownloadManager {
     }
 
     for (final storyRows in byStory.values) {
+      // Fetch vip-status MỘT LẦN per story thay vì check access từng
+      // chương: chapter KHÔNG nằm trong lockedChapterIds chắc chắn đọc
+      // được (list_chapters đã lọc draft/visibility với non-author) →
+      // skip access check. Trước đây truyện 216 chương = 216 request
+      // access tuần tự → mất vài phút + 1 lỗi mạng giữa chừng hủy cả
+      // batch. Nếu fetch fail (mạng) → lockedIds = null → quay lại
+      // check access từng chương (fail-closed, không lộ VIP).
+      final lockedIds = await _fetchLockedChapterIds(storyRows.first.storyId);
       // If 3+ pending for the same story, use batch fetch.
       if (storyRows.length >= 3) {
-        await _processBatch(storyRows);
+        await _processBatch(storyRows, lockedIds: lockedIds);
       } else {
         for (final row in storyRows) {
-          await _processSingle(row);
+          await _processSingle(row, lockedIds: lockedIds);
         }
       }
     }
+  }
+
+  /// Lấy tập chapter VIP-locked của story, hoặc null nếu không xác
+  /// định được (fetch fail → caller PHẢI check access per chapter).
+  Future<Set<String>?> _fetchLockedChapterIds(String storyId) async {
+    try {
+      final vip = await _repo.fetchVipStatusStrict(storyId);
+      return vip.lockedChapterIds.toSet();
+    } catch (e, s) {
+      AppLogger.warning(
+          'DownloadManager: vip-status fetch failed for $storyId — '
+          'fallback to per-chapter access check', e, s);
+      return null;
+    }
+  }
+
+  /// Check quyền đọc một chapter. Nếu [lockedIds] != null thì các
+  /// chapter ngoài danh sách lock CHẮC CHẮN đọc được → không cần gọi
+  /// API. [lockedIds] == null → gọi access API per chapter (fail-closed).
+  Future<ChapterAccess> _checkAccess(
+      String chapterId, Set<String>? lockedIds) async {
+    if (lockedIds != null && !lockedIds.contains(chapterId)) {
+      return const ChapterAccess(canRead: true, isLocked: false);
+    }
+    return _repo.fetchChapterAccess(chapterId);
   }
 
   Future<bool> _isCancelled(int queueId) async {
@@ -301,7 +334,10 @@ class DownloadManager {
         ));
   }
 
-  Future<void> _processSingle(DownloadQueueData row) async {
+  Future<void> _processSingle(
+    DownloadQueueData row, {
+    Set<String>? lockedIds,
+  }) async {
     try {
       // Re-read the row: it may have been cancelled while queued, or
       // re-queued by a batch fallback after another run resolved it.
@@ -342,17 +378,13 @@ class DownloadManager {
       // If the chapter is VIP-locked and the user lacks a grant, mark
       // the queue row as 'failed' with a clear Vietnamese message
       // rather than wasting a fetch round-trip that would 403 anyway.
-      final access = await _repo.fetchChapterAccess(row.chapterId);
+      final access = await _checkAccess(row.chapterId, lockedIds);
       if (!access.canRead) {
-        await _db.updateDownloadQueueRow(
+        await _markFailed(
             row.id,
-            DownloadQueueCompanion(
-              status: const Value('failed'),
-              errorMessage: Value(
-                  access.reason == 'access_check_failed'
-                      ? 'Không kiểm tra được quyền truy cập — kiểm tra mạng rồi thử lại'
-                      : 'Chương VIP — cần được tác giả cấp quyền để tải offline'),
-            ));
+            access.reason == 'access_check_failed'
+                ? _accessCheckFailedMsg
+                : _vipLockedMsg);
         return;
       }
 
@@ -385,26 +417,42 @@ class DownloadManager {
     }
   }
 
-  Future<void> _processBatch(List<DownloadQueueData> rows) async {
+  static const String _accessCheckFailedMsg =
+      'Không kiểm tra được quyền truy cập — kiểm tra mạng rồi thử lại';
+  static const String _vipLockedMsg =
+      'Chương VIP — cần được tác giả cấp quyền để tải offline';
+
+  Future<void> _processBatch(
+    List<DownloadQueueData> rows, {
+    Set<String>? lockedIds,
+  }) async {
     try {
       // VIP gate: check access for all chapters in the batch before
       // fetching. VIP-locked chapters the user can't read are marked
       // failed immediately — they won't be in the batch fetch.
+      //
+      // Mỗi lỗi access check chỉ làm FAIL ĐÚNG row đó — trước đây 1
+      // exception trong vòng lặp làm cả _processBatch throw → fallback
+      // hàng loạt về single (216 row re-check lại từ đầu).
       final accessibleRows = <DownloadQueueData>[];
       for (final row in rows) {
-        final access = await _repo.fetchChapterAccess(row.chapterId);
+        final ChapterAccess access;
+        try {
+          access = await _checkAccess(row.chapterId, lockedIds);
+        } catch (e, s) {
+          AppLogger.warning(
+              'DownloadManager: access check failed for row ${row.id}', e, s);
+          await _markFailed(row.id, _accessCheckFailedMsg);
+          continue;
+        }
         if (access.canRead) {
           accessibleRows.add(row);
         } else {
-          await _db.updateDownloadQueueRow(
+          await _markFailed(
               row.id,
-              DownloadQueueCompanion(
-                status: const Value('failed'),
-                errorMessage: Value(
-                    access.reason == 'access_check_failed'
-                        ? 'Không kiểm tra được quyền truy cập — kiểm tra mạng rồi thử lại'
-                        : 'Chương VIP — cần được tác giả cấp quyền để tải offline'),
-              ));
+              access.reason == 'access_check_failed'
+                  ? _accessCheckFailedMsg
+                  : _vipLockedMsg);
         }
       }
       if (accessibleRows.isEmpty) return;
@@ -422,14 +470,25 @@ class DownloadManager {
       }
 
       // Fetch theo từng chunk ≤ _batchChunkSize — backend trả 400 nếu
-      // gửi >50 ids một lần.
+      // gửi >50 ids một lần. Chunk nào fail thì fallback SINGLE đúng
+      // các row của chunk đó (không hủy cả batch).
       final byId = <String, ChapterContent>{};
+      final fallbackRows = <DownloadQueueData>[];
       for (var i = 0; i < accessibleIds.length; i += _batchChunkSize) {
-        final chunk = accessibleIds.sublist(
-            i, math.min(i + _batchChunkSize, accessibleIds.length));
-        final chapters = await _repo.fetchChaptersBatch(chunk);
-        for (final c in chapters) {
-          byId[c.id] = c;
+        final end = math.min(i + _batchChunkSize, accessibleIds.length);
+        final chunkRows = accessibleRows.sublist(i, end);
+        final chunkIds = accessibleIds.sublist(i, end);
+        try {
+          final chapters = await _repo.fetchChaptersBatch(chunkIds);
+          for (final c in chapters) {
+            byId[c.id] = c;
+          }
+        } catch (e, s) {
+          AppLogger.warning(
+              'DownloadManager: batch chunk ${i ~/ _batchChunkSize + 1} '
+              'failed, falling back to single for ${chunkIds.length} rows',
+              e, s);
+          fallbackRows.addAll(chunkRows);
         }
       }
 
@@ -437,15 +496,23 @@ class DownloadManager {
         final ch = byId[row.chapterId];
         if (ch != null) {
           await _saveChapter(row, ch);
-        } else {
+        } else if (!fallbackRows.contains(row)) {
           // Chapter not returned — skip / mark failed.
+          await _markFailed(row.id, 'Không tìm thấy chương trên máy chủ');
+        }
+      }
+
+      // Fallback cho các chunk bị lỗi — reset 'downloading' về 'retry'
+      // để _processSingle nhận row (guard cũ chỉ nhận pending/retry đã
+      // gây bug kẹt vĩnh viễn; nay guard chấp nhận 'downloading' luôn).
+      for (final row in fallbackRows) {
+        final current = await _db.getDownloadQueueRow(row.id);
+        if (current != null && current.status == 'downloading') {
           await _db.updateDownloadQueueRow(
               row.id,
-              DownloadQueueCompanion(
-                status: const Value('failed'),
-                errorMessage: const Value('Không tìm thấy chương trên máy chủ'),
-              ));
+              DownloadQueueCompanion(status: const Value('retry')));
         }
+        await _processSingle(row, lockedIds: lockedIds);
       }
     } catch (e, s) {
       // Batch failed — fall back to individual fetches. Trước đây
@@ -464,9 +531,18 @@ class DownloadManager {
         }
       }
       for (final row in rows) {
-        await _processSingle(row);
+        await _processSingle(row, lockedIds: lockedIds);
       }
     }
+  }
+
+  Future<void> _markFailed(int queueId, String message) {
+    return _db.updateDownloadQueueRow(
+        queueId,
+        DownloadQueueCompanion(
+          status: const Value('failed'),
+          errorMessage: Value(message),
+        ));
   }
 }
 
