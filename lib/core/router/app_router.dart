@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/auth/auth_screen.dart';
+import '../../features/author/author_screen.dart';
 import '../../features/bookshelf/bookshelf_screen.dart';
 import '../../features/comments/comments_screen.dart';
 import '../../features/comments/segment_composer_sheet.dart';
@@ -70,6 +71,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'story_detail',
         builder: (context, state) =>
             StoryDetailScreen(storySlug: state.pathParameters['slug']!),
+      ),
+      // Trang tác giả — hồ sơ + danh sách truyện. Mở bằng cách chạm
+      // tên tác giả ở story detail (đối chiếu web /u/{username}).
+      GoRoute(
+        path: '/author/:username',
+        name: 'author',
+        builder: (context, state) =>
+            AuthorScreen(username: state.pathParameters['username']!),
       ),
       GoRoute(
         path: '/chapter/:ref',

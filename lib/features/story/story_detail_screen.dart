@@ -162,9 +162,39 @@ class _StoryDetailBody extends ConsumerWidget {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        story.author,
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      // Tên tác giả — chạm để mở trang tác giả (danh sách
+                      // truyện của họ). Không có username (dữ liệu cũ) →
+                      // không bấm được.
+                      Builder(
+                        builder: (context) {
+                          final username = detail.authorUsername;
+                          final authorText = Text(
+                            story.author,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: username.isNotEmpty
+                                  ? AppTheme.primary
+                                  : null,
+                              decoration: username.isNotEmpty
+                                  ? TextDecoration.underline
+                                  : TextDecoration.none,
+                              decorationColor: AppTheme.primary
+                                  .withValues(alpha: 0.5),
+                            ),
+                          );
+                          if (username.isEmpty) return authorText;
+                          return InkWell(
+                            onTap: () =>
+                                context.push('/author/$username'),
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 2),
+                              child: authorText,
+                            ),
+                          );
+                        },
                       ),
                       const SizedBox(height: 8),
                       Wrap(

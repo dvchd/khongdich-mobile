@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:khongdich_mobile/features/tts/tts_audio_handler.dart'
+    show TtsResolveFailure, ttsResolveFailureMessage;
 import 'package:khongdich_mobile/features/tts/tts_mini_player.dart';
 
 /// Regression test cho vòng xoay tốc độ trên mini player.
@@ -22,5 +24,28 @@ void main() {
 
   test('current trên mốc cuối → quay về mốc đầu', () {
     expect(nextSpeedInCycle(2.5), 1.0);
+  });
+
+  test('message resolve thất bại phân biệt VIP / mạng / chưa tải / không tồn tại',
+      () {
+    expect(
+      ttsResolveFailureMessage(56, TtsResolveFailure.vipLocked,
+          manualSkip: false),
+      contains('VIP'),
+    );
+    expect(
+      ttsResolveFailureMessage(56, null, manualSkip: false),
+      contains('kiểm tra kết nối'),
+    );
+    expect(
+      ttsResolveFailureMessage(56, TtsResolveFailure.notDownloaded,
+          manualSkip: false),
+      contains('chưa được tải'),
+    );
+    expect(
+      ttsResolveFailureMessage(56, TtsResolveFailure.notFound,
+          manualSkip: true),
+      contains('Không chuyển được'),
+    );
   });
 }

@@ -257,6 +257,20 @@ class StoryRepository implements ChapterFetcher {
     );
   }
 
+  /// Hồ sơ tác giả + danh sách truyện của họ (phân trang).
+  /// Hits `GET /api/v1/mobile/users/{username}`.
+  Future<AuthorProfile> fetchAuthorProfile(
+    String username, {
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/users/$username',
+      queryParameters: {'page': page, 'per_page': perPage},
+    );
+    return AuthorProfile.fromJson(r.data as Map<String, dynamic>);
+  }
+
   // ─── Comments ────────────────────────────────────────────────────
 
   /// Merged comment feed (regular + segment comments) for one chapter.
@@ -901,6 +915,70 @@ class SyncBookmarkItem {
 }
 
 // ─── VIP DTOs ────────────────────────────────────────────────────────
+
+/// Hồ sơ công khai của một tác giả (backend PublicAuthorProfile).
+class AuthorInfo {
+  const AuthorInfo({
+    required this.id,
+    required this.username,
+    required this.displayName,
+    this.avatarUrl,
+    this.bio = '',
+    this.followerCount = 0,
+  });
+
+  final String id;
+  final String username;
+  final String displayName;
+  final String? avatarUrl;
+  final String bio;
+  final int followerCount;
+
+  /// Tên hiển thị — fallback về username khi display_name trống.
+  String get name => displayName.isNotEmpty ? displayName : username;
+
+  factory AuthorInfo.fromJson(Map<String, dynamic> json) => AuthorInfo(
+        id: json['id'] as String,
+        username: json['username'] as String,
+        displayName: json['display_name'] as String? ?? '',
+        avatarUrl: (json['avatar_url'] as String?)?.isNotEmpty == true
+            ? json['avatar_url'] as String
+            : null,
+        bio: json['bio'] as String? ?? '',
+        followerCount: (json['follower_count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Trang hồ sơ tác giả: thông tin + danh sách truyện (phân trang).
+class AuthorProfile {
+  const AuthorProfile({
+    required this.author,
+    required this.stories,
+    required this.totalStories,
+    required this.page,
+    required this.perPage,
+    required this.totalPages,
+  });
+
+  final AuthorInfo author;
+  final List<StorySummary> stories;
+  final int totalStories;
+  final int page;
+  final int perPage;
+  final int totalPages;
+
+  factory AuthorProfile.fromJson(Map<String, dynamic> json) => AuthorProfile(
+        author: AuthorInfo.fromJson(json['author'] as Map<String, dynamic>),
+        stories: [
+          for (final s in (json['stories'] as List? ?? const []))
+            StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+        ],
+        totalStories: (json['total_stories'] as num?)?.toInt() ?? 0,
+        page: (json['page'] as num?)?.toInt() ?? 1,
+        perPage: (json['per_page'] as num?)?.toInt() ?? 20,
+        totalPages: (json['total_pages'] as num?)?.toInt() ?? 0,
+      );
+}
 
 /// VIP status of a story from the reader's perspective.
 ///

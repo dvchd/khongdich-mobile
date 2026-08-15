@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/markdown/markdown.dart';
+import '../../core/network/api_client.dart' show ApiException;
 import '../../core/observability/app_logger.dart';
 import '../../core/utils/notification_permission.dart';
 import '../../models/chapter_content.dart';
@@ -1115,20 +1116,22 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         processingState: AudioProcessingState.buffering,
       ),
     );
-    final chapter = await _resolveChapter(targetNumber);
+    final result = await _resolveChapter(targetNumber);
+    final chapter = result.chapter;
     if (chapter == null) {
-      AppLogger.warning('TTS: resolve chapter $targetNumber failed');
+      AppLogger.warning(
+          'TTS: resolve chapter $targetNumber failed (${result.failure?.name})');
       playbackState.add(
         playbackState.value.copyWith(
           controls: buildTtsControls(playing: false),
           androidCompactActionIndices: const [0, 1, 2],
           playing: false,
           processingState: AudioProcessingState.error,
-          errorMessage: manualSkip
-              ? 'Không tải được chương $targetNumber để chuyển. '
-                  'Kiểm tra kết nối (hoặc tải chương đó về máy) rồi thử lại.'
-              : 'Không tải được chương $targetNumber để đọc tiếp. '
-                  'Kiểm tra kết nối rồi thử lại.',
+          errorMessage: _resolveFailureMessage(
+            targetNumber,
+            result.failure,
+            manualSkip: manualSkip,
+          ),
         ),
       );
       return;
@@ -1172,10 +1175,14 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// Resolve nội dung chương [chapterNumber] theo nguồn hiện tại:
   ///   - Offline: query Drift `downloaded_chapters` (không đụng mạng).
   ///   - Online: `ChapterCacheService.getChapter` (memory → DB → API).
-  /// Trả null nếu không resolve được (chưa tải / lỗi mạng / hết chương).
-  Future<ChapterContent?> _resolveChapter(int chapterNumber) async {
+  /// Trả [TtsResolveResult] — chapter hoặc LÝ DO thất bại để thông báo
+  /// đúng cho user (VIP ≠ mạng ≠ chưa tải — trước đây chỉ có 1 message
+  /// "kiểm tra kết nối" chung chung).
+  Future<TtsResolveResult> _resolveChapter(int chapterNumber) async {
     final storyId = _currentStoryId;
-    if (storyId == null) return null;
+    if (storyId == null) {
+      return const TtsResolveResult.failed(TtsResolveFailure.notFound);
+    }
     if (_offlineMode) {
       try {
         final row = await (_db.select(_db.downloadedChapters)
@@ -1185,7 +1192,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         if (row == null) {
           AppLogger.info(
               'TTS: offline chapter $chapterNumber not downloaded');
-          return null;
+          return const TtsResolveResult.failed(
+              TtsResolveFailure.notDownloaded);
         }
         final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
         final fullJson = <String, dynamic>{
@@ -1198,22 +1206,50 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
           'title': row.chapterTitle,
         };
         final chapter = ChapterContent.fromJson(fullJson);
-        return chapterMarkdownOrNull(chapter) == null ? null : chapter;
+        return chapterMarkdownOrNull(chapter) == null
+            ? const TtsResolveResult.failed(TtsResolveFailure.notFound)
+            : TtsResolveResult.success(chapter);
       } catch (e, s) {
         AppLogger.warning('TTS: offline chapter resolve failed', e, s);
-        return null;
+        return const TtsResolveResult.failed(TtsResolveFailure.network);
       }
     }
     try {
-      return await _cache.getChapter(
+      return TtsResolveResult.success(await _cache.getChapter(
         storyId: storyId,
         chapterNumber: chapterNumber,
+      ));
+    } on ApiException catch (e) {
+      AppLogger.warning(
+          'TTS: online chapter resolve failed with status ${e.status}');
+      return TtsResolveResult.failed(
+        e.status == 403
+            ? TtsResolveFailure.vipLocked
+            : (e.status == 404
+                ? TtsResolveFailure.notFound
+                : TtsResolveFailure.network),
       );
+    } on StateError catch (_) {
+      // getChapter throw khi chapterNumber không có trong chapter list
+      // (chưa publish / đánh số lại).
+      return const TtsResolveResult.failed(TtsResolveFailure.notFound);
     } catch (e, s) {
       AppLogger.warning('TTS: online chapter resolve failed', e, s);
-      return null;
+      return const TtsResolveResult.failed(TtsResolveFailure.network);
     }
   }
+
+  /// Message lỗi cho user theo nguyên nhân resolve thất bại.
+  String _resolveFailureMessage(
+    int chapterNumber,
+    TtsResolveFailure? failure, {
+    required bool manualSkip,
+  }) =>
+      ttsResolveFailureMessage(
+        chapterNumber,
+        failure,
+        manualSkip: manualSkip,
+      );
 
   /// Dừng hẳn + tắt chuỗi auto-advance — nút Stop trong control panel.
   /// (`stop()` thường được gọi nội bộ khi chuyển chương nên không được
@@ -1463,18 +1499,22 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         processingState: AudioProcessingState.buffering,
       ),
     );
-    final chapter = await _resolveChapter(target);
+    final result = await _resolveChapter(target);
+    final chapter = result.chapter;
     if (chapter == null) {
-      AppLogger.warning('TTS: auto-advance resolve chapter $target failed');
+      AppLogger.warning(
+          'TTS: auto-advance resolve chapter $target failed (${result.failure?.name})');
       playbackState.add(
         playbackState.value.copyWith(
           controls: buildTtsControls(playing: false),
           androidCompactActionIndices: const [0, 1, 2],
           playing: false,
           processingState: AudioProcessingState.error,
-          errorMessage:
-              'Không tải được chương $target để đọc tiếp. '
-              'Kiểm tra kết nối rồi thử lại.',
+          errorMessage: _resolveFailureMessage(
+            target,
+            result.failure,
+            manualSkip: false,
+          ),
         ),
       );
       return;
@@ -1562,6 +1602,46 @@ bool shouldAutoAdvanceTts({
   if (!matchesCurrentChapter) return false;
   if (nextChapterNumber == null) return false;
   return autoAdvanceEnabled || manualSkip;
+}
+
+/// Nguyên nhân resolve chương thất bại — để báo lỗi đúng cho user
+/// (VIP ≠ mạng ≠ chưa tải ≠ không tồn tại).
+enum TtsResolveFailure { network, vipLocked, notFound, notDownloaded }
+
+/// Kết quả resolve chương cho skip/auto-advance — chapter hoặc lý do
+/// thất bại, không bao giờ cả hai.
+class TtsResolveResult {
+  const TtsResolveResult.success(ChapterContent this.chapter)
+      : failure = null;
+
+  const TtsResolveResult.failed(TtsResolveFailure this.failure)
+      : chapter = null;
+
+  final ChapterContent? chapter;
+  final TtsResolveFailure? failure;
+}
+
+/// Message lỗi cho user khi skip/auto-advance không resolve được chương
+/// — mỗi nguyên nhân một thông điệp riêng (trước đây chỉ có "kiểm tra
+/// kết nối" chung chung, VIP cũng báo mạng).
+String ttsResolveFailureMessage(
+  int chapterNumber,
+  TtsResolveFailure? failure, {
+  required bool manualSkip,
+}) {
+  final prefix = manualSkip
+      ? 'Không chuyển được sang chương $chapterNumber'
+      : 'Không đọc tiếp được chương $chapterNumber';
+  return switch (failure) {
+    TtsResolveFailure.vipLocked =>
+      '$prefix — chương này là chương VIP, bạn chưa được cấp quyền '
+          'đọc. Liên hệ tác giả để được mở khóa.',
+    TtsResolveFailure.notFound => '$prefix — không tìm thấy chương này.',
+    TtsResolveFailure.notDownloaded =>
+      '$prefix — chương này chưa được tải về máy. Kết nối mạng và tải '
+          'chương trước khi nghe offline.',
+    _ => '$prefix — kiểm tra kết nối rồi thử lại.',
+  };
 }
 
 /// Broadcast khi TTS đọc xong một chương (tự nhiên hoặc skip thủ công).
