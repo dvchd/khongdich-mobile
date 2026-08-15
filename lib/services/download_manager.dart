@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -29,9 +30,9 @@ class DownloadManager {
   DownloadManager(this._db, this._repo, this._api, this._mangaImageDownloader);
 
   final AppDatabase _db;
-  final StoryRepository _repo;
+  final ChapterFetcher _repo;
   // ignore: unused_field
-  final ApiClient _api;
+  final ApiClient? _api;
   final MangaImageDownloader _mangaImageDownloader;
 
   /// Serializes [\_processQueue] — without this, two concurrent
@@ -41,6 +42,14 @@ class DownloadManager {
   /// the same files concurrently).
   bool _processing = false;
   bool _rerunRequested = false;
+
+  /// Backend giới hạn tối đa 50 chapter ids mỗi lần gọi batch
+  /// (`src/api/mobile.rs::batch_get_chapters` — trả 400 nếu vượt quá).
+  /// Trước đây `_processBatch` gửi TOÀN BỘ ids một lần → truyện >50
+  /// chương luôn bị 400 → rơi vào fallback mà fallback lại no-op (xem
+  /// `_processSingle`) → toàn bộ queue kẹt ở 'downloading' vĩnh viễn,
+  /// nút tải ở story detail bị disable vĩnh viễn.
+  static const int _batchChunkSize = 50;
 
   /// Recover queue rows stuck in 'downloading' after an app kill —
   /// reset them to 'retry' and resume processing. Called when the
@@ -72,13 +81,24 @@ class DownloadManager {
     required String chapterId,
     required int chapterNumber,
     String downloadType = 'chapter',
+    String? storyTitle,
     String? coverUrl,
     String? storyAuthor,
     String? storySynopsis,
   }) async {
-    // Skip if already downloaded.
+    // Nếu chương đã có trong DB: nếu chỉ là auto_cache (prefetch ngầm)
+    // thì promote thành manual_download — user bấm tải là ý muốn chủ
+    // động, chương phải hiện trong Offline Library. Trước đây skip
+    // thẳng → chương đã đọc online không bao giờ tải offline được.
     final existing = await _db.getDownloadedChapter(chapterId);
-    if (existing != null) return -1;
+    if (existing != null) {
+      if (existing.source == 'auto_cache') {
+        await _db.promoteChapterToManual(chapterId);
+        AppLogger.info(
+            'DownloadManager: promoted auto_cache → manual_download for $chapterId');
+      }
+      return -1;
+    }
 
     // Skip if already in the queue (pending or retry).
     final queue = await _db.getDownloadQueue();
@@ -103,6 +123,7 @@ class DownloadManager {
     final id = await _db.enqueueDownload(DownloadQueueCompanion.insert(
       storyId: storyId,
       storySlug: storySlug,
+      storyTitle: Value(storyTitle ?? ''),
       chapterId: chapterId,
       chapterNumber: chapterNumber,
       downloadType: downloadType,
@@ -121,6 +142,7 @@ class DownloadManager {
     required String storyId,
     required String storySlug,
     required List<ChapterSummary> chapters,
+    String? storyTitle,
     String? coverUrl,
     String? storyAuthor,
     String? storySynopsis,
@@ -131,6 +153,11 @@ class DownloadManager {
             q.status == 'pending' || q.status == 'retry' || q.status == 'downloading')
         .map((q) => q.chapterId)
         .toSet();
+    // Chương đã có trong DB do prefetch ngầm (auto_cache) → promote hết
+    // thành manual_download thay vì skip (user chủ động tải cả truyện =
+    // muốn toàn bộ offline). Trước đây chúng bị skip → Offline Library
+    // thiếu các chương user từng đọc online.
+    await _db.promoteStoryAutoCacheToManual(storyId);
     // One batched query for already-downloaded chapters — previously this
     // was N sequential `getDownloadedChapter` reads (one per chapter).
     final downloadedIds = (await _db.getDownloadedChaptersForStory(storyId))
@@ -147,6 +174,7 @@ class DownloadManager {
       await _db.enqueueDownload(DownloadQueueCompanion.insert(
         storyId: storyId,
         storySlug: storySlug,
+        storyTitle: Value(storyTitle ?? ''),
         chapterId: cs.id,
         chapterNumber: cs.chapterNumber,
         downloadType: 'chapter',
@@ -277,14 +305,29 @@ class DownloadManager {
     try {
       // Re-read the row: it may have been cancelled while queued, or
       // re-queued by a batch fallback after another run resolved it.
+      //
+      // Ngoài 'pending'/'retry', CHẤP NHẬN 'downloading' — queue được
+      // xử lý tuần tự (`_processing` serialize) nên row 'downloading' ở
+      // thời điểm này LUÔN là stale: hoặc từ lần chạy trước bị crash
+      // giữa chừng, hoặc từ _processBatch vừa đánh dấu rồi fail và
+      // fallback về đây. Nếu skip, row sẽ kẹt vĩnh viễn (bug "tải
+      // offline không hoạt động").
       final current = await _db.getDownloadQueueRow(row.id);
       if (current == null ||
-          (current.status != 'pending' && current.status != 'retry')) {
+          (current.status != 'pending' &&
+              current.status != 'retry' &&
+              current.status != 'downloading')) {
         return;
       }
 
       final existing = await _db.getDownloadedChapter(row.chapterId);
       if (existing != null) {
+        // Nếu row tồn tại chỉ do auto_cache (prefetch ngầm khi đọc
+        // online) — promote thành manual_download để chương hiện trong
+        // Offline Library thay vì kẹt vô hình.
+        if (existing.source == 'auto_cache') {
+          await _db.promoteChapterToManual(row.chapterId);
+        }
         await _db.updateDownloadQueueRow(
             row.id,
             DownloadQueueCompanion(
@@ -305,8 +348,10 @@ class DownloadManager {
             row.id,
             DownloadQueueCompanion(
               status: const Value('failed'),
-              errorMessage: const Value(
-                  'Chương VIP — cần được tác giả cấp quyền để tải offline'),
+              errorMessage: Value(
+                  access.reason == 'access_check_failed'
+                      ? 'Không kiểm tra được quyền truy cập — kiểm tra mạng rồi thử lại'
+                      : 'Chương VIP — cần được tác giả cấp quyền để tải offline'),
             ));
         return;
       }
@@ -355,8 +400,10 @@ class DownloadManager {
               row.id,
               DownloadQueueCompanion(
                 status: const Value('failed'),
-                errorMessage: const Value(
-                    'Chương VIP — cần được tác giả cấp quyền để tải offline'),
+                errorMessage: Value(
+                    access.reason == 'access_check_failed'
+                        ? 'Không kiểm tra được quyền truy cập — kiểm tra mạng rồi thử lại'
+                        : 'Chương VIP — cần được tác giả cấp quyền để tải offline'),
               ));
         }
       }
@@ -374,8 +421,17 @@ class DownloadManager {
             ));
       }
 
-      final chapters = await _repo.fetchChaptersBatch(accessibleIds);
-      final byId = {for (final c in chapters) c.id: c};
+      // Fetch theo từng chunk ≤ _batchChunkSize — backend trả 400 nếu
+      // gửi >50 ids một lần.
+      final byId = <String, ChapterContent>{};
+      for (var i = 0; i < accessibleIds.length; i += _batchChunkSize) {
+        final chunk = accessibleIds.sublist(
+            i, math.min(i + _batchChunkSize, accessibleIds.length));
+        final chapters = await _repo.fetchChaptersBatch(chunk);
+        for (final c in chapters) {
+          byId[c.id] = c;
+        }
+      }
 
       for (final row in accessibleRows) {
         final ch = byId[row.chapterId];
@@ -392,10 +448,21 @@ class DownloadManager {
         }
       }
     } catch (e, s) {
-      // Batch failed — fall back to individual fetches. _processSingle
-      // re-reads each row's status, so rows already resolved
-      // (completed/failed/cancelled) are skipped automatically.
+      // Batch failed — fall back to individual fetches. Trước đây
+      // fallback gọi _processSingle trực tiếp nhưng rows đã bị đánh
+      // dấu 'downloading' → guard của _processSingle skip hết → queue
+      // kẹt vĩnh viễn. Reset các row còn 'downloading' về 'retry'
+      // trước khi fallback (rows đã completed/failed/cancelled được
+      // _processSingle tự skip).
       AppLogger.warning('DownloadManager._processBatch failed, falling back to single', e, s);
+      for (final row in rows) {
+        final current = await _db.getDownloadQueueRow(row.id);
+        if (current != null && current.status == 'downloading') {
+          await _db.updateDownloadQueueRow(
+              row.id,
+              DownloadQueueCompanion(status: const Value('retry')));
+        }
+      }
       for (final row in rows) {
         await _processSingle(row);
       }

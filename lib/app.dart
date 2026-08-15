@@ -6,6 +6,7 @@ import 'core/network/api_client.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'features/reader/services/reading_progress_service.dart';
+import 'services/download_manager.dart';
 
 class KhongdichApp extends ConsumerStatefulWidget {
   const KhongdichApp({super.key});
@@ -67,6 +68,11 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
             // Flush pending reading progress khi app khởi động (có thể
             // có row synced=0 từ session trước).
             ref.read(readingProgressServiceProvider).flushPending();
+            // Recover queue kẹt 'downloading' khi app khởi động. Trước
+            // đây chỉ chạy khi MỞ màn Tải xuống → rows kẹt (vd. app bị
+            // kill giữa batch download) làm nút tải ở story detail bị
+            // disable vĩnh viễn cho tới khi user mở đúng màn đó.
+            ref.read(downloadManagerProvider).recoverInterrupted();
           });
           return ref.read(appRouterProvider);
         },

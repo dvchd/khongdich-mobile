@@ -6,11 +6,19 @@ import '../models/chapter_content.dart';
 import '../models/comment.dart';
 import '../models/story.dart';
 
+/// Interface tối thiểu mà [DownloadManager] cần từ repository — tách
+/// để test hàng đợi tải với fake (không phụ thuộc Dio/backend thật).
+abstract class ChapterFetcher {
+  Future<ChapterContent> fetchChapter(String chapterId);
+  Future<ChapterAccess> fetchChapterAccess(String chapterId);
+  Future<List<ChapterContent>> fetchChaptersBatch(List<String> chapterIds);
+}
+
 /// Unified read/write client for the Không Dịch backend's mobile JSON
 /// API (mounted at `/api/v1/mobile/*`).
 ///
 /// Every call here goes through the Bearer-JWT-aware [ApiClient].
-class StoryRepository {
+class StoryRepository implements ChapterFetcher {
   StoryRepository(this._api);
 
   final ApiClient _api;
@@ -143,6 +151,7 @@ class StoryRepository {
   /// Fail-closed: on network error / 5xx, return `canRead: false` so the
   /// reader shows the VIP-locked screen instead of leaking content. Only
   /// 404 (legacy backend without the endpoint) defaults to access granted.
+  @override
   Future<ChapterAccess> fetchChapterAccess(String chapterId) async {
     try {
       final r = await _dio.get('/api/v1/mobile/chapters/$chapterId/access');
@@ -166,6 +175,7 @@ class StoryRepository {
 
   /// Chapter content (discriminated union by content_type).
   /// Hits `GET /api/v1/mobile/chapters/{id}`.
+  @override
   Future<ChapterContent> fetchChapter(String chapterId) async {
     final r = await _dio.get('/api/v1/mobile/chapters/$chapterId');
     return ChapterContent.fromJson(r.data as Map<String, dynamic>);
@@ -173,6 +183,7 @@ class StoryRepository {
 
   /// Batch fetch multiple chapters (max 50).
   /// Hits `POST /api/v1/mobile/chapters/batch`.
+  @override
   Future<List<ChapterContent>> fetchChaptersBatch(
     List<String> chapterIds,
   ) async {

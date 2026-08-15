@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -104,8 +105,10 @@ class _QueueTab extends ConsumerWidget {
           );
         }
 
-        // Summary header
-        final pending = rows.where((r) => r.status == 'pending').length;
+        // Summary header — retry cũng tính là đang chờ (hàng chờ tải lại).
+        final pending = rows
+            .where((r) => r.status == 'pending' || r.status == 'retry')
+            .length;
         final downloading = rows.where((r) => r.status == 'downloading').length;
         final completed = rows.where((r) => r.status == 'completed').length;
         final failed = rows.where((r) => r.status == 'failed').length;
@@ -173,7 +176,9 @@ class _DownloadRow extends ConsumerWidget {
     return ListTile(
       leading: _StatusIcon(status: row.status),
       title: Text(
-        'Ch.${row.chapterNumber} — ${row.storySlug}',
+        row.storyTitle.isNotEmpty
+            ? 'Ch.${row.chapterNumber} — ${row.storyTitle}'
+            : 'Ch.${row.chapterNumber} — ${row.storySlug}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -224,6 +229,7 @@ class _DownloadRow extends ConsumerWidget {
   String _statusLabel() {
     return switch (row.status) {
       'pending' => 'Đang chờ…',
+      'retry' => 'Đang chờ thử lại…',
       'downloading' =>
         'Đang tải… ${(row.progress * 100).toStringAsFixed(0)}%',
       'completed' => 'Đã tải xong ✓',
@@ -242,6 +248,7 @@ class _StatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (icon, color) = switch (status) {
       'pending' => (Icons.hourglass_top, Colors.grey),
+      'retry' => (Icons.refresh, Colors.grey),
       'downloading' => (Icons.downloading, const Color(0xFF2563EB)),
       'completed' => (Icons.check_circle, const Color(0xFF16A34A)),
       'failed' => (Icons.error_outline, AppTheme.primary),
@@ -304,13 +311,16 @@ class _LibraryTab extends ConsumerWidget {
               leading: first.coverUrl != null && first.coverUrl!.isNotEmpty
                   ? ClipRRect(
                       borderRadius: BorderRadius.circular(4),
-                      child: Image.network(
-                        first.coverUrl!,
+                      child: CachedNetworkImage(
+                        imageUrl: first.coverUrl!,
                         width: 40,
                         height: 56,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            const Icon(Icons.book, size: 40),
+                        // Bìa hiển thị được cả khi OFFLINE — ảnh đã được
+                        // cache khi duyệt online (Image.network cũ không
+                        // cache → offline toàn icon book xám).
+                        errorWidget: (_, _, _) =>
+                            const Icon(Icons.book, size:40),
                       ),
                     )
                   : const Icon(Icons.book, size: 40),

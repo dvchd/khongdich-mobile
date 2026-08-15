@@ -7,7 +7,7 @@ import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
 import '../../core/widgets/share_story_sheet.dart';
-import '../../models/story.dart' show ChapterSummary;
+import '../../models/story.dart' show ChapterSummary, StorySummary;
 import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
@@ -300,6 +300,9 @@ class _StoryDetailBody extends ConsumerWidget {
                       },
                     ),
                     IconButton.outlined(
+                      tooltip: activeDownloads > 0
+                          ? 'Đang tải $activeDownloads chương — xem tiến trình'
+                          : 'Tải xuống để đọc offline',
                       icon: activeDownloads > 0
                           ? const SizedBox(
                               width: 20,
@@ -316,8 +319,12 @@ class _StoryDetailBody extends ConsumerWidget {
                       // (chỉ story-wide grant mới cho download) — quá
                       // strict, user có per-chapter grant vẫn không tải
                       // được dù có quyền đọc chapter đó.
+                      //
+                      // Khi đang có download chạy → bấm nút mở màn Tải
+                      // xuống xem tiến trình (trước đây nút bị disable
+                      // im lặng, user không biết queue đang kẹt hay chạy).
                       onPressed: activeDownloads > 0
-                          ? null
+                          ? () => context.push('/downloads')
                           : () async {
                         List<ChapterSummary> chapters;
                         try {
@@ -354,6 +361,7 @@ class _StoryDetailBody extends ConsumerWidget {
                           storyId: story.id,
                           storySlug: story.slug,
                           chapters: chapters,
+                          storyTitle: story.title,
                           coverUrl: story.coverUrl,
                           storyAuthor: story.author,
                           storySynopsis: story.synopsis,
@@ -482,6 +490,17 @@ class _StoryDetailBody extends ConsumerWidget {
                                 padding: EdgeInsets.only(right: 4),
                                 child: Icon(Icons.download_done, size: 16, color: Colors.green),
                               ),
+                            // Nút tải TỪNG chương — trước đây chỉ có nút
+                            // "tải toàn bộ" ở header, user muốn tải 1
+                            // chương phải tải cả truyện (216 chương).
+                            if (!isDownloaded && !isActiveInQueue)
+                              IconButton(
+                                icon: const Icon(Icons.download_outlined, size: 20),
+                                tooltip: 'Tải chương ${c.chapterNumber} để đọc offline',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => _downloadChapter(
+                                    context, ref, story, c),
+                              ),
                             const Icon(Icons.chevron_right),
                           ],
                         ),
@@ -506,6 +525,46 @@ class _StoryDetailBody extends ConsumerWidget {
         'video' => 'Video YouTube',
         _ => type,
       };
+
+  /// Tải một chương đơn lẻ (nút ⬇ ở mỗi dòng danh sách chương).
+  Future<void> _downloadChapter(
+    BuildContext context,
+    WidgetRef ref,
+    StorySummary story,
+    ChapterSummary c,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final enqueued = await ref.read(downloadManagerProvider).enqueueChapter(
+        storyId: story.id,
+        storySlug: story.slug,
+        chapterId: c.id,
+        chapterNumber: c.chapterNumber,
+        storyTitle: story.title,
+        coverUrl: story.coverUrl,
+        storyAuthor: story.author,
+        storySynopsis: story.synopsis,
+      );
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(enqueued < 0
+                ? 'Chương ${c.chapterNumber} đã có trong bộ nhớ.'
+                : 'Đang tải chương ${c.chapterNumber}…'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    } catch (e) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Không tải được chương: $e'),
+          ),
+        );
+    }
+  }
 }
 
 class _StatusChip extends StatelessWidget {

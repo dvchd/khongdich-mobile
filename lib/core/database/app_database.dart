@@ -110,6 +110,7 @@ class DownloadQueue extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get storyId => text()();
   TextColumn get storySlug => text()();
+  TextColumn get storyTitle => text().withDefault(const Constant(''))();
   TextColumn get chapterId => text()();
   IntColumn get chapterNumber => integer()();
   TextColumn get downloadType => text()(); // chapter|chapter_with_images
@@ -152,7 +153,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -186,6 +187,11 @@ class AppDatabase extends _$AppDatabase {
             // (prefetch ngầm khi đọc online). Auto-cache bị LRU evict
             // và filter khỏi Offline Library UI.
             await m.addColumn(downloadedChapters, downloadedChapters.source);
+          }
+          if (from < 6) {
+            // v6: added 'storyTitle' to download_queue — hàng chờ hiển
+            // thị tên truyện thay vì slug thô.
+            await m.addColumn(downloadQueue, downloadQueue.storyTitle);
           }
         },
       );
@@ -266,6 +272,27 @@ class AppDatabase extends _$AppDatabase {
         .write(DownloadedChaptersCompanion(
       isRead: const Value(1),
       lastReadAt: Value(DateTime.now().toIso8601String()),
+    ));
+  }
+
+  /// Promote một chương auto_cache → manual_download (user chủ động
+  /// bấm tải → chương phải hiện trong Offline Library, không bị LRU
+  /// evict). Gọi khi user bấm tải chương đã được prefetch ngầm.
+  Future<void> promoteChapterToManual(String chapterId) {
+    return (update(downloadedChapters)
+          ..where((t) => t.chapterId.equals(chapterId)))
+        .write(DownloadedChaptersCompanion(
+      source: const Value('manual_download'),
+    ));
+  }
+
+  /// Promote toàn bộ auto_cache của một story thành manual_download.
+  /// Gọi khi user bấm "tải toàn bộ" — ý muốn cả truyện offline.
+  Future<void> promoteStoryAutoCacheToManual(String storyId) {
+    return (update(downloadedChapters)
+          ..where((t) => t.storyId.equals(storyId)))
+        .write(DownloadedChaptersCompanion(
+      source: const Value('manual_download'),
     ));
   }
 

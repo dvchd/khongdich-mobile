@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -62,12 +63,16 @@ class OfflineLibraryScreen extends ConsumerWidget {
                 leading: first.coverUrl != null && first.coverUrl!.isNotEmpty
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(4),
-                        child: Image.network(
-                          first.coverUrl!,
+                        child: CachedNetworkImage(
+                          imageUrl: first.coverUrl!,
                           width: 40,
                           height: 56,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) =>
+                          // CachedNetworkImage render được cả khi
+                          // OFFLINE (ảnh đã cache khi duyệt online) —
+                          // Image.network cũ chỉ hiện icon book khi
+                          // không có mạng.
+                          errorWidget: (_, _, _) =>
                               const Icon(Icons.book, size: 40),
                         ),
                       )
