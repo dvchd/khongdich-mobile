@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
 import '../../../models/chapter_content.dart';
+import '../../tts/tts_mini_player.dart';
 import '../reader_settings_provider.dart';
 import 'reader_bar.dart';
 import 'reader_helpers.dart';
@@ -252,22 +253,31 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       onOpenComments: widget.onOpenComments,
       child: ColoredBox(
         color: bgColor,
-        child: Stack(
+        child: Column(
           children: [
-            body,
-            // Tap zones for edge navigation
-            // Skip for chat — it handles its own tap to reveal next message.
-            // Skip for video too — the overlay would swallow the YouTube
-            // player's own controls (play/seek/fullscreen). Reader chrome
-            // (settings / chapter list) stays reachable via ReaderBar.
-            // Skip for manga as well — the overlay would swallow taps on
-            // images, making the pinch-to-zoom gallery unreachable
-            // (the overlay wins the gesture arena because it's the last
-            // child in the Stack).
-            if (widget.chapter is! ChatChapterContent &&
-                widget.chapter is! VideoChapterContent &&
-                widget.chapter is! MangaChapterContent)
-              Positioned.fill(child: ReaderTapZones(onTap: _onTapZone)),
+            Expanded(
+              child: Stack(
+                children: [
+                  body,
+                  // Tap zones for edge navigation
+                  // Skip for chat — it handles its own tap to reveal next message.
+                  // Skip for video too — the overlay would swallow the YouTube
+                  // player's own controls (play/seek/fullscreen). Reader chrome
+                  // (settings / chapter list) stays reachable via ReaderBar.
+                  // Skip for manga as well — the overlay would swallow taps on
+                  // images, making the pinch-to-zoom gallery unreachable
+                  // (the overlay wins the gesture arena because it's the last
+                  // child in the Stack).
+                  if (widget.chapter is! ChatChapterContent &&
+                      widget.chapter is! VideoChapterContent &&
+                      widget.chapter is! MangaChapterContent)
+                    Positioned.fill(
+                        child: ReaderTapZones(onTap: _onTapZone)),
+                ],
+              ),
+            ),
+            // Mini player nằm NGOÀI Stack tap-zone → không bị nuốt tap.
+            TtsMiniPlayer(chapterId: widget.chapter.id),
           ],
         ),
       ),

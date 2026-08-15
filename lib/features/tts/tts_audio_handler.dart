@@ -72,13 +72,40 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   bool _isSpeaking = false; // Guard against re-entrant completion handlers
   // Future của speak loop hiện tại — dùng để cancel khi stop/pause.
   Future<void>? _speakLoopFuture;
+  // Generation guard chống "zombie loop": một số engine không bao giờ
+  // resolve `speak()` sau khi bị stop() giữa chừng → loop cũ treo vĩnh
+  // viễn. Khi pause/stop/restart, ta tăng generation — loop cũ (nếu sau
+  // này mới thức dậy) thấy generation lệch là thoát NGAY, không đụng vào
+  // state, không phát âm thanh song song với loop mới.
+  int _loopGeneration = 0;
   // Timers cho các sự kiện highlight trung gian TRONG một chunk (chunk
   // có thể chứa nhiều block ngắn — timers advance highlight qua từng
   // block tỷ lệ theo độ dài chữ). Cancel khi chunk xong / pause / stop.
   final List<Timer> _blockAdvanceTimers = [];
-  // Callback khi TTS đọc xong 1 chương — reader screen dùng để load
-  // chương tiếp theo và tự play tiếp.
-  void Function(String storyId, int nextChapterNumber)? onChapterComplete;
+
+  /// Auto-advance: reader screens bật khi user chạm headphone — hết chương
+  /// là tự chuyển chương kế + tự play tiếp. Nút Stop trong control panel
+  /// (hoặc [stopAutoAdvance]) tắt chuỗi này; pause KHÔNG tắt (resume vẫn
+  /// tiếp tục chuỗi).
+  bool autoAdvanceEnabled = false;
+
+  /// Đang restart loop để áp dụng tốc độ/giọng mới ngay lập tức —
+  /// cancel/error handler check cờ này để không nhầm thành user stop.
+  bool _restartPending = false;
+
+  /// Skip thủ công từ notification/panel → vẫn chuyển chương kể cả khi
+  /// autoAdvanceEnabled = false.
+  bool _manualSkipPending = false;
+
+  /// Phát khi TTS đọc xong một chương (tự nhiên HOẶC skip thủ công).
+  /// Reader screens listen để chuyển chương + auto-load chương kế —
+  /// design này thay callback `onChapterComplete` cũ: callback bị ghi đè
+  /// bởi màn hình mới nhất và không có cách nào biết màn hình nào sở hữu
+  /// nó → auto-advance đứt chuỗi hoặc navigate nhầm màn hình.
+  final _chapterCompleteController =
+      StreamController<TtsChapterCompleteEvent>.broadcast();
+  Stream<TtsChapterCompleteEvent> get onChapterCompleted =>
+      _chapterCompleteController.stream;
 
   // Audio session state — request/release audio focus để TTS không đè
   // lên nhạc/video đang phát và tự dừng khi có cuộc gọi/âm thanh khác.
@@ -401,6 +428,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
       _tts.setCancelHandler(() {
         AppLogger.info('TTS: cancel handler fired');
+        // Đang restart để đổi tốc độ/giọng — đừng coi là user stop,
+        // giữ nguyên trạng thái "đang phát" cho UI (loop mới sẽ chạy
+        // lại ngay sau đó).
+        if (_restartPending) return;
         _isSpeaking = false;
         playbackState.add(
           playbackState.value.copyWith(
@@ -434,14 +465,34 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// Await the speak loop defensively — nếu loop Future có lỗi (lý
   /// thuyết không thể sau các try/catch trong _speakLoop, nhưng phòng
   /// thủ) thì không rethrow vào UI caller.
+  ///
+  /// Có timeout: một số engine không resolve `speak()` sau khi stop
+  /// giữa chừng → await vô hạn. Sau timeout ta bỏ rơi future cũ — loop
+  /// cũ có bị "zombie" cũng vô hại nhờ generation guard.
   Future<void> _awaitSpeakLoop() async {
     final f = _speakLoopFuture;
     if (f == null) return;
     try {
-      await f;
+      await f.timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      AppLogger.warning(
+          'TTS: speak loop did not exit after stop — proceeding (generation guard active)');
+      if (identical(_speakLoopFuture, f)) {
+        _speakLoopFuture = null;
+      }
     } catch (e) {
       AppLogger.warning('TTS: speak loop future errored (ignored)', e);
+      if (identical(_speakLoopFuture, f)) {
+        _speakLoopFuture = null;
+      }
     }
+  }
+
+  /// Vô hiệu hoá loop đang chạy (pause/stop/restart/skip gọi trước khi
+  /// stop engine). Zombie loop sau này thức dậy sẽ thoát nhờ generation.
+  void _invalidateSpeakLoop() {
+    _loopGeneration++;
+    _isSpeaking = false;
   }
 
   Future<void> _applySpeed() async {
@@ -458,6 +509,64 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     await _applySpeed();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('tts.speed', _speed);
+    // Android TTS chỉ áp rate mới cho các utterance MỚI — chunk hiện tại
+    // (có thể 30-40s) vẫn chạy tốc độ cũ. Restart loop từ đầu chunk hiện
+    // tại để tốc độ mới có hiệu lực NGAY LẬP TỨC, không cần stop+play.
+    unawaited(_restartSpeakLoop());
+  }
+
+  /// Restart speak loop từ đầu chunk hiện tại — dùng khi user đổi tốc độ/
+  /// giọng/engine giữa chừng. Android TextToSpeech không áp setting mới
+  /// cho utterance đang đọc nên phải stop + speak lại chunk đó.
+  Future<void> _restartSpeakLoop() async {
+    if (!_isSpeaking) return;
+    if (_currentChapterId == null || _chunks.isEmpty) return;
+    _restartPending = true;
+    _invalidateSpeakLoop();
+    _cancelBlockAdvanceTimer();
+    try {
+      await _tts.stop();
+    } catch (e) {
+      AppLogger.warning('TTS: stop during restart failed', e);
+    }
+    await _awaitSpeakLoop();
+    // User có thể đã stop/pause/loadChapter khác trong lúc chờ loop cũ
+    // thoát → không tự ý phát lại.
+    if (!_restartPending) return;
+    _restartPending = false;
+    if (_currentChapterId == null || _chunks.isEmpty) return;
+    if (_speakLoopFuture != null) return;
+    _isSpeaking = true;
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: [
+          MediaControl.pause,
+          MediaControl.skipToNext,
+          MediaControl.stop,
+        ],
+        playing: true,
+        processingState: AudioProcessingState.ready,
+      ),
+    );
+    _chunkProgressController.add(_chunkProgressEvent(_currentChunk));
+    _launchSpeakLoop();
+  }
+
+  /// Chạy speak loop mới + đăng ký whenComplete với identical-guard:
+  /// nếu loop CŨ (zombie — engine resolve speak() muộn sau khi bị stop)
+  /// hoàn thành sau khi loop MỚI đã khởi động, nó không được null mất
+  /// reference của loop mới (sẽ làm pause/stop tưởng không có loop và
+  /// play() khởi động loop thứ ba song song).
+  void _launchSpeakLoop() {
+    final f = _speakLoop();
+    _speakLoopFuture = f;
+    unawaited(
+      f.whenComplete(() {
+        if (identical(_speakLoopFuture, f)) {
+          _speakLoopFuture = null;
+        }
+      }),
+    );
   }
 
   Future<void> setVoice(String? voiceName) async {
@@ -476,6 +585,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     } else {
       await prefs.remove('tts.voice');
     }
+    // Giọng mới cũng chỉ áp cho utterance mới → restart chunk hiện tại.
+    unawaited(_restartSpeakLoop());
   }
 
   /// Switch the active TTS engine (e.g. from "com.google.android.tts"
@@ -537,11 +648,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     int? nextChapterNumber,
   }) async {
     await _init();
+    _restartPending = false;
     // Stop mọi playback đang chạy của chương cũ trước khi load chương mới.
     // Trước đây không có bước này → completion handler của chương cũ có
     // thể fire sau khi chương mới đã load, gây _currentChunk sai.
     if (_isSpeaking) {
-      _isSpeaking = false;
+      _invalidateSpeakLoop();
       await _tts.stop();
     }
     // Await the old speak loop to fully exit before loading the new
@@ -646,24 +758,15 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _chunkProgressController.add(
       _chunkProgressEvent(_currentChunk),
     );
-    _speakLoopFuture = _speakLoop();
-    // Fire-and-forget — loop tự kết thúc khi chapter complete hoặc stop.
-    // ⚠️ Phải dùng whenComplete: trước đây là `.then((_) {...})` — nếu
-    // loop Future hoàn thành với LỖI (engine throw, markChapterRead
-    // throw, callback throw), `.then` bị bỏ qua → `_speakLoopFuture`
-    // không bao giờ được null → mọi lần play() sau này đều no-op
-    // (TTS chết vĩnh viễn tới khi restart app), và pause/stop/loadChapter
-    // await một Future đã lỗi vô hạn.
-    unawaited(
-      _speakLoopFuture!.whenComplete(() {
-        _speakLoopFuture = null;
-      }),
-    );
+    // _launchSpeakLoop: whenComplete với identical-guard — loop cũ
+    // (zombie) hoàn thành muộn không được null mất future của loop mới.
+    _launchSpeakLoop();
   }
 
   @override
   Future<void> pause() async {
-    _isSpeaking = false;
+    _restartPending = false;
+    _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
     await _tts.stop();
     // Đợi loop hiện tại exit (nó sẽ exit do _isSpeaking = false).
@@ -684,7 +787,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   @override
   Future<void> stop() async {
-    _isSpeaking = false;
+    _restartPending = false;
+    _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
     await _tts.stop();
     // Đợi loop hiện tại exit.
@@ -716,7 +820,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // và loadChapter của chương mới phải await _speakLoopFuture →
     // chuyển chương treo hàng chục giây + audio vẫn phát chương cũ.
     if (_isSpeaking) {
-      _isSpeaking = false;
+      _invalidateSpeakLoop();
       _cancelBlockAdvanceTimer();
       try {
         await _tts.stop();
@@ -725,7 +829,16 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       }
       await _awaitSpeakLoop();
     }
+    _manualSkipPending = true;
     await _onChapterComplete();
+  }
+
+  /// Dừng hẳn + tắt chuỗi auto-advance — nút Stop trong control panel.
+  /// (`stop()` thường được gọi nội bộ khi chuyển chương nên không được
+  /// tự ý tắt auto-advance ở đó.)
+  Future<void> stopAutoAdvance() async {
+    autoAdvanceEnabled = false;
+    await stop();
   }
 
   /// Speak loop — drive chunk chaining qua while-loop với
@@ -741,7 +854,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// Loop exit khi: _isSpeaking = false (pause/stop), hoặc hết chunks
   /// (chapter complete → gọi _onChapterComplete).
   Future<void> _speakLoop() async {
-    while (_isSpeaking && _currentChunk < _chunks.length) {
+    // Capture generation — mọi _invalidateSpeakLoop() (pause/stop/restart/
+    // skip) tăng generation → loop này thành "zombie" và phải thoát ngay
+    // khi thức dậy, không được chạm state hay phát thêm âm thanh.
+    final gen = _loopGeneration;
+    while (_isSpeaking && gen == _loopGeneration && _currentChunk < _chunks.length) {
       final chunk = _chunks[_currentChunk];
       // Fire-and-forget — không block hot path giữa các chunk.
       unawaited(_savePlaybackState(isPlaying: true));
@@ -762,6 +879,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         result = (raw is int) ? raw : int.tryParse('$raw') ?? 0;
       } catch (e, s) {
         AppLogger.error('TTS: speak() threw for chunk $_currentChunk', e, s);
+        if (gen != _loopGeneration) return; // zombie loop
         _isSpeaking = false;
         playbackState.add(
           playbackState.value.copyWith(
@@ -771,6 +889,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         );
         return;
       }
+      // Bị stop/restart trong lúc await speak() → zombie loop, thoát.
+      if (gen != _loopGeneration) return;
       _cancelBlockAdvanceTimer();
       // Check return value: 1 = success, 0 = failure (no voice, engine
       // not ready, text too long...). Trước đây ignore → TTS hang silently.
@@ -794,7 +914,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       _currentChunk++;
     }
     // Loop exit tự nhiên = hết chunks = chapter complete.
-    if (_isSpeaking) {
+    if (_isSpeaking && gen == _loopGeneration) {
       await _onChapterComplete();
     }
   }
@@ -857,6 +977,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   Future<void> _onChapterComplete() async {
     AppLogger.info('TTS: chapter complete');
+    _restartPending = false;
     _isSpeaking = false;
     _cancelBlockAdvanceTimer();
     // Release audio focus — chapter đã xong, không cần giữ nữa.
@@ -895,20 +1016,22 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         processingState: AudioProcessingState.idle,
       ),
     );
-    // Auto-advance to next chapter if callback is set and next chapter
-    // number is available. The reader screen sets `onChapterComplete` to
-    // navigate to the next chapter and reload TTS. Bọc try/catch — lỗi
-    // trong callback không được phép làm hỏng loop future.
+    // Broadcast cho reader screens — màn hình đang mở chương này sẽ tự
+    // chuyển chương kế + auto-play (nếu autoAdvanceEnabled / manual skip).
+    // Thứ tự: lấy snapshot TRƯỚC khi broadcast vì listener có thể gọi
+    // loadChapter (ghi đè state) ngay trong lúc dispatch.
+    final completed = TtsChapterCompleteEvent(
+      chapterId: _currentChapterId!,
+      chapterNumber: _currentChapterNumber ?? 0,
+      storyId: _currentStoryId ?? '',
+      nextChapterNumber: _nextChapterNumber,
+      manualSkip: _manualSkipPending,
+    );
+    _manualSkipPending = false;
     try {
-      if (onChapterComplete != null &&
-          _currentStoryId != null &&
-          _nextChapterNumber != null) {
-        AppLogger.info(
-            'TTS: auto-advancing to next chapter $_nextChapterNumber');
-        onChapterComplete!(_currentStoryId!, _nextChapterNumber!);
-      }
+      _chapterCompleteController.add(completed);
     } catch (e, s) {
-      AppLogger.warning('TTS: onChapterComplete callback failed', e, s);
+      AppLogger.warning('TTS: chapter-complete broadcast failed', e, s);
     }
   }
 
@@ -945,6 +1068,43 @@ class TtsChunkProgress {
   /// Exact rendered-block index (into the `MarkdownParser` block list)
   /// currently being spoken. -1 when the chunk maps to no block.
   final int blockIndex;
+}
+
+/// Pure decision — màn hình reader nhận [TtsChapterCompleteEvent] có nên
+/// chuyển chương kế + auto-play không? Tách riêng để unit-test được.
+bool shouldAutoAdvanceTts({
+  required bool matchesCurrentChapter,
+  required bool autoAdvanceEnabled,
+  required bool manualSkip,
+  required int? nextChapterNumber,
+}) {
+  if (!matchesCurrentChapter) return false;
+  if (nextChapterNumber == null) return false;
+  return autoAdvanceEnabled || manualSkip;
+}
+
+/// Broadcast khi TTS đọc xong một chương (tự nhiên hoặc skip thủ công).
+/// Reader screens dùng để auto-advance: chuyển chương kế + auto-play.
+class TtsChapterCompleteEvent {
+  const TtsChapterCompleteEvent({
+    required this.chapterId,
+    required this.chapterNumber,
+    required this.storyId,
+    this.nextChapterNumber,
+    this.manualSkip = false,
+  });
+
+  /// Chương vừa đọc xong.
+  final String chapterId;
+  final int chapterNumber;
+  final String storyId;
+
+  /// Chương kế theo chapter number — null khi đây là chương cuối.
+  final int? nextChapterNumber;
+
+  /// True khi user chủ động bấm Skip (vẫn chuyển chương kể cả khi
+  /// autoAdvanceEnabled = false); false khi hết chương tự nhiên.
+  final bool manualSkip;
 }
 
 /// Provider cho TtsAudioHandler. Nếu init fail, vẫn return handler nhưng

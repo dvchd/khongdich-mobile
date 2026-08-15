@@ -160,89 +160,58 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// Attach the TTS auto-advance callback for the OFFLINE reader.
-///
-/// Container + router based (không capture widget State) — xem
-/// `attachTtsAutoAdvanceOnline` trong chapter_reader_screen.dart. Khác
-/// biệt: chương kế được lookup từ downloaded_chapters theo
-/// chapterNumber, và route guard check prefix '/chapter-offline/'.
-void attachTtsAutoAdvanceOffline({
-  required ProviderContainer container,
-  required GoRouter router,
-  required TtsAudioHandler handler,
-}) {
-  Future<void> autoLoad(String storyId, int nextChapterNumber) async {
-    try {
-      final db = container.read(appDatabaseProvider);
-      final siblings = await (db.select(db.downloadedChapters)
-            ..where((t) => t.storyId.equals(storyId))
-            ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
-          .get();
-      final i = siblings
-          .indexWhere((s) => s.chapterNumber == nextChapterNumber);
-      if (i < 0) return;
-      final row = siblings[i];
-      final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
-      final fullJson = <String, dynamic>{
-        ...json,
-        'content_markdown': json['content_markdown'] ?? '',
-        'content_type': row.contentType,
-        'story_title': row.storyTitle,
-        'story_slug': row.storySlug,
-        'chapter_number': row.chapterNumber,
-        'title': row.chapterTitle,
-      };
-      final chapter = ChapterContent.fromJson(fullJson);
-      final markdown = chapterMarkdownOrNull(chapter);
-      if (markdown != null) {
-        final hasNext = i < siblings.length - 1;
-        await handler.loadChapter(
-          chapterId: chapter.id,
-          storyId: chapter.storyId,
-          storyTitle: chapter.storyTitle,
-          chapterTitle: chapter.title,
-          chapterNumber: chapter.chapterNumber,
-          contentMarkdown: markdown,
-          storySlug: chapter.storySlug,
-          nextChapterNumber: hasNext ? siblings[i + 1].chapterNumber : null,
-        );
-        // Re-attach cho chương kế tiếp của chuỗi auto-advance.
-        attachTtsAutoAdvanceOffline(
-          container: container,
-          router: router,
-          handler: handler,
-        );
-        await handler.play();
-      }
-    } catch (e, s) {
-      // Best-effort — don't crash if offline chapter can't be loaded.
-      AppLogger.warning('TTS auto-advance offline load failed', e, s);
-    }
-  }
-
-  Future<void> navigateToNext(String storyId, int nextChapterNumber) async {
+/// Auto-load TTS cho chương offline kế tiếp sau khi auto-advance —
+/// container/router-based (không phụ thuộc màn hình nào còn sống).
+/// Lookup sibling theo chapterNumber từ downloaded_chapters, navigate
+/// sang `/chapter-offline/<id>` rồi load + play. Màn hình mới tự đăng
+/// ký listener cho lượt auto-advance kế tiếp.
+Future<void> autoLoadTtsNextOffline(
+  ProviderContainer container,
+  GoRouter router,
+  TtsAudioHandler handler,
+  String storyId,
+  int nextChapterNumber,
+) async {
+  try {
     final db = container.read(appDatabaseProvider);
-    final rows = await (db.select(db.downloadedChapters)
-          ..where((t) =>
-              t.storyId.equals(storyId) &
-              t.chapterNumber.equals(nextChapterNumber)))
+    final siblings = await (db.select(db.downloadedChapters)
+          ..where((t) => t.storyId.equals(storyId))
+          ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
         .get();
-    if (rows.isEmpty) return;
-    router.replace('/chapter-offline/${rows.first.chapterId}');
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(autoLoad(storyId, nextChapterNumber));
-    });
+    final i = siblings
+        .indexWhere((s) => s.chapterNumber == nextChapterNumber);
+    if (i < 0) return;
+    final row = siblings[i];
+    final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
+    final fullJson = <String, dynamic>{
+      ...json,
+      'content_markdown': json['content_markdown'] ?? '',
+      'content_type': row.contentType,
+      'story_title': row.storyTitle,
+      'story_slug': row.storySlug,
+      'chapter_number': row.chapterNumber,
+      'title': row.chapterTitle,
+    };
+    final chapter = ChapterContent.fromJson(fullJson);
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown == null) return;
+    final hasNext = i < siblings.length - 1;
+    router.replace('/chapter-offline/${row.chapterId}');
+    await handler.loadChapter(
+      chapterId: chapter.id,
+      storyId: chapter.storyId,
+      storyTitle: chapter.storyTitle,
+      chapterTitle: chapter.title,
+      chapterNumber: chapter.chapterNumber,
+      contentMarkdown: markdown,
+      storySlug: chapter.storySlug,
+      nextChapterNumber: hasNext ? siblings[i + 1].chapterNumber : null,
+    );
+    await handler.play();
+  } catch (e, s) {
+    // Best-effort — don't crash if offline chapter can't be loaded.
+    AppLogger.warning('TTS auto-advance offline load failed', e, s);
   }
-
-  handler.onChapterComplete = (storyId, nextChapterNumber) {
-    final path = router.routerDelegate.currentConfiguration.uri.path;
-    if (!path.startsWith('/chapter-offline/')) {
-      AppLogger.info(
-          'TTS auto-advance skipped — offline reader not on top ($path)');
-      return;
-    }
-    unawaited(navigateToNext(storyId, nextChapterNumber));
-  };
 }
 
 /// Reads a downloaded chapter from the local Drift DB and displays it
@@ -275,11 +244,61 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   Map<String, String> _mangaLocalImagePaths = {};
   bool _loading = true;
   String? _loadError;
+  StreamSubscription<TtsChapterCompleteEvent>? _chapterCompleteSub;
+  TtsAudioHandler? _handler;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // Subscribe chapter-complete để auto-advance (xem ChapterReaderScreen —
+    // cùng design: màn hình tự xử lý completion của chương của NÓ).
+    Future.microtask(() async {
+      try {
+        final handler = await ref.read(ttsHandlerProvider.future);
+        if (!mounted) return;
+        _handler = handler;
+        _chapterCompleteSub =
+            handler.onChapterCompleted.listen(_handleChapterCompleted);
+      } catch (_) {
+        // TTS init fail — reader vẫn hoạt động bình thường.
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _chapterCompleteSub?.cancel();
+    super.dispose();
+  }
+
+  /// TTS đọc xong chương của màn hình này → chuyển sang sibling kế (nếu
+  /// còn) + auto-play. Màn hình chính là guard: nó chỉ còn mounted khi
+  /// reader này vẫn nằm trên navigation stack.
+  void _handleChapterCompleted(TtsChapterCompleteEvent event) {
+    if (!mounted) return;
+    final handler = _handler;
+    final chapter = _chapter;
+    if (handler == null || chapter == null) return;
+    final matchesCurrent = event.storyId == chapter.storyId &&
+        event.chapterId == chapter.id;
+    if (!shouldAutoAdvanceTts(
+      matchesCurrentChapter: matchesCurrent,
+      autoAdvanceEnabled: handler.autoAdvanceEnabled,
+      manualSkip: event.manualSkip,
+      nextChapterNumber: event.nextChapterNumber,
+    )) {
+      return;
+    }
+    final container = ProviderScope.containerOf(context, listen: false);
+    final router = GoRouter.of(context);
+    unawaited(autoLoadTtsNextOffline(
+      container,
+      router,
+      handler,
+      chapter.storyId,
+      event.nextChapterNumber!,
+    ));
   }
 
   Future<void> _load() async {
@@ -470,18 +489,11 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   void _toggleTts(ChapterContent chapter) async {
     final markdown = chapterMarkdownOrNull(chapter);
     if (markdown == null) return;
-    // Capture UI handles before any await (lint + safety).
-    final container = ProviderScope.containerOf(context, listen: false);
-    final router = GoRouter.of(context);
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      // Set up auto-advance callback for offline reader — container/router
-      // based (không capture State, xem attachTtsAutoAdvanceOffline).
-      attachTtsAutoAdvanceOffline(
-        container: container,
-        router: router,
-        handler: handler,
-      );
+      _handler = handler;
+      // Bật chuỗi auto-advance — listener trong initState lo phần còn lại.
+      handler.autoAdvanceEnabled = true;
 
       if (handler.currentChapterId != chapter.id) {
         await handler.stop();

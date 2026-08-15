@@ -354,9 +354,11 @@ tải MP3, không phụ thuộc backend.
 - **Engine selector**: dropdown chọn TTS engine (`com.google.android.tts` mặc định, hoặc Samsung/Huawei nếu có)
 - **Voice selector**: dropdown giọng đọc — hiện cả locale, vd: `vi-vn-language (vi-VN)`. Tự sort tiếng Việt lên đầu.
 - **Tốc độ**: 0.5x – 2.5x, persisted to SharedPreferences
+- **Đổi tốc độ/giọng áp dụng NGAY khi đang đọc**: Android TTS chỉ áp rate/voice cho utterance mới — handler tự restart chunk hiện tại (generation-guarded, không zombie loop) nên không cần stop+play thủ công
+- **Auto-advance**: hết chương tự chuyển chương kế + tự play tiếp (chuỗi liên tục qua nhiều chương, online lẫn offline). Nút Stop trong panel = tắt chuỗi; Pause giữ chuỗi (resume tiếp tục); Skip thủ công luôn chuyển chương
+- **Mini player** ghim đáy reader: play/pause, progress "Đoạn x/y", tốc độ nhanh (chạm xoay vòng), stop — nằm ngoài tap-zone overlay nên không bị nuốt tap
 - **Highlight text**: đoạn đang đọc được bôi nền tint
 - **Control panel**: bottom sheet với play/pause/stop/skip + progress bar
-- **Mini player**: hiển thị trong reader khi TTS active
 - **Foreground service**: phát nền, notification shade, MediaSession
 - **Error recovery**: nếu init fail, tự retry lần sau. Control panel có
   nút "Thử lại" để retry thủ công + hiển thị lỗi (vd: chưa cài giọng tiếng Việt).

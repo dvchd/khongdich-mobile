@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -107,8 +108,14 @@ class _EmojiPickerSheetState extends ConsumerState<_EmojiPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Khi bàn phím hiện (gõ vào ô tìm emoji), sheet phải thu lại phía trên
+    // bàn phím — trước đây height cố định 60% màn hình + bàn phím che mất
+    // phần dưới grid (không cuộn tới, không chạm được "xem thêm").
+    final viewInsets = MediaQuery.viewInsetsOf(context).bottom;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final height = math.min(screenHeight * 0.6, screenHeight - viewInsets - 48);
     return SizedBox(
-      height: MediaQuery.of(context).size.height * 0.6,
+      height: height < 200 ? 200 : height,
       child: Column(
         children: [
           Padding(

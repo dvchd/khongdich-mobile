@@ -56,6 +56,8 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     chapterNumber: widget.chapterNumber,
   );
   String? _prefetchedChapterId;
+  StreamSubscription<TtsChapterCompleteEvent>? _chapterCompleteSub;
+  TtsAudioHandler? _handler;
 
   @override
   void initState() {
@@ -79,7 +81,55 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
             .read(chapterCacheServiceProvider)
             .setLockedChapterIds(vip.lockedChapterIds.toSet());
       }
+      // Subscribe chapter-complete để auto-advance. Đăng ký ở initState
+      // (không phải lúc tap headphone) — chuỗi auto-advance qua nhiều
+      // màn hình vẫn hoạt động vì MỖI màn hình mới tự đăng ký listener
+      // cho chương của chính nó.
+      try {
+        final handler = await ref.read(ttsHandlerProvider.future);
+        if (!mounted) return;
+        _handler = handler;
+        _chapterCompleteSub =
+            handler.onChapterCompleted.listen(_handleChapterCompleted);
+      } catch (_) {
+        // TTS init fail — reader vẫn hoạt động bình thường.
+      }
     });
+  }
+
+  @override
+  void dispose() {
+    _chapterCompleteSub?.cancel();
+    super.dispose();
+  }
+
+  /// TTS đọc xong một chương — nếu là chương CỦA MÀN HÌNH NÀY thì chuyển
+  /// chương kế + auto-play (khi auto-advance đang bật hoặc user skip thủ
+  /// công). Màn hình chính là guard: nó chỉ còn mounted khi reader của
+  /// chương này vẫn nằm trên navigation stack.
+  void _handleChapterCompleted(TtsChapterCompleteEvent event) {
+    if (!mounted) return;
+    final handler = _handler;
+    if (handler == null) return;
+    final matchesCurrent = event.storyId == widget.storyId &&
+        event.chapterNumber == widget.chapterNumber;
+    if (!shouldAutoAdvanceTts(
+      matchesCurrentChapter: matchesCurrent,
+      autoAdvanceEnabled: handler.autoAdvanceEnabled,
+      manualSkip: event.manualSkip,
+      nextChapterNumber: event.nextChapterNumber,
+    )) {
+      return;
+    }
+    final container = ProviderScope.containerOf(context, listen: false);
+    final router = GoRouter.of(context);
+    router.replace('/chapter/${widget.storyId}:${event.nextChapterNumber}');
+    unawaited(autoLoadTtsNextOnline(
+      container,
+      handler,
+      widget.storyId,
+      event.nextChapterNumber!,
+    ));
   }
 
   @override
@@ -215,21 +265,12 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   void _toggleTts(ChapterContent chapter) async {
     final markdown = chapterMarkdownOrNull(chapter);
     if (markdown == null) return;
-    // Capture UI handles before any await (lint + safety).
-    final container = ProviderScope.containerOf(context, listen: false);
-    final router = GoRouter.of(context);
     try {
       final handler = await ref.read(ttsHandlerProvider.future);
-      // Set up auto-advance callback: when TTS finishes a chapter,
-      // navigate to the next chapter and auto-play. The callback is
-      // container/router-based (see attachTtsAutoAdvanceOnline) — it
-      // does NOT capture this State, so the chain survives the screen
-      // being replaced and can never use a dead `ref`.
-      attachTtsAutoAdvanceOnline(
-        container: container,
-        router: router,
-        handler: handler,
-      );
+      _handler = handler;
+      // Bật chuỗi auto-advance: hết chương này → tự chuyển chương kế +
+      // tự play tiếp (listener đăng ký trong initState sẽ lo phần còn lại).
+      handler.autoAdvanceEnabled = true;
 
       // Nếu đang play/pause chương KHÁC chương user vừa tap → stop + load
       // chương mới. Trước đây chỉ load khi `!state.playing`, nên nếu TTS
@@ -280,67 +321,40 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   }
 }
 
-/// Attach the TTS auto-advance callback for the ONLINE reader.
-///
-/// Container + router based (không capture bất kỳ widget State nào):
-/// - Sau `router.replace`, màn hình cũ dispose — callback cũ trỏ vào
-///   State đã chết → trước đây auto-advance đứt chuỗi im lặng ở chương
-///   thứ 2 và `ref.read` sau dispose là undefined behavior.
-/// - Callback được re-attach sau mỗi lần auto-load → chuỗi nghe liên
-///   tục không đứt.
-/// - Route guard: chỉ navigate khi reader vẫn đang trên top — nếu user
-///   đã rời reader (back về detail/home) thì TTS hết chương không được
-///   hijack navigation hiện tại.
-void attachTtsAutoAdvanceOnline({
-  required ProviderContainer container,
-  required GoRouter router,
-  required TtsAudioHandler handler,
-}) {
-  Future<void> autoLoad(String storyId, int nextChapterNumber) async {
-    try {
-      // `container.read(...future)` awaits the async computation (memory
-      // cache hit → instant; API miss → waits for network).
-      final nextRef = ChapterRef(
-        storyId: storyId,
-        chapterNumber: nextChapterNumber,
+/// Auto-load TTS cho chương kế sau khi auto-advance — chạy container-based
+/// (không phụ thuộc màn hình nào còn sống). Gọi sau khi router đã replace
+/// sang chương mới; màn hình mới sẽ tự đăng ký listener cho lượt kế tiếp.
+Future<void> autoLoadTtsNextOnline(
+  ProviderContainer container,
+  TtsAudioHandler handler,
+  String storyId,
+  int nextChapterNumber,
+) async {
+  try {
+    // `container.read(...future)` awaits the async computation (memory
+    // cache hit → instant; API miss → waits for network).
+    final nextRef = ChapterRef(
+      storyId: storyId,
+      chapterNumber: nextChapterNumber,
+    );
+    final chapter = await container.read(chapterProvider(nextRef).future);
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown != null) {
+      await handler.loadChapter(
+        chapterId: chapter.id,
+        storyId: chapter.storyId,
+        storyTitle: chapter.storyTitle,
+        chapterTitle: chapter.title,
+        chapterNumber: chapter.chapterNumber,
+        contentMarkdown: markdown,
+        storySlug: chapter.storySlug,
+        nextChapterNumber: chapter.nextChapter,
       );
-      final chapter = await container.read(chapterProvider(nextRef).future);
-      final markdown = chapterMarkdownOrNull(chapter);
-      if (markdown != null) {
-        await handler.loadChapter(
-          chapterId: chapter.id,
-          storyId: chapter.storyId,
-          storyTitle: chapter.storyTitle,
-          chapterTitle: chapter.title,
-          chapterNumber: chapter.chapterNumber,
-          contentMarkdown: markdown,
-          storySlug: chapter.storySlug,
-          nextChapterNumber: chapter.nextChapter,
-        );
-        // Re-attach cho chương kế tiếp của chuỗi auto-advance.
-        attachTtsAutoAdvanceOnline(
-          container: container,
-          router: router,
-          handler: handler,
-        );
-        await handler.play();
-      }
-    } catch (e, s) {
-      AppLogger.warning('TTS auto-advance loadChapter failed', e, s);
+      await handler.play();
     }
+  } catch (e, s) {
+    AppLogger.warning('TTS auto-advance loadChapter failed', e, s);
   }
-
-  handler.onChapterComplete = (storyId, nextChapterNumber) {
-    final path = router.routerDelegate.currentConfiguration.uri.path;
-    if (!path.startsWith('/chapter/')) {
-      AppLogger.info('TTS auto-advance skipped — reader not on top ($path)');
-      return;
-    }
-    router.replace('/chapter/$storyId:$nextChapterNumber');
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(autoLoad(storyId, nextChapterNumber));
-    });
-  };
 }
 
 /// Markdown payload for TTS — `text` and `visual` (Bách khoa) chapters

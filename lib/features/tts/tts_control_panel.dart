@@ -211,7 +211,10 @@ class _PanelContentState extends State<_PanelContent> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.stop, size: 32),
-                      onPressed: () => widget.handler.stop(),
+                      tooltip: 'Dừng (tắt tự chuyển chương)',
+                      // stopAutoAdvance: dừng + tắt chuỗi auto-advance —
+                      // nếu chỉ stop() thì hết chương sau vẫn tự nhảy.
+                      onPressed: () => widget.handler.stopAutoAdvance(),
                     ),
                     const SizedBox(width: 16),
                     Container(

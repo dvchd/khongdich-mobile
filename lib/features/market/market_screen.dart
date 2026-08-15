@@ -40,7 +40,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
   final List<MarketMessage> _messages = [];
   final Map<String, GlobalKey> _msgKeys = {};
   final TextEditingController _composer = TextEditingController();
+  final FocusNode _composerFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
+
+  // Trạng thái "Phản hồi" (reply) — id + tên người được trả lời, hiện
+  // banner "↩ Trả lời @tên" phía trên composer như web.
+  String? _replyingToId;
+  String? _replyingToName;
 
   @override
   void initState() {
@@ -54,6 +60,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     _noticeTimer?.cancel();
     _flashTimer?.cancel();
     _composer.dispose();
+    _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -216,6 +223,24 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
     });
   }
 
+  /// Bắt đầu chế độ "Phản hồi" cho tin [m] — hiện banner trên composer
+  /// + focus ô nhập. Tin gửi đi sẽ mang parent_id của tin này.
+  void _startReply(MarketMessage m) {
+    setState(() {
+      _replyingToId = m.id;
+      _replyingToName = m.displayName.isEmpty ? m.username : m.displayName;
+      _notice = null;
+    });
+    _composerFocus.requestFocus();
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyingToId = null;
+      _replyingToName = null;
+    });
+  }
+
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
@@ -230,10 +255,11 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       return;
     }
     setState(() => _sending = true);
+    final parentId = _replyingToId;
     try {
       final result = await ref
           .read(marketRepositoryProvider)
-          .postMessage(text);
+          .postMessage(text, parentId: parentId);
       if (!mounted) return;
       if (result.hidden) {
         _showNotice('Tin nhắn bị ẩn do vi phạm quy định');
@@ -248,6 +274,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
         });
         _composer.clear();
         _scrollToBottom();
+      }
+      // Gửi xong → thoát chế độ phản hồi (như web reset replying).
+      if (_replyingToId != null) {
+        setState(() {
+          _replyingToId = null;
+          _replyingToName = null;
+        });
       }
     } catch (e) {
       if (!mounted) return;
@@ -340,8 +373,14 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                 ),
               ),
             ),
+          if (_replyingToId != null)
+            _ReplyBanner(
+              name: _replyingToName ?? 'tin đã xóa',
+              onCancel: _cancelReply,
+            ),
           _ComposerBar(
             controller: _composer,
+            focusNode: _composerFocus,
             sending: _sending,
             onSend: _send,
             onEmoji: _insertEmoji,
@@ -354,6 +393,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
 
   Widget _buildContent(MarketSection? section) {
     final stories = section?.stories ?? const [];
+    final closed = section != null && !section.open;
     return ListView(
       controller: _scroll,
       children: [
@@ -394,6 +434,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
             message: m,
             flash: _flashId == m.id,
             onJumpParent: _jumpToParent,
+            onReply: closed ? null : () => _startReply(m),
           ),
         const SizedBox(height: 12),
       ],
@@ -436,11 +477,15 @@ class _MessageTile extends StatelessWidget {
     required this.message,
     required this.flash,
     required this.onJumpParent,
+    this.onReply,
   });
 
   final MarketMessage message;
   final bool flash;
   final void Function(String? parentId) onJumpParent;
+
+  /// "↩ Phản hồi" — bắt đầu reply cho tin này (null khi chợ đóng).
+  final VoidCallback? onReply;
 
   @override
   Widget build(BuildContext context) {
@@ -546,6 +591,39 @@ class _MessageTile extends StatelessWidget {
                     contentHtml: message.contentHtml,
                     style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
                   ),
+                  // "↩ Phản hồi" — mirror web's per-message reply button.
+                  if (onReply != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: InkWell(
+                        onTap: onReply,
+                        borderRadius: BorderRadius.circular(6),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.subdirectory_arrow_right,
+                                size: 13,
+                                color: scheme.onSurface.withValues(alpha: 0.45),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Phản hồi',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color:
+                                      scheme.onSurface.withValues(alpha: 0.55),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -630,9 +708,56 @@ class _ReplyChip extends StatelessWidget {
   }
 }
 
+/// Banner "↩ Trả lời @tên" phía trên composer khi đang ở chế độ phản hồi
+/// — mirror web's `.mc-replying` row.
+class _ReplyBanner extends StatelessWidget {
+  const _ReplyBanner({required this.name, required this.onCancel});
+
+  final String name;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: scheme.surfaceContainerLow,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Icon(
+            Icons.subdirectory_arrow_right,
+            size: 16,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Trả lời $name',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: scheme.primary,
+                  ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Bỏ phản hồi',
+            onPressed: onCancel,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ComposerBar extends StatelessWidget {
   const _ComposerBar({
     required this.controller,
+    required this.focusNode,
     required this.sending,
     required this.onSend,
     required this.onEmoji,
@@ -640,6 +765,7 @@ class _ComposerBar extends StatelessWidget {
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final bool sending;
   final VoidCallback onSend;
   final VoidCallback onEmoji;
@@ -663,6 +789,7 @@ class _ComposerBar extends StatelessWidget {
             Expanded(
               child: TextField(
                 controller: controller,
+                focusNode: focusNode,
                 enabled: !closed,
                 minLines: 1,
                 maxLines: 4,

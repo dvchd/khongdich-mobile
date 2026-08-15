@@ -109,13 +109,23 @@ class _SegmentComposerSheetState extends ConsumerState<SegmentComposerSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isSuggestion = _mode == SegmentComposerMode.suggestion;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+    // Đẩy sheet lên trên bàn phím — trước đây không có padding viewInsets
+    // nên khi bàn phím hiện lên (autofocus), ô nhập + nút Gửi bị che khuất
+    // hoàn toàn trên Android. AnimatedPadding để sheet trượt mượt theo
+    // bàn phím, SingleChildScrollView phòng nội dung cao hơn màn hình.
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Row(
               children: [
                 Icon(
@@ -219,6 +229,7 @@ class _SegmentComposerSheetState extends ConsumerState<SegmentComposerSheet> {
               ),
             ),
           ],
+          ),
         ),
       ),
     );

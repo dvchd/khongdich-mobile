@@ -33,12 +33,18 @@ class MarketRepository {
     ];
   }
 
-  /// Post a chat message. The backend rejects when the chợ is closed,
-  /// runs the content filter, and attaches a random public story when
-  /// the caller is an author. Hits `POST /api/v1/mobile/market/chat`.
-  Future<MarketPostResult> postMessage(String content) async {
+  /// Post a chat message. [parentId] turns the message into a reply
+  /// ("Phản hồi" — flat chronological flow with a reply chip, like the
+  /// web). The backend rejects when the chợ is closed, runs the content
+  /// filter, and attaches a random public story when the caller is an
+  /// author. Hits `POST /api/v1/mobile/market/chat`.
+  Future<MarketPostResult> postMessage(
+    String content, {
+    String? parentId,
+  }) async {
     final r = await _dio.post('/api/v1/mobile/market/chat', data: {
       'content': content,
+      if (parentId != null) 'parent_id': parentId,
     });
     final data = r.data as Map<String, dynamic>;
     return MarketPostResult(
