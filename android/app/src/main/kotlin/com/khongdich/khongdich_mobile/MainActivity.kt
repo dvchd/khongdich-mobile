@@ -3,11 +3,20 @@ package com.khongdich.khongdich_mobile
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+/// MainActivity phải extend `AudioServiceActivity` (audio_service) thay
+/// vì `FlutterActivity` thuần. AudioServiceActivity trả về engine được
+/// cache dưới id "audio_service_engine" (AudioServicePlugin) — nếu không,
+/// plugin tạo MỘT ENGINE THỨ HAI riêng → `wrongEngineDetected = true` →
+/// `AudioService.init` throw PlatformException ("Activity class declared
+/// in your AndroidManifest.xml is wrong...") → media notification KHÔNG
+/// BAO GIỜ hiển thị, điều khiển ngoài app chết hoàn toàn. Đây là root
+/// cause của "ẩn app không điều khiển được" trên mọi build (kể cả
+/// release).
+class MainActivity : AudioServiceActivity() {
     private val notificationsChannel = "khongdich/notifications"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

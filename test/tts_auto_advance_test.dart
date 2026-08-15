@@ -72,6 +72,34 @@ void main() {
         isFalse,
       );
     });
+
+    test('skipToPrevious (manualSkip) chuyển về chương trước dù chuỗi tắt',
+        () {
+      // Event của skipToPrevious mang số chương TRƯỚC trong
+      // nextChapterNumber — manualSkip=true nên màn hình vẫn điều hướng
+      // kể cả khi autoAdvanceEnabled=false.
+      expect(
+        shouldAutoAdvanceTts(
+          matchesCurrentChapter: true,
+          autoAdvanceEnabled: false,
+          manualSkip: true,
+          nextChapterNumber: 4,
+        ),
+        isTrue,
+      );
+    });
+
+    test('skip ở chương đầu/cuối (không có đích) không chuyển', () {
+      expect(
+        shouldAutoAdvanceTts(
+          matchesCurrentChapter: true,
+          autoAdvanceEnabled: true,
+          manualSkip: true,
+          nextChapterNumber: null,
+        ),
+        isFalse,
+      );
+    });
   });
 
   group('TtsChapterCompleteEvent', () {
@@ -88,6 +116,18 @@ void main() {
       expect(event.storyId, 'story-1');
       expect(event.nextChapterNumber, 6);
       expect(event.manualSkip, isFalse);
+    });
+
+    test('event skip thủ công đánh dấu manualSkip', () {
+      const event = TtsChapterCompleteEvent(
+        chapterId: 'ch-5',
+        chapterNumber: 5,
+        storyId: 'story-1',
+        nextChapterNumber: 4,
+        manualSkip: true,
+      );
+      expect(event.manualSkip, isTrue);
+      expect(event.nextChapterNumber, 4);
     });
   });
 }

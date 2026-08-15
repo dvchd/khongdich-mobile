@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
@@ -11,6 +12,9 @@ import '../../core/database/app_database.dart';
 import '../../core/markdown/markdown.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/utils/notification_permission.dart';
+import '../../models/chapter_content.dart';
+import '../../services/chapter_cache_service.dart';
+import '../reader/chapter_tts_support.dart';
 import '../reader/services/reading_progress_service.dart';
 
 /// Foreground-service-backed TTS player for Không Dịch.
@@ -32,10 +36,23 @@ import '../reader/services/reading_progress_service.dart';
 ///
 /// 2. `audio_service` wrap handler để Android treat như foreground media
 ///    service. `playbackState` stream drive notification shade + mini
-///    player UI.
+///    player UI. Notification hiển thị ĐỦ điều khiển
+///    `skipToPrevious | play/pause | skipToNext` (compact) + `stop`
+///    (expanded) — user có thể chuyển chương khi app bị ẩn.
 ///
 /// 3. Chunks: `TtsMarkdownPreprocessor.process()` split markdown thành
 ///    ~500-char plain-text chunks. Đọc tuần tự qua while-loop.
+///
+/// 4. **Handler owns chuyển chương** (không phải màn hình). Skip prev/
+///    next + auto-advance khi hết chương đều do handler tự resolve
+///    chương kế (online qua `ChapterCacheService`, offline qua Drift
+///    `downloaded_chapters`) → hoạt động cả khi app bị ẩn. Màn hình
+///    reader chỉ lắng nghe `onChapterCompleted` để điều hướng UI.
+///
+/// 5. **Operation chain** (`_serialized`): mọi thao tác đổi trạng thái
+///    (play/pause/stop/skip/loadChapter/restart) chạy TUẦN TỰ theo đúng
+///    thứ tự user bấm. Trước đây các method chạy song song → race
+///    (xem bug #7, #8) làm "trạng thái phát/dừng không đồng bộ".
 ///
 /// **Các bug đã fix (so với phiên bản trước):**
 ///
@@ -53,14 +70,45 @@ import '../reader/services/reading_progress_service.dart';
 ///   thay vì hang silently.
 ///
 /// - **#6 _savePlaybackState fire-and-forget**: không block hot path
-///   giữa các chunk.
+///   giữa các chunk. Bonus: capture chapter/chunk VÀO THỜI ĐIỂM GỌI
+///   (trước đây đọc field lúc thực thi → có thể ghi state chương mới
+///   vào row chương cũ khi auto-advance nhanh).
+///
+/// - **#7 play() race khi pause đang chạy**: play() trả về ngay nếu
+///   `_speakLoopFuture != null` (loop cũ đang thoát) → user bấm play
+///   nhanh sau pause bị nuốt, TTS dừng vĩnh viễn dù UI báo playing.
+///   Fix: operation chain — play() chạy SAU khi pause() hoàn tất, và
+///   `_playInner` không còn check future (generation guard lo zombie).
+///
+/// - **#8 pause() ghi đè state của play()**: pause() emit state paused
+///   SAU khi await → play() launch giữa chừng bị ghi đè → UI báo
+///   paused trong khi audio vẫn chạy. Fix: chain + emit state đúng thứ
+///   tự thao tác.
+///
+/// - **#9 Speed desync**: `_restartSpeakLoop` trả về ngay khi
+///   `!_isSpeaking` — bấm tốc độ lần 2 trong lúc restart lần 1 đang
+///   chạy → thay đổi bị nuốt, chip UI hiện 2.0x nhưng đọc 1.5x. Fix:
+///   restart chạy qua chain + coalesce (`_restartQueued`) — restart
+///   cuối cùng luôn dùng tốc độ mới nhất.
+///
+/// - **#10 Skip từ notification khi app ẩn**: trước đây skipToNext chỉ
+///   broadcast event rồi CHỜ màn hình reader load chương kế — không
+///   màn hình nào mounted → không gì xảy ra. Giờ handler tự resolve +
+///   load + play (online/offline), màn hình chỉ điều hướng. Thêm
+///   `skipToPrevious` cho nút lùi chương.
 class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
-  TtsAudioHandler(this._db, this._progressService);
+  TtsAudioHandler(
+    this._db,
+    this._progressService,
+    this._cache, {
+    FlutterTts? tts,
+  }) : _tts = tts ?? FlutterTts();
 
   final AppDatabase _db;
   final ReadingProgressService _progressService;
+  final ChapterCacheService _cache;
 
-  final FlutterTts _tts = FlutterTts();
+  final FlutterTts _tts;
   List<TtsChunk> _chunks = const [];
   int _currentChunk = 0;
   String? _currentChapterId;
@@ -68,6 +116,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   String? _currentStorySlug;
   int? _currentChapterNumber;
   int? _nextChapterNumber;
+  int? _prevChapterNumber;
+
+  /// Nguồn chương hiện tại: `true` = offline (Drift downloaded_chapters),
+  /// `false` = online (API qua ChapterCacheService). Quyết định cách
+  /// resolve chương khi skip/auto-advance từ notification.
+  bool _offlineMode = false;
+
   bool _initialised = false;
   bool _isSpeaking = false; // Guard against re-entrant completion handlers
   // Future của speak loop hiện tại — dùng để cancel khi stop/pause.
@@ -84,24 +139,31 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   final List<Timer> _blockAdvanceTimers = [];
 
   /// Auto-advance: reader screens bật khi user chạm headphone — hết chương
-  /// là tự chuyển chương kế + tự play tiếp. Nút Stop trong control panel
-  /// (hoặc [stopAutoAdvance]) tắt chuỗi này; pause KHÔNG tắt (resume vẫn
-  /// tiếp tục chuỗi).
+  /// là handler tự chuyển chương kế + tự play tiếp (kể cả khi app bị ẩn).
+  /// Nút Stop trong control panel (hoặc [stopAutoAdvance]) tắt chuỗi này;
+  /// pause KHÔNG tắt (resume vẫn tiếp tục chuỗi).
   bool autoAdvanceEnabled = false;
 
   /// Đang restart loop để áp dụng tốc độ/giọng mới ngay lập tức —
   /// cancel/error handler check cờ này để không nhầm thành user stop.
   bool _restartPending = false;
 
-  /// Skip thủ công từ notification/panel → vẫn chuyển chương kể cả khi
-  /// autoAdvanceEnabled = false.
-  bool _manualSkipPending = false;
+  /// Đã có restart đang chờ trong operation chain — tap tốc độ/giọng
+  /// nhanh nhiều lần chỉ queue MỘT restart cuối (restart chạy sau cùng
+  /// sẽ dùng setting mới nhất).
+  bool _restartQueued = false;
+
+  /// Operation chain — mọi thao tác đổi trạng thái chạy TUẦN TỰ.
+  /// Xem bug #7/#8. Never cached fail: lỗi của op trước không chặn op sau.
+  Future<void> _opChain = Future<void>.value();
 
   /// Phát khi TTS đọc xong một chương (tự nhiên HOẶC skip thủ công).
-  /// Reader screens listen để chuyển chương + auto-load chương kế —
-  /// design này thay callback `onChapterComplete` cũ: callback bị ghi đè
-  /// bởi màn hình mới nhất và không có cách nào biết màn hình nào sở hữu
-  /// nó → auto-advance đứt chuỗi hoặc navigate nhầm màn hình.
+  /// Reader screens listen để điều hướng UI (chuyển chương) — VIỆC LOAD
+  /// + PLAY chương kế do handler tự làm. Design này thay callback
+  /// `onChapterComplete` cũ: callback bị ghi đè bởi màn hình mới nhất và
+  /// không có cách nào biết màn hình nào sở hữu nó → auto-advance đứt
+  /// chuỗi hoặc navigate nhầm màn hình; đồng thời không hoạt động khi
+  /// app bị ẩn (không màn hình nào mounted).
   final _chapterCompleteController =
       StreamController<TtsChapterCompleteEvent>.broadcast();
   Stream<TtsChapterCompleteEvent> get onChapterCompleted =>
@@ -141,6 +203,10 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   String? get currentStorySlug => _currentStorySlug;
   int? get nextChapterNumber => _nextChapterNumber;
 
+  /// Số chương TRƯỚC chương hiện tại (null khi đây là chương đầu của
+  /// nguồn hiện tại). Dùng cho nút skipToPrevious trên notification.
+  int? get prevChapterNumber => _prevChapterNumber;
+
   /// Read-only access to the chunk list of the currently-loaded chapter.
   /// Used by the reader to map chunk index → markdown block for highlight
   /// + auto-scroll. Returns an empty list when no chapter is loaded.
@@ -153,6 +219,18 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   /// Index of the chunk currently being spoken. -1 when idle.
   int get currentChunkIndex => _currentChunk;
+
+  /// Serialize mọi thao tác đổi trạng thái. Xem bug #7/#8 ở header.
+  Future<T> _serialized<T>(Future<T> Function() op) {
+    final result = _opChain.then((_) => op());
+    _opChain = result.then<void>(
+      (_) {},
+      onError: (Object e, StackTrace s) {
+        AppLogger.warning('TTS: serialized op failed', e, s);
+      },
+    );
+    return result;
+  }
 
   /// Configure the audio session once (speech attributes + audio focus
   /// gain) và đăng ký interruption listener để tự pause khi có cuộc gọi
@@ -409,8 +487,14 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       _tts.setErrorHandler((msg) {
         AppLogger.error('TTS error: $msg');
         _isSpeaking = false;
+        _restartPending = false;
+        // Vô hiệu hoá loop đang chạy — nó sẽ thoát ngay khi thức dậy
+        // thay vì phát tiếp chunk kế của chapter trong lúc error state.
+        _invalidateSpeakLoop();
         playbackState.add(
           playbackState.value.copyWith(
+            controls: buildTtsControls(playing: false),
+            androidCompactActionIndices: const [0, 1, 2],
             processingState: AudioProcessingState.error,
             errorMessage: msg.toString(),
           ),
@@ -435,7 +519,8 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         _isSpeaking = false;
         playbackState.add(
           playbackState.value.copyWith(
-            processingState: AudioProcessingState.idle,
+            controls: buildTtsControls(playing: false),
+            androidCompactActionIndices: const [0, 1, 2],
             playing: false,
           ),
         );
@@ -512,13 +597,28 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // Android TTS chỉ áp rate mới cho các utterance MỚI — chunk hiện tại
     // (có thể 30-40s) vẫn chạy tốc độ cũ. Restart loop từ đầu chunk hiện
     // tại để tốc độ mới có hiệu lực NGAY LẬP TỨC, không cần stop+play.
-    unawaited(_restartSpeakLoop());
+    _queueRestart();
+  }
+
+  /// Queue restart qua operation chain + coalesce: nhiều lần đổi tốc độ/
+  /// giọng/engine liên tiếp chỉ tạo MỘT restart cuối cùng (chạy với
+  /// setting mới nhất — bug #9).
+  void _queueRestart() {
+    if (_restartQueued) return;
+    _restartQueued = true;
+    unawaited(_serialized(() async {
+      _restartQueued = false;
+      await _restartSpeakLoopInner();
+    }));
   }
 
   /// Restart speak loop từ đầu chunk hiện tại — dùng khi user đổi tốc độ/
   /// giọng/engine giữa chừng. Android TextToSpeech không áp setting mới
   /// cho utterance đang đọc nên phải stop + speak lại chunk đó.
-  Future<void> _restartSpeakLoop() async {
+  ///
+  /// Chạy TRONG operation chain → không có pause/stop/play nào chen vào
+  /// giữa chừng → relaunch sau khi loop cũ thoát là an toàn (bug #9).
+  Future<void> _restartSpeakLoopInner() async {
     if (!_isSpeaking) return;
     if (_currentChapterId == null || _chunks.isEmpty) return;
     _restartPending = true;
@@ -530,20 +630,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       AppLogger.warning('TTS: stop during restart failed', e);
     }
     await _awaitSpeakLoop();
-    // User có thể đã stop/pause/loadChapter khác trong lúc chờ loop cũ
-    // thoát → không tự ý phát lại.
-    if (!_restartPending) return;
     _restartPending = false;
     if (_currentChapterId == null || _chunks.isEmpty) return;
-    if (_speakLoopFuture != null) return;
     _isSpeaking = true;
     playbackState.add(
       playbackState.value.copyWith(
-        controls: [
-          MediaControl.pause,
-          MediaControl.skipToNext,
-          MediaControl.stop,
-        ],
+        controls: buildTtsControls(playing: true),
+        androidCompactActionIndices: const [0, 1, 2],
         playing: true,
         processingState: AudioProcessingState.ready,
       ),
@@ -586,7 +679,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       await prefs.remove('tts.voice');
     }
     // Giọng mới cũng chỉ áp cho utterance mới → restart chunk hiện tại.
-    unawaited(_restartSpeakLoop());
+    _queueRestart();
   }
 
   /// Switch the active TTS engine (e.g. from "com.google.android.tts"
@@ -634,9 +727,16 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     } catch (e) {
       AppLogger.warning('TTS: re-fetch voices after engine switch failed', e);
     }
+    _queueRestart();
     return _availableVoices;
   }
 
+  /// Load chapter content để đọc. Chạy qua operation chain — load song
+  /// song với play/pause/skip sẽ làm loạn state (bug #7/#8).
+  ///
+  /// [offline]: `true` = chương đang đọc là chương tải về (Drift) —
+  /// prev/next sẽ được GIỚI HẠN trong danh sách chương đã tải và mọi
+  /// skip/auto-advance resolve từ DB, không đụng mạng.
   Future<void> loadChapter({
     required String chapterId,
     required String storyId,
@@ -645,7 +745,34 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     required int chapterNumber,
     required String contentMarkdown,
     String? storySlug,
+    int? prevChapterNumber,
     int? nextChapterNumber,
+    bool offline = false,
+  }) =>
+      _serialized(() => _loadChapterInner(
+            chapterId: chapterId,
+            storyId: storyId,
+            storyTitle: storyTitle,
+            chapterTitle: chapterTitle,
+            chapterNumber: chapterNumber,
+            contentMarkdown: contentMarkdown,
+            storySlug: storySlug,
+            prevChapterNumber: prevChapterNumber,
+            nextChapterNumber: nextChapterNumber,
+            offline: offline,
+          ));
+
+  Future<void> _loadChapterInner({
+    required String chapterId,
+    required String storyId,
+    required String storyTitle,
+    required String chapterTitle,
+    required int chapterNumber,
+    required String contentMarkdown,
+    String? storySlug,
+    int? prevChapterNumber,
+    int? nextChapterNumber,
+    bool offline = false,
   }) async {
     await _init();
     _restartPending = false;
@@ -654,7 +781,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // thể fire sau khi chương mới đã load, gây _currentChunk sai.
     if (_isSpeaking) {
       _invalidateSpeakLoop();
-      await _tts.stop();
+      try {
+        await _tts.stop();
+      } catch (e) {
+        AppLogger.warning('TTS: stop before loadChapter failed', e);
+      }
     }
     // Await the old speak loop to fully exit before loading the new
     // chapter. Without this, the old loop (still in `await _tts.speak()`)
@@ -669,7 +800,26 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _currentStoryId = storyId;
     _currentStorySlug = storySlug;
     _currentChapterNumber = chapterNumber;
+    _offlineMode = offline;
+    _prevChapterNumber = prevChapterNumber;
     _nextChapterNumber = nextChapterNumber;
+    if (offline) {
+      // Offline: prev/next phải nằm TRONG danh sách chương đã tải —
+      // prev/next từ API không biết chương nào user đã download. DB là
+      // nguồn chân lý; fallback tham số truyền vào nếu DB lỗi.
+      try {
+        final siblings = await _db.getDownloadedChaptersForStory(storyId);
+        final i = siblings.indexWhere((s) => s.chapterNumber == chapterNumber);
+        if (i >= 0) {
+          _prevChapterNumber =
+              i > 0 ? siblings[i - 1].chapterNumber : null;
+          _nextChapterNumber =
+              i < siblings.length - 1 ? siblings[i + 1].chapterNumber : null;
+        }
+      } catch (e, s) {
+        AppLogger.warning('TTS: offline sibling lookup failed', e, s);
+      }
+    }
 
     final state = await _db.getTtsState(chapterId);
     _currentChunk = state?.chunkIndex ?? 0;
@@ -697,7 +847,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   }
 
   @override
-  Future<void> play() async {
+  Future<void> play() => _serialized(() => _playInner());
+
+  Future<void> _playInner() async {
     if (_currentChapterId == null || _chunks.isEmpty) {
       AppLogger.warning('TTS: play() called but no chapter loaded');
       // Surface error để user biết thay vì silent return.
@@ -733,26 +885,20 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // foreground service (thanh quản lý audio) bị hệ thống ẩn — xin
     // quyền trước khi phát. Best-effort, không block hot path.
     unawaited(NotificationPermission.request());
-    // Check if the loop is already running BEFORE setting _isSpeaking.
-    // If we set _isSpeaking first and then return, the guard works but
-    // the ordering is confusing — _isSpeaking would be true even though
-    // we didn't actually start anything new. Checking the loop future
-    // first makes the intent clear: if a loop is running, play() is a
-    // no-op regardless of _isSpeaking.
-    if (_speakLoopFuture != null) {
-      // Loop cũ đang chạy — không cần start lại.
-      return;
-    }
+    // Loop đang chạy → play() là no-op. KHÔNG check _speakLoopFuture:
+    // future non-null trong khi _isSpeaking=false chỉ là loop cũ đang
+    // thoát — generation guard đảm bảo nó không đụng state; launch loop
+    // mới ngay là an toàn (bug #7).
+    if (_isSpeaking) return;
     _isSpeaking = true;
     playbackState.add(
       playbackState.value.copyWith(
-        controls: [
-          MediaControl.pause,
-          MediaControl.skipToNext,
-          MediaControl.stop,
-        ],
+        controls: buildTtsControls(playing: true),
+        androidCompactActionIndices: const [0, 1, 2],
         playing: true,
         processingState: AudioProcessingState.ready,
+        errorMessage: null,
+        errorCode: null,
       ),
     );
     _chunkProgressController.add(
@@ -764,20 +910,23 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   }
 
   @override
-  Future<void> pause() async {
+  Future<void> pause() => _serialized(() => _pauseInner());
+
+  Future<void> _pauseInner() async {
     _restartPending = false;
     _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
-    await _tts.stop();
+    try {
+      await _tts.stop();
+    } catch (e) {
+      AppLogger.warning('TTS: pause stop failed', e);
+    }
     // Đợi loop hiện tại exit (nó sẽ exit do _isSpeaking = false).
     await _awaitSpeakLoop();
     playbackState.add(
       playbackState.value.copyWith(
-        controls: [
-          MediaControl.play,
-          MediaControl.skipToNext,
-          MediaControl.stop,
-        ],
+        controls: buildTtsControls(playing: false),
+        androidCompactActionIndices: const [0, 1, 2],
         playing: false,
       ),
     );
@@ -786,11 +935,17 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   }
 
   @override
-  Future<void> stop() async {
+  Future<void> stop() => _serialized(() => _stopInner());
+
+  Future<void> _stopInner() async {
     _restartPending = false;
     _invalidateSpeakLoop();
     _cancelBlockAdvanceTimer();
-    await _tts.stop();
+    try {
+      await _tts.stop();
+    } catch (e) {
+      AppLogger.warning('TTS: stop failed', e);
+    }
     // Đợi loop hiện tại exit.
     await _awaitSpeakLoop();
     // Save playback state TRƯỚC khi reset _currentChunk = 0 — trước đây
@@ -809,11 +964,34 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     unawaited(_deactivateAudioSession());
   }
 
+  /// Chuyển chương KẾ — nút "next" trên notification / control panel.
+  /// Handler tự resolve + load + play → hoạt động cả khi app bị ẩn
+  /// (không cần màn hình reader nào mounted — bug #10).
   @override
-  Future<void> skipToNext() async {
-    // Guard: không có gì đang phát (hoặc không có chương kế) → bỏ qua
-    // thay vì đánh dấu chương đã đọc mà user chưa nghe.
-    if (_currentChapterId == null || _chunks.isEmpty) return;
+  Future<void> skipToNext() =>
+      _serialized(() => _skipInner(direction: 1));
+
+  /// Chuyển chương TRƯỚC — nút "previous" trên notification / control
+  /// panel. Cùng pipeline với skipToNext (resolve theo nguồn online/
+  /// offline của chương hiện tại).
+  @override
+  Future<void> skipToPrevious() =>
+      _serialized(() => _skipInner(direction: -1));
+
+  Future<void> _skipInner({required int direction}) async {
+    final chapterId = _currentChapterId;
+    if (chapterId == null || _chunks.isEmpty) {
+      AppLogger.info('TTS: skip ignored — no chapter loaded');
+      return;
+    }
+    final targetNumber =
+        direction > 0 ? _nextChapterNumber : _prevChapterNumber;
+    if (targetNumber == null) {
+      AppLogger.info(
+        'TTS: skip ${direction > 0 ? 'next' : 'previous'} ignored — no target chapter',
+      );
+      return;
+    }
     // Dừng utterance hiện tại trước — trước đây skipToNext chỉ gọi
     // _onChapterComplete(): loop cũ còn chạy tới khi chunk hiện tại
     // (có thể 40-50s) đọc xong mới thoát, trong khi UI đã báo "idle"
@@ -825,12 +1003,150 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       try {
         await _tts.stop();
       } catch (e) {
-        AppLogger.warning('TTS: skipToNext stop failed', e);
+        AppLogger.warning('TTS: skip stop failed', e);
       }
       await _awaitSpeakLoop();
     }
-    _manualSkipPending = true;
-    await _onChapterComplete();
+    // Đánh dấu chương đang nghe đã đọc (user chủ động bỏ qua phần còn
+    // lại) + lưu vị trí nghe để lần sau mở lại tiếp tục từ đó.
+    try {
+      if (_currentStoryId != null && _currentChapterNumber != null) {
+        await _progressService.markChapterRead(
+          _currentStoryId!,
+          _currentChapterNumber!,
+        );
+      }
+    } catch (e, s) {
+      AppLogger.warning('TTS: markChapterRead on skip failed', e, s);
+    }
+    unawaited(_savePlaybackState(isPlaying: false));
+
+    await _jumpToChapter(
+      targetNumber: targetNumber,
+      manualSkip: true,
+      fromChapterId: chapterId,
+    );
+  }
+
+  /// Resolve + load + play chương đích (skip hoặc auto-advance).
+  ///
+  /// Chỉ được gọi TỪ TRONG operation chain (skip) hoặc từ
+  /// `_advanceAfterComplete` (cũng chạy trong chain) — KHÔNG tự gọi
+  /// `_serialized` ở đây để tránh deadlock (op đang chạy chờ chính nó).
+  Future<void> _jumpToChapter({
+    required int targetNumber,
+    required bool manualSkip,
+    required String fromChapterId,
+  }) async {
+    final fromChapterNumber = _currentChapterNumber ?? 0;
+    final fromStoryId = _currentStoryId ?? '';
+    // Thông báo đang tải chương mới — notification hiện spinner thay vì
+    // treo ở nút pause.
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: const [MediaControl.stop],
+        playing: false,
+        processingState: AudioProcessingState.buffering,
+      ),
+    );
+    final chapter = await _resolveChapter(targetNumber);
+    if (chapter == null) {
+      AppLogger.warning('TTS: resolve chapter $targetNumber failed');
+      playbackState.add(
+        playbackState.value.copyWith(
+          controls: buildTtsControls(playing: false),
+          androidCompactActionIndices: const [0, 1, 2],
+          playing: false,
+          processingState: AudioProcessingState.error,
+          errorMessage: manualSkip
+              ? 'Không tải được chương $targetNumber để chuyển. '
+                  'Kiểm tra kết nối (hoặc tải chương đó về máy) rồi thử lại.'
+              : 'Không tải được chương $targetNumber để đọc tiếp. '
+                  'Kiểm tra kết nối rồi thử lại.',
+        ),
+      );
+      return;
+    }
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown == null) {
+      AppLogger.info('TTS: target chapter $targetNumber has no TTS content');
+      return;
+    }
+    await _loadChapterInner(
+      chapterId: chapter.id,
+      storyId: chapter.storyId,
+      storyTitle: chapter.storyTitle,
+      chapterTitle: chapter.title,
+      chapterNumber: chapter.chapterNumber,
+      contentMarkdown: markdown,
+      storySlug: chapter.storySlug,
+      prevChapterNumber: chapter.prevChapter,
+      nextChapterNumber: chapter.nextChapter,
+      offline: _offlineMode,
+    );
+    await _playInner();
+    // Broadcast cho màn hình reader (nếu còn mounted) điều hướng UI
+    // sang chương đích. Snapshot đã capture TRƯỚC khi loadChapter ghi
+    // đè state.
+    try {
+      _chapterCompleteController.add(
+        TtsChapterCompleteEvent(
+          chapterId: fromChapterId,
+          chapterNumber: fromChapterNumber,
+          storyId: fromStoryId,
+          nextChapterNumber: targetNumber,
+          manualSkip: manualSkip,
+        ),
+      );
+    } catch (e, s) {
+      AppLogger.warning('TTS: chapter-complete broadcast failed', e, s);
+    }
+  }
+
+  /// Resolve nội dung chương [chapterNumber] theo nguồn hiện tại:
+  ///   - Offline: query Drift `downloaded_chapters` (không đụng mạng).
+  ///   - Online: `ChapterCacheService.getChapter` (memory → DB → API).
+  /// Trả null nếu không resolve được (chưa tải / lỗi mạng / hết chương).
+  Future<ChapterContent?> _resolveChapter(int chapterNumber) async {
+    final storyId = _currentStoryId;
+    if (storyId == null) return null;
+    if (_offlineMode) {
+      try {
+        final row = await (_db.select(_db.downloadedChapters)
+              ..where((t) => t.storyId.equals(storyId))
+              ..where((t) => t.chapterNumber.equals(chapterNumber)))
+            .getSingleOrNull();
+        if (row == null) {
+          AppLogger.info(
+              'TTS: offline chapter $chapterNumber not downloaded');
+          return null;
+        }
+        final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
+        final fullJson = <String, dynamic>{
+          ...json,
+          'content_markdown': json['content_markdown'] ?? '',
+          'content_type': row.contentType,
+          'story_title': row.storyTitle,
+          'story_slug': row.storySlug,
+          'chapter_number': row.chapterNumber,
+          'title': row.chapterTitle,
+        };
+        final chapter = ChapterContent.fromJson(fullJson);
+        return chapterMarkdownOrNull(chapter) == null ? null : chapter;
+      } catch (e, s) {
+        AppLogger.warning('TTS: offline chapter resolve failed', e, s);
+        return null;
+      }
+    }
+    try {
+      return await _cache.getChapter(
+        storyId: storyId,
+        chapterNumber: chapterNumber,
+      );
+    } catch (e, s) {
+      AppLogger.warning('TTS: online chapter resolve failed', e, s);
+      return null;
+    }
   }
 
   /// Dừng hẳn + tắt chuỗi auto-advance — nút Stop trong control panel.
@@ -975,6 +1291,18 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _blockAdvanceTimers.clear();
   }
 
+  /// Chạy khi loop đọc hết chunks của chương.
+  ///
+  /// 1. Đánh dấu chương đã đọc + lưu vị trí + reset chunk về 0.
+  /// 2. Nếu auto-advance (hoặc manual skip) và còn chương kế: queue
+  ///    `_advanceAfterComplete` qua operation chain để HANDLER tự resolve
+  ///    + load + play chương kế — hoạt động cả khi app bị ẩn (bug #10).
+  ///    KHÔNG await trực tiếp ở đây: loop hiện tại đang chờ hàm này,
+  ///    trong khi chain op cần loop thoát → deadlock. Không có màn hình
+  ///    nào tham gia load/play nữa — màn hình chỉ điều hướng UI khi nhận
+  ///    event broadcast.
+  /// 3. Không advance → emit idle + controls (vẫn có nút play/prev/next
+  ///    trên notification để user tiếp tục từ lockscreen).
   Future<void> _onChapterComplete() async {
     AppLogger.info('TTS: chapter complete');
     _restartPending = false;
@@ -982,8 +1310,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _cancelBlockAdvanceTimer();
     // Release audio focus — chapter đã xong, không cần giữ nữa.
     unawaited(_deactivateAudioSession());
-    // Save state với chunk index cuối TRƯỚC khi reset _currentChunk = 0.
-    unawaited(_savePlaybackState(isPlaying: false));
     // markChapterRead ghi DB local — bọc try/catch để lỗi không thoát
     // ra ngoài (trước đây một lỗi DB ở đây làm hỏng loop future → TTS
     // brick). Progress sync server có chain riêng bên trong service.
@@ -997,8 +1323,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     } catch (e, s) {
       AppLogger.warning('TTS: markChapterRead failed on chapter complete', e, s);
     }
-    // Reset chunk index cho lần play tiếp theo.
+    // Reset chunk index cho lần play tiếp theo TRƯỚC khi save — chương
+    // đã nghe xong, lần sau mở lại sẽ bắt đầu từ đầu thay vì dính ở
+    // chunk cuối (tức mở ra là "complete" lại ngay lập tức).
     _currentChunk = 0;
+    unawaited(_savePlaybackState(isPlaying: false));
+
     // ⚠️ DO NOT await _speakLoopFuture here. When _onChapterComplete is
     // called from inside _speakLoop() (the natural-completion path),
     // _speakLoopFuture is the Future of the CURRENT _speakLoop() execution.
@@ -1009,25 +1339,33 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // _speakLoopFuture when _speakLoop() exits. Only external entry points
     // (pause/stop/skipToNext) need to await _speakLoopFuture — they do so
     // directly.
-    playbackState.add(
-      playbackState.value.copyWith(
-        controls: const [],
-        playing: false,
-        processingState: AudioProcessingState.idle,
-      ),
-    );
-    // Broadcast cho reader screens — màn hình đang mở chương này sẽ tự
-    // chuyển chương kế + auto-play (nếu autoAdvanceEnabled / manual skip).
-    // Thứ tự: lấy snapshot TRƯỚC khi broadcast vì listener có thể gọi
-    // loadChapter (ghi đè state) ngay trong lúc dispatch.
+
     final completed = TtsChapterCompleteEvent(
       chapterId: _currentChapterId!,
       chapterNumber: _currentChapterNumber ?? 0,
       storyId: _currentStoryId ?? '',
       nextChapterNumber: _nextChapterNumber,
-      manualSkip: _manualSkipPending,
+      manualSkip: false,
     );
-    _manualSkipPending = false;
+
+    if (autoAdvanceEnabled && completed.nextChapterNumber != null) {
+      // Handler tự chuyển chương — xem header "Handler owns chuyển
+      // chương". Chạy qua chain (không await) để không đua với pause/
+      // stop user bấm đúng lúc; op sẽ kiểm tra lại chương hiện tại vẫn
+      // là chương vừa xong + autoAdvanceEnabled vẫn bật trước khi load.
+      unawaited(_serialized(() => _advanceAfterComplete(completed)));
+    } else {
+      playbackState.add(
+        playbackState.value.copyWith(
+          controls: buildTtsControls(playing: false),
+          androidCompactActionIndices: const [0, 1, 2],
+          playing: false,
+          processingState: AudioProcessingState.idle,
+        ),
+      );
+    }
+    // Broadcast cho reader screens — màn hình đang mở chương này sẽ tự
+    // điều hướng sang chương kế (load/play đã do handler lo).
     try {
       _chapterCompleteController.add(completed);
     } catch (e, s) {
@@ -1035,24 +1373,92 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
   }
 
-  Future<void> _savePlaybackState({required bool isPlaying}) async {
-    if (_currentChapterId == null) return;
+  /// Auto-advance sau khi hết chương tự nhiên — chạy TRONG operation
+  /// chain (queue bởi `_onChapterComplete`). Guard lại mọi điều kiện
+  /// tại THỜI ĐIỂM THỰC THI: user có thể đã stop (tắt auto-advance)
+  /// hoặc load chương khác trong lúc chờ chain.
+  Future<void> _advanceAfterComplete(TtsChapterCompleteEvent completed) async {
+    if (_currentChapterId != completed.chapterId) return;
+    if (!autoAdvanceEnabled || completed.nextChapterNumber == null) return;
+    final target = completed.nextChapterNumber!;
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: const [MediaControl.stop],
+        playing: false,
+        processingState: AudioProcessingState.buffering,
+      ),
+    );
+    final chapter = await _resolveChapter(target);
+    if (chapter == null) {
+      AppLogger.warning('TTS: auto-advance resolve chapter $target failed');
+      playbackState.add(
+        playbackState.value.copyWith(
+          controls: buildTtsControls(playing: false),
+          androidCompactActionIndices: const [0, 1, 2],
+          playing: false,
+          processingState: AudioProcessingState.error,
+          errorMessage:
+              'Không tải được chương $target để đọc tiếp. '
+              'Kiểm tra kết nối rồi thử lại.',
+        ),
+      );
+      return;
+    }
+    final markdown = chapterMarkdownOrNull(chapter);
+    if (markdown == null) return;
+    await _loadChapterInner(
+      chapterId: chapter.id,
+      storyId: chapter.storyId,
+      storyTitle: chapter.storyTitle,
+      chapterTitle: chapter.title,
+      chapterNumber: chapter.chapterNumber,
+      contentMarkdown: markdown,
+      storySlug: chapter.storySlug,
+      prevChapterNumber: chapter.prevChapter,
+      nextChapterNumber: chapter.nextChapter,
+      offline: _offlineMode,
+    );
+    await _playInner();
+  }
+
+  /// Lưu vị trí nghe vào DB. Capture chapter/chunk NGAY KHI GỌI (bug #6):
+  /// trước đây đọc field lúc thực thi → auto-advance nhanh có thể ghi
+  /// state chương mới vào row chương cũ.
+  Future<void> _savePlaybackState({required bool isPlaying}) {
+    final chapterId = _currentChapterId;
+    if (chapterId == null) return Future.value();
+    final storyId = _currentStoryId ?? '';
+    final chapterNumber = _currentChapterNumber ?? 0;
+    final chunkIndex = _currentChunk;
     try {
-      await _db.upsertTtsState(
+      return _db.upsertTtsState(
         TtsPlaybackStateCompanion.insert(
-          chapterId: _currentChapterId!,
-          storyId: _currentStoryId ?? '',
-          chapterNumber: _currentChapterNumber ?? 0,
-          chunkIndex: Value(_currentChunk),
+          chapterId: chapterId,
+          storyId: storyId,
+          chapterNumber: chapterNumber,
+          chunkIndex: Value(chunkIndex),
           isPlaying: Value(isPlaying ? 1 : 0),
           lastPlayedAt: Value(DateTime.now().toIso8601String()),
         ),
       );
     } catch (e, s) {
       AppLogger.warning('TtsAudioHandler._savePlaybackState', e, s);
+      return Future.value();
     }
   }
 }
+
+/// Danh sách điều khiển cho `playbackState` — notification shade hiển thị
+/// tối đa 3 nút compact (config `androidCompactActionIndices: [0,1,2]`):
+/// `skipToPrevious | play/pause | skipToNext`; `stop` nằm ở expanded view.
+/// Luôn đủ 4 nút (kể cả khi không có chương trước/sau — nút đó no-op)
+/// để chỉ số compact không bao giờ vượt danh sách.
+List<MediaControl> buildTtsControls({required bool playing}) => [
+      MediaControl.skipToPrevious,
+      playing ? MediaControl.pause : MediaControl.play,
+      MediaControl.skipToNext,
+      MediaControl.stop,
+    ];
 
 class TtsChunkProgress {
   const TtsChunkProgress({
@@ -1071,7 +1477,7 @@ class TtsChunkProgress {
 }
 
 /// Pure decision — màn hình reader nhận [TtsChapterCompleteEvent] có nên
-/// chuyển chương kế + auto-play không? Tách riêng để unit-test được.
+/// điều hướng sang chương đích không? Tách riêng để unit-test được.
 bool shouldAutoAdvanceTts({
   required bool matchesCurrentChapter,
   required bool autoAdvanceEnabled,
@@ -1084,7 +1490,12 @@ bool shouldAutoAdvanceTts({
 }
 
 /// Broadcast khi TTS đọc xong một chương (tự nhiên hoặc skip thủ công).
-/// Reader screens dùng để auto-advance: chuyển chương kế + auto-play.
+/// Reader screens dùng để điều hướng UI sang chương đích.
+///
+/// Load + play chương đích do HANDLER tự làm (online/offline) — màn hình
+/// chỉ navigate. Vì vậy event hoạt động cả khi app bị ẩn: handler vẫn
+/// chuyển chương, màn hình chỉ không navigate (không có màn hình nào
+/// mounted — không sao).
 class TtsChapterCompleteEvent {
   const TtsChapterCompleteEvent({
     required this.chapterId,
@@ -1099,7 +1510,9 @@ class TtsChapterCompleteEvent {
   final int chapterNumber;
   final String storyId;
 
-  /// Chương kế theo chapter number — null khi đây là chương cuối.
+  /// Chương ĐÍCH để điều hướng tới — với skip tự nhiên/next là chương
+  /// kế; với skipToPrevious là chương trước. null khi không có đích
+  /// (chương cuối / chương đầu / resolve fail).
   final int? nextChapterNumber;
 
   /// True khi user chủ động bấm Skip (vẫn chuyển chương kể cả khi
@@ -1113,18 +1526,23 @@ class TtsChapterCompleteEvent {
 final ttsHandlerProvider = FutureProvider<TtsAudioHandler>((ref) async {
   final db = ref.watch(appDatabaseProvider);
   final progress = ref.watch(readingProgressServiceProvider);
-  final handler = TtsAudioHandler(db, progress);
+  final cache = ref.watch(chapterCacheServiceProvider);
+  final handler = TtsAudioHandler(db, progress, cache);
   try {
     await AudioService.init(
       builder: () => handler,
       config: AudioServiceConfig(
         androidNotificationChannelId: 'com.khongdich.app.tts',
         androidNotificationChannelName: 'Không Dịch — Đọc truyện',
-        androidNotificationOngoing: true,
-        // Keep notification visible when paused so user can resume from
-        // lockscreen / notification shade. Previously this was true →
-        // notification disappeared on pause → user couldn't resume without
-        // opening the app.
+        // androidNotificationOngoing phải để false khi
+        // androidStopForegroundOnPause = false — audio_service assert
+        // `!androidNotificationOngoing || androidStopForegroundOnPause`
+        // (xem AudioServiceConfig). Trước đây set ongoing=true → assert
+        // FAIL trong debug build → AudioService.init throw → media
+        // notification KHÔNG BAO GIỜ hiển thị (user không điều khiển
+        // được gì khi ẩn app). Đúng cách giữ notification khi pause là
+        // stopForegroundOnPause=false (service vẫn foreground → system
+        // giữ notification, user resume được từ lockscreen).
         androidStopForegroundOnPause: false,
         // Show app icon in notification.
         androidNotificationIcon: 'drawable/ic_launcher_splash',

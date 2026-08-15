@@ -34,7 +34,6 @@ import '../../core/network/api_client.dart';
 import '../../models/chapter_content.dart';
 import '../../models/comment.dart';
 import '../../services/manga_image_downloader.dart';
-import '../observability/app_logger.dart';
 import '../shell/main_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -160,60 +159,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// Auto-load TTS cho chương offline kế tiếp sau khi auto-advance —
-/// container/router-based (không phụ thuộc màn hình nào còn sống).
-/// Lookup sibling theo chapterNumber từ downloaded_chapters, navigate
-/// sang `/chapter-offline/<id>` rồi load + play. Màn hình mới tự đăng
-/// ký listener cho lượt auto-advance kế tiếp.
-Future<void> autoLoadTtsNextOffline(
-  ProviderContainer container,
-  GoRouter router,
-  TtsAudioHandler handler,
-  String storyId,
-  int nextChapterNumber,
-) async {
-  try {
-    final db = container.read(appDatabaseProvider);
-    final siblings = await (db.select(db.downloadedChapters)
-          ..where((t) => t.storyId.equals(storyId))
-          ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
-        .get();
-    final i = siblings
-        .indexWhere((s) => s.chapterNumber == nextChapterNumber);
-    if (i < 0) return;
-    final row = siblings[i];
-    final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
-    final fullJson = <String, dynamic>{
-      ...json,
-      'content_markdown': json['content_markdown'] ?? '',
-      'content_type': row.contentType,
-      'story_title': row.storyTitle,
-      'story_slug': row.storySlug,
-      'chapter_number': row.chapterNumber,
-      'title': row.chapterTitle,
-    };
-    final chapter = ChapterContent.fromJson(fullJson);
-    final markdown = chapterMarkdownOrNull(chapter);
-    if (markdown == null) return;
-    final hasNext = i < siblings.length - 1;
-    router.replace('/chapter-offline/${row.chapterId}');
-    await handler.loadChapter(
-      chapterId: chapter.id,
-      storyId: chapter.storyId,
-      storyTitle: chapter.storyTitle,
-      chapterTitle: chapter.title,
-      chapterNumber: chapter.chapterNumber,
-      contentMarkdown: markdown,
-      storySlug: chapter.storySlug,
-      nextChapterNumber: hasNext ? siblings[i + 1].chapterNumber : null,
-    );
-    await handler.play();
-  } catch (e, s) {
-    // Best-effort — don't crash if offline chapter can't be loaded.
-    AppLogger.warning('TTS auto-advance offline load failed', e, s);
-  }
-}
-
 /// Reads a downloaded chapter from the local Drift DB and displays it
 /// using the **shared** [ReaderBody] widget — same UI as the online
 /// reader, only the data source differs.
@@ -272,9 +217,10 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     super.dispose();
   }
 
-  /// TTS đọc xong chương của màn hình này → chuyển sang sibling kế (nếu
-  /// còn) + auto-play. Màn hình chính là guard: nó chỉ còn mounted khi
-  /// reader này vẫn nằm trên navigation stack.
+  /// TTS đọc xong chương của màn hình này → chỉ ĐIỀU HƯỚNG sang chương
+  /// đích. Load + play chương đích do HANDLER tự làm (hoạt động cả khi
+  /// app bị ẩn). Màn hình chính là guard: nó chỉ còn mounted khi reader
+  /// này vẫn nằm trên navigation stack.
   void _handleChapterCompleted(TtsChapterCompleteEvent event) {
     if (!mounted) return;
     final handler = _handler;
@@ -290,15 +236,11 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     )) {
       return;
     }
-    final container = ProviderScope.containerOf(context, listen: false);
-    final router = GoRouter.of(context);
-    unawaited(autoLoadTtsNextOffline(
-      container,
-      router,
-      handler,
-      chapter.storyId,
-      event.nextChapterNumber!,
-    ));
+    final target = _siblings
+        .where((s) => s.chapterNumber == event.nextChapterNumber)
+        .firstOrNull;
+    if (target == null) return;
+    context.replace('/chapter-offline/${target.chapterId}');
   }
 
   Future<void> _load() async {
@@ -505,10 +447,14 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           chapterNumber: chapter.chapterNumber,
           contentMarkdown: markdown,
           storySlug: chapter.storySlug,
+          prevChapterNumber: _currentIndex > 0
+              ? _siblings[_currentIndex - 1].chapterNumber
+              : null,
           nextChapterNumber:
               (_currentIndex >= 0 && _currentIndex < _siblings.length - 1)
               ? _siblings[_currentIndex + 1].chapterNumber
               : null,
+          offline: true,
         );
         await handler.play();
       } else {

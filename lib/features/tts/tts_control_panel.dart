@@ -205,10 +205,15 @@ class _PanelContentState extends State<_PanelContent> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                // Play/pause/stop buttons
+                // Play/pause/stop buttons + prev/next chapter
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    IconButton(
+                      icon: const Icon(Icons.skip_previous, size: 32),
+                      tooltip: 'Chương trước',
+                      onPressed: () => widget.handler.skipToPrevious(),
+                    ),
                     IconButton(
                       icon: const Icon(Icons.stop, size: 32),
                       tooltip: 'Dừng (tắt tự chuyển chương)',
@@ -216,7 +221,6 @@ class _PanelContentState extends State<_PanelContent> {
                       // nếu chỉ stop() thì hết chương sau vẫn tự nhảy.
                       onPressed: () => widget.handler.stopAutoAdvance(),
                     ),
-                    const SizedBox(width: 16),
                     Container(
                       decoration: const BoxDecoration(
                         color: Color(0xFFE11D48),
@@ -238,9 +242,9 @@ class _PanelContentState extends State<_PanelContent> {
                         },
                       ),
                     ),
-                    const SizedBox(width: 16),
                     IconButton(
                       icon: const Icon(Icons.skip_next, size: 32),
+                      tooltip: 'Chương sau',
                       onPressed: () => widget.handler.skipToNext(),
                     ),
                   ],

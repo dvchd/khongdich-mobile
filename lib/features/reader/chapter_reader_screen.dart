@@ -17,11 +17,14 @@ import '../tts/tts_audio_handler.dart';
 import '../tts/tts_control_panel.dart';
 import '../comments/segment_composer_sheet.dart';
 import 'chapter_provider.dart';
+import 'chapter_tts_support.dart';
 import 'reader_settings_provider.dart';
 import 'services/reading_progress_service.dart';
 import 'widgets/chapter_list_sheet.dart';
 import 'widgets/reader_body.dart';
 import 'widgets/reader_settings_sheet.dart';
+
+export 'chapter_tts_support.dart' show chapterSupportsTts, chapterMarkdownOrNull;
 
 /// Online chapter reader. Plan §5.4.
 ///
@@ -103,10 +106,11 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     super.dispose();
   }
 
-  /// TTS đọc xong một chương — nếu là chương CỦA MÀN HÌNH NÀY thì chuyển
-  /// chương kế + auto-play (khi auto-advance đang bật hoặc user skip thủ
-  /// công). Màn hình chính là guard: nó chỉ còn mounted khi reader của
-  /// chương này vẫn nằm trên navigation stack.
+  /// TTS đọc xong một chương — nếu là chương CỦA MÀN HÌNH NÀY thì chỉ
+  /// ĐIỀU HƯỚNG sang chương đích. Việc load + play chương đích do
+  /// HANDLER tự làm (hoạt động cả khi app bị ẩn — xem TtsAudioHandler).
+  /// Màn hình chính là guard: nó chỉ còn mounted khi reader của chương
+  /// này vẫn nằm trên navigation stack.
   void _handleChapterCompleted(TtsChapterCompleteEvent event) {
     if (!mounted) return;
     final handler = _handler;
@@ -121,15 +125,9 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     )) {
       return;
     }
-    final container = ProviderScope.containerOf(context, listen: false);
-    final router = GoRouter.of(context);
-    router.replace('/chapter/${widget.storyId}:${event.nextChapterNumber}');
-    unawaited(autoLoadTtsNextOnline(
-      container,
-      handler,
-      widget.storyId,
-      event.nextChapterNumber!,
-    ));
+    GoRouter.of(
+      context,
+    ).replace('/chapter/${widget.storyId}:${event.nextChapterNumber}');
   }
 
   @override
@@ -288,7 +286,9 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           chapterNumber: chapter.chapterNumber,
           contentMarkdown: markdown,
           storySlug: chapter.storySlug,
+          prevChapterNumber: chapter.prevChapter,
           nextChapterNumber: chapter.nextChapter,
+          offline: false,
         );
         await handler.play();
       } else {
@@ -320,64 +320,6 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     }
   }
 }
-
-/// Auto-load TTS cho chương kế sau khi auto-advance — chạy container-based
-/// (không phụ thuộc màn hình nào còn sống). Gọi sau khi router đã replace
-/// sang chương mới; màn hình mới sẽ tự đăng ký listener cho lượt kế tiếp.
-Future<void> autoLoadTtsNextOnline(
-  ProviderContainer container,
-  TtsAudioHandler handler,
-  String storyId,
-  int nextChapterNumber,
-) async {
-  try {
-    // `container.read(...future)` awaits the async computation (memory
-    // cache hit → instant; API miss → waits for network).
-    final nextRef = ChapterRef(
-      storyId: storyId,
-      chapterNumber: nextChapterNumber,
-    );
-    final chapter = await container.read(chapterProvider(nextRef).future);
-    final markdown = chapterMarkdownOrNull(chapter);
-    if (markdown != null) {
-      await handler.loadChapter(
-        chapterId: chapter.id,
-        storyId: chapter.storyId,
-        storyTitle: chapter.storyTitle,
-        chapterTitle: chapter.title,
-        chapterNumber: chapter.chapterNumber,
-        contentMarkdown: markdown,
-        storySlug: chapter.storySlug,
-        nextChapterNumber: chapter.nextChapter,
-      );
-      await handler.play();
-    }
-  } catch (e, s) {
-    AppLogger.warning('TTS auto-advance loadChapter failed', e, s);
-  }
-}
-
-/// Markdown payload for TTS — `text` and `visual` (Bách khoa) chapters
-/// share the text pipeline; manga / chat / video have no TTS.
-String? chapterMarkdownOrNull(ChapterContent? chapter) {
-  return switch (chapter) {
-    TextChapterContent(:final contentMarkdown) => contentMarkdown,
-    VisualChapterContent(:final contentMarkdown) => contentMarkdown,
-    _ => null,
-  };
-}
-
-/// Whether the TTS (headphone) toggle is available for [chapter].
-///
-/// `text` and `visual` (Bách khoa) chapters share the text pipeline;
-/// manga / chat / video have no TTS. Both readers (online + offline)
-/// use this to gate the "Nghe audio" button. Previously the online
-/// reader checked the provider's `AsyncValue` instead of the unwrapped
-/// chapter (`chapter is TextChapterContent` where `chapter` was the
-/// AsyncValue) → the check was always false → the headphone button
-/// silently disappeared from the online reader.
-bool chapterSupportsTts(ChapterContent? chapter) =>
-    chapter is TextChapterContent || chapter is VisualChapterContent;
 
 /// Online chapter-list sheet — fetches the chapter list from the API
 /// and forwards selection to the shared [ChapterListSheet].
