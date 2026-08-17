@@ -391,6 +391,19 @@ class StoryRepository implements ChapterFetcher {
     await _dio.delete('/api/v1/mobile/segment-comments/$commentId');
   }
 
+  /// Pin a root comment on the caller's own story (author or moderator).
+  /// Hits `POST /api/v1/mobile/comments/{id}/pin`. The server enforces the
+  /// max-3-pins rule and rejects replies/hidden comments with the error
+  /// message in the response body.
+  Future<void> pinComment(String commentId) async {
+    await _dio.post('/api/v1/mobile/comments/$commentId/pin');
+  }
+
+  /// Remove a pin. Hits `POST /api/v1/mobile/comments/{id}/unpin`.
+  Future<void> unpinComment(String commentId) async {
+    await _dio.post('/api/v1/mobile/comments/$commentId/unpin');
+  }
+
   // ─── Bookmarks ──────────────────────────────────────────────────
 
   /// List bookmarks by `list_type` (or all if null).

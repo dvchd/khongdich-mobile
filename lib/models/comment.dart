@@ -19,6 +19,7 @@ class CommentItem {
     required this.hidden,
     required this.isMine,
     required this.likedByMe,
+    this.pinned = false,
     this.parentId,
     this.replyToName,
     this.replyToId = '',
@@ -42,6 +43,10 @@ class CommentItem {
   final bool hidden;
   final bool isMine;
   final bool likedByMe;
+
+  /// True when the story author (or a moderator) pinned this root comment —
+  /// pinned comments float to the top of the feed.
+  final bool pinned;
   final String? parentId;
   final String? replyToName;
 
@@ -74,6 +79,7 @@ class CommentItem {
     hidden: json['hidden'] as bool? ?? false,
     isMine: json['is_mine'] as bool? ?? false,
     likedByMe: json['liked_by_me'] as bool? ?? false,
+    pinned: json['pinned'] as bool? ?? false,
     parentId: json['parent_id'] as String?,
     replyToName: json['reply_to_name'] as String?,
     replyToId: json['reply_to_id'] as String? ?? '',
@@ -96,6 +102,7 @@ class PaginatedComments {
     required this.page,
     required this.perPage,
     required this.totalPages,
+    this.canModerate = false,
   });
 
   final List<CommentItem> comments;
@@ -103,6 +110,10 @@ class PaginatedComments {
   final int page;
   final int perPage;
   final int totalPages;
+
+  /// True when the caller is the story author or a moderator — they can
+  /// pin/unpin root comments (and see hidden ones).
+  final bool canModerate;
 
   factory PaginatedComments.fromJson(Map<String, dynamic> json) =>
       PaginatedComments(
@@ -114,6 +125,7 @@ class PaginatedComments {
         page: (json['page'] as num?)?.toInt() ?? 1,
         perPage: (json['per_page'] as num?)?.toInt() ?? 20,
         totalPages: (json['total_pages'] as num?)?.toInt() ?? 0,
+        canModerate: json['can_moderate'] as bool? ?? false,
       );
 }
 

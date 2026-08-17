@@ -128,6 +128,7 @@ void main() {
         'hidden': false,
         'is_mine': true,
         'liked_by_me': true,
+        'pinned': true,
         'parent_id': null,
         'reply_to_id': '',
         'is_segment': false,
@@ -136,7 +137,19 @@ void main() {
       expect(c.isMine, isTrue);
       expect(c.likedByMe, isTrue);
       expect(c.likeCount, 2);
+      expect(c.pinned, isTrue);
       expect(c.replies, isEmpty);
+    });
+
+    test('parses pinned=false by default (older servers)', () {
+      final c = CommentItem.fromJson({
+        'id': '33333333-3333-3333-3333-333333333333',
+        'user_id': '44444444-4444-4444-4444-444444444444',
+        'content': 'Hay quá!',
+        'created_at': '2026-08-10T01:00:00Z',
+      });
+      expect(c.pinned, isFalse);
+      expect(c.content, 'Hay quá!');
     });
 
     test('parses a segment comment with quote + replies', () {
@@ -184,6 +197,41 @@ void main() {
       expect(c.displayAuthor, 'beta');
       expect(c.replies, hasLength(1));
       expect(c.replies.first.parentId, c.id);
+    });
+  });
+
+  group('PaginatedComments.fromJson', () {
+    test('parses can_moderate for author/moderator pinning', () {
+      final feed = PaginatedComments.fromJson({
+        'comments': [
+          {
+            'id': '99999999-9999-9999-9999-999999999999',
+            'user_id': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            'content': 'Ghim tôi!',
+            'created_at': '2026-08-10T04:00:00Z',
+            'pinned': true,
+          },
+        ],
+        'total': 1,
+        'page': 1,
+        'per_page': 20,
+        'total_pages': 1,
+        'can_moderate': true,
+      });
+      expect(feed.canModerate, isTrue);
+      expect(feed.comments, hasLength(1));
+      expect(feed.comments.first.pinned, isTrue);
+    });
+
+    test('can_moderate defaults to false when absent', () {
+      final feed = PaginatedComments.fromJson({
+        'comments': <Object>[],
+        'total': 0,
+        'page': 1,
+        'per_page': 20,
+        'total_pages': 0,
+      });
+      expect(feed.canModerate, isFalse);
     });
   });
 }

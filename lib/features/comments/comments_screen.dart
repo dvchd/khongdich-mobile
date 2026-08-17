@@ -209,6 +209,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
             hidden: copy.hidden,
             isMine: copy.isMine,
             likedByMe: liked,
+            pinned: copy.pinned,
             parentId: copy.parentId,
             replyToName: copy.replyToName,
             replyToId: copy.replyToId,
@@ -226,6 +227,37 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
           const SnackBar(content: Text('Không thích được — thử lại sau.')),
         );
       }
+    }
+  }
+
+  Future<void> _togglePin(CommentItem c) async {
+    try {
+      if (c.pinned) {
+        await _repo.unpinComment(c.id);
+      } else {
+        await _repo.pinComment(c.id);
+      }
+      if (!mounted) return;
+      // Pin changes the global order (pinned first) — reload the feed so
+      // the list reflects the server-side ordering.
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(c.pinned ? 'Đã bỏ ghim bình luận.' : 'Đã ghim bình luận.'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is ApiException
+          ? e.message
+          : 'Không ghim được — thử lại sau.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
     }
   }
 
@@ -337,6 +369,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
       hidden: c.hidden,
       isMine: c.isMine,
       likedByMe: c.likedByMe,
+      pinned: c.pinned,
       parentId: c.parentId,
       replyToName: c.replyToName,
       replyToId: c.replyToId,
@@ -481,6 +514,11 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
               onLike: () => _toggleLike(c),
               onReply: () => _startReply(c),
               onDelete: c.isMine ? () => _delete(c) : null,
+              onTogglePin: feed.canModerate &&
+                      !c.isSegment &&
+                      (!c.hidden || c.pinned)
+                  ? () => _togglePin(c)
+                  : null,
             ),
             for (final r in c.replies)
               Padding(
@@ -500,19 +538,24 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
 }
 
 /// Renders a single comment (root or reply) with quote block for segment
-/// comments and like/reply/delete actions.
+/// comments and like/reply/delete/pin actions.
 class _CommentTile extends StatelessWidget {
   const _CommentTile({
     required this.item,
     required this.onLike,
     required this.onReply,
     this.onDelete,
+    this.onTogglePin,
   });
 
   final CommentItem item;
   final VoidCallback onLike;
   final VoidCallback onReply;
   final VoidCallback? onDelete;
+
+  /// Pin/unpin action — only wired for root comments when the caller can
+  /// moderate the story (author/mod) and the comment is visible.
+  final VoidCallback? onTogglePin;
 
   @override
   Widget build(BuildContext context) {
@@ -611,6 +654,21 @@ class _CommentTile extends StatelessWidget {
                         color: theme.colorScheme.primary,
                       ),
                     ],
+                    if (item.pinned) ...[
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.push_pin,
+                        size: 13,
+                        color: theme.colorScheme.primary,
+                      ),
+                      Text(
+                        'Đã ghim',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                     if (item.edited) ...[
                       const SizedBox(width: 6),
                       Text(
@@ -658,6 +716,27 @@ class _CommentTile extends StatelessWidget {
                         ),
                         child: Text(
                           'Trả lời',
+                          style: theme.textTheme.labelSmall,
+                        ),
+                      ),
+                    if (onTogglePin != null)
+                      TextButton.icon(
+                        onPressed: onTogglePin,
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        icon: Icon(
+                          item.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                          size: 15,
+                          color: item.pinned
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurface.withValues(
+                                  alpha: 0.6,
+                                ),
+                        ),
+                        label: Text(
+                          item.pinned ? 'Bỏ ghim' : 'Ghim',
                           style: theme.textTheme.labelSmall,
                         ),
                       ),
