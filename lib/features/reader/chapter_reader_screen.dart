@@ -348,6 +348,7 @@ class _OnlineChapterListSheet extends ConsumerWidget {
             ChapterListEntry(number: c.chapterNumber, title: c.title),
         ],
         currentChapter: currentChapter,
+        storyId: storyId,
         onSelect: (number) => context.replace('/chapter/$storyId:$number'),
       ),
     );

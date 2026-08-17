@@ -233,6 +233,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// có cần stop + reload khi user tap headphone ở chương khác.
   String? get currentChapterId => _currentChapterId;
 
+  /// Story id + số chương hiện đang load — dùng cho chapter-list sheet
+  /// (chỉ báo chương đang nghe real-time) và các UI theo dõi TTS khác.
+  String? get currentStoryId => _currentStoryId;
+  int? get currentChapterNumber => _currentChapterNumber;
+
   /// Story slug + next chapter number — set bởi reader screen khi load
   /// chapter, để TTS có thể tự chuyển chương khi đọc xong.
   String? get currentStorySlug => _currentStorySlug;
@@ -856,6 +861,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _offlineMode = offline;
     _prevChapterNumber = prevChapterNumber;
     _nextChapterNumber = nextChapterNumber;
+    // Reset chunk index NGAY khi publish chương mới — UI (reader highlight,
+    // chapter-list sheet) đọc `currentChapterId` + `currentChunkIndex` đồng
+    // thời; nếu `_currentChunk` còn giữ index của chương CŨ trong lúc này
+    // (index đó vô tình hợp lệ với `_chunks` mới), reader fallback sẽ tô
+    // vàng SAI đoạn ở giữa chương mới (bug highlight nhảy loạn khi chuyển
+    // chương). Vị trí nghe đã lưu được khôi phục ở dưới, SAU khi đọc DB.
+    _currentChunk = 0;
     // Load chương mới = phiên nghe mới → bỏ trạng thái "đã đóng" của
     // chương cũ để mini player hiện lại bình thường.
     _dismissedChapterId = null;

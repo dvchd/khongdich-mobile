@@ -1,7 +1,11 @@
+import 'dart:async';
+
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../tts/tts_audio_handler.dart';
 
 /// One row in the shared [ChapterListSheet].
 ///
@@ -30,26 +34,124 @@ class ChapterListEntry {
 ///
 /// The current chapter is highlighted with [AppTheme.primary] and a
 /// check-circle icon.
-class ChapterListSheet extends ConsumerWidget {
+///
+/// **Theo dõi TTS real-time**: khi [storyId] != null, nếu handler đang
+/// phục vụ một chương của story đó (kể cả auto-advance đổi chương
+/// ngay trong lúc sheet đang mở) thì chương ĐANG NGHE mới là chương
+/// được tô check — audio là nguồn chân lý. Không nghe nữa (chưa có
+/// chương nào load / đã bấm X / story khác) thì fallback về
+/// [currentChapter] (chương màn hình đang hiển thị). Lúc mở sheet,
+/// list tự scroll để chương hiện tại nằm trong khung nhìn.
+class ChapterListSheet extends ConsumerStatefulWidget {
   const ChapterListSheet({
     super.key,
     required this.entries,
     required this.currentChapter,
     required this.onSelect,
+    this.storyId,
   });
 
   final List<ChapterListEntry> entries;
   final int currentChapter;
   final ValueChanged<int> onSelect;
 
+  /// Story id của màn hình mở sheet — dùng để khớp với chương đang
+  /// nghe của TTS (xem class doc).
+  final String? storyId;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ChapterListSheet> createState() => _ChapterListSheetState();
+}
+
+class _ChapterListSheetState extends ConsumerState<ChapterListSheet> {
+  TtsAudioHandler? _handler;
+  StreamSubscription<TtsChunkProgress>? _progressSub;
+  StreamSubscription<PlaybackState>? _playbackSub;
+
+  /// Chương TTS đang phục vụ (nếu thuộc story của sheet). null = không
+  /// nghe gì → dùng [ChapterListSheet.currentChapter].
+  int? _liveChapter;
+
+  bool _initialScrollDone = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      try {
+        final handler = await ref.read(ttsHandlerProvider.future);
+        if (!mounted) return;
+        _handler = handler;
+        // chunkProgress fire mỗi chunk (và mỗi block advance) còn
+        // playbackState fire khi load/stop chương → sheet đổi chỉ báo
+        // NGAY khi handler chuyển chương, không cần user mở lại.
+        _progressSub = handler.chunkProgress.listen((_) => _syncFromHandler());
+        _playbackSub = handler.playbackState.listen((_) => _syncFromHandler());
+        _syncFromHandler();
+      } catch (_) {
+        // TTS init fail — sheet vẫn hoạt động với chương màn hình.
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _progressSub?.cancel();
+    _playbackSub?.cancel();
+    super.dispose();
+  }
+
+  /// Chương được tô check: chương đang nghe (nếu có) → chương màn hình.
+  int get _activeChapter => _liveChapter ?? widget.currentChapter;
+
+  void _syncFromHandler() {
+    final h = _handler;
+    if (h == null || !mounted) return;
+    final serving = widget.storyId != null &&
+        h.currentStoryId == widget.storyId &&
+        h.currentChapterId != null &&
+        h.dismissedChapterId != h.currentChapterId;
+    final live = serving ? h.currentChapterNumber : null;
+    // Chương nghe phải có trong list (offline: chỉ chương đã tải;
+    // online: danh sách API) — nếu không thì giữ chương màn hình.
+    final inEntries =
+        live != null && widget.entries.any((e) => e.number == live);
+    final next = inEntries ? live : null;
+    if (next == _liveChapter) return;
+    setState(() => _liveChapter = next);
+  }
+
+  /// Scroll để chương đang chọn nằm trong khung nhìn — chỉ chạy MỘT
+  /// lần khi mở sheet (không tự kéo list khi user đang tự cuộn).
+  void _scrollToActiveOnce(ScrollController controller) {
+    if (_initialScrollDone) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _initialScrollDone) return;
+      if (!controller.hasClients) return;
+      final i = widget.entries
+          .indexWhere((e) => e.number == _activeChapter);
+      if (i <= 0) return;
+      // ListTile 1 dòng cao 56px (mặc định Material). -8 để chương
+      // không dính sát mép dưới của header sheet.
+      final target = (i * 56.0 - 8).clamp(
+        0.0,
+        controller.position.maxScrollExtent,
+      );
+      if (target <= 0) return;
+      _initialScrollDone = true;
+      controller.jumpTo(target);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       minChildSize: 0.3,
       maxChildSize: 0.95,
       expand: false,
       builder: (context, scrollController) {
+        _scrollToActiveOnce(scrollController);
         return Container(
           decoration: BoxDecoration(
             color: Theme.of(context).scaffoldBackgroundColor,
@@ -74,14 +176,14 @@ class ChapterListSheet extends ConsumerWidget {
               ),
               const Divider(height: 1),
               Expanded(
-                child: entries.isEmpty
+                child: widget.entries.isEmpty
                     ? const Center(child: Text('Chưa có chương nào.'))
                     : ListView.builder(
                         controller: scrollController,
-                        itemCount: entries.length,
+                        itemCount: widget.entries.length,
                         itemBuilder: (_, i) {
-                          final e = entries[i];
-                          final isCurrent = e.number == currentChapter;
+                          final e = widget.entries[i];
+                          final isCurrent = e.number == _activeChapter;
                           return ListTile(
                             leading: CircleAvatar(
                               backgroundColor: isCurrent
@@ -119,7 +221,7 @@ class ChapterListSheet extends ConsumerWidget {
                                 : null,
                             onTap: () {
                               Navigator.of(context).pop();
-                              onSelect(e.number);
+                              widget.onSelect(e.number);
                             },
                           );
                         },

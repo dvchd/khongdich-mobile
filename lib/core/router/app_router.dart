@@ -374,6 +374,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
             ChapterListEntry(number: s.chapterNumber, title: s.chapterTitle),
         ],
         currentChapter: ch.chapterNumber,
+        storyId: ch.storyId,
         onSelect: (number) {
           // Find the sibling with this chapter number and navigate
           // to its offline chapter route. Use `replace` (not `go`)

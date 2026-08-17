@@ -58,6 +58,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   Size? _lastSize;
 
   // TTS highlight state.
+  TtsAudioHandler? _handler;
   StreamSubscription<TtsChunkProgress>? _ttsSub;
   StreamSubscription<PlaybackState>? _playbackSub;
   int? _activeBlockIndex;
@@ -79,27 +80,17 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       try {
         final handler = await ref.read(ttsHandlerProvider.future);
         if (!mounted) return;
+        _handler = handler;
         _ttsSub = handler.chunkProgress.listen(_onChunkProgress);
         // Also listen to playbackState so we can clear the highlight
         // when TTS stops, completes, or errors. Without this, the yellow
         // tint stays on the last block forever after TTS finishes.
         _playbackSub = handler.playbackState.listen(_onPlaybackState);
-        // If TTS is already mid-chapter for THIS chapter when we mount,
-        // highlight the current block immediately.
-        if (handler.currentChapterId == widget.chapterId &&
-            handler.currentChunkIndex >= 0 &&
-            handler.chunkModels.isNotEmpty) {
-          // Bound check: chunkIndex có thể trỏ ra ngoài danh sách chunk
-          // sau khi nội dung chương được cập nhật (ít chunk hơn) —
-          // trước đây RangeError bị catch (_) nuốt lặng lẽ.
-          final index = handler.currentChunkIndex;
-          if (index < handler.chunkModels.length) {
-            final chunk = handler.chunkModels[index];
-            _applyBlock(
-              chunk.blocks.isEmpty ? -1 : chunk.blocks.first.blockIndex,
-            );
-          }
-        }
+        // If TTS is already serving THIS chapter when we mount (đang nghe
+        // hoặc đang load — kể cả trở lại chương đang nghe sau khi đọc
+        // chương khác), highlight + scroll về đúng đoạn đang nghe ngay,
+        // không đợi chunk progress tiếp theo (có thể mất hàng chục giây).
+        _applyFromHandlerState();
       } catch (_) {
         // TTS init may fail — silently ignore; the reader still works.
       }
@@ -466,7 +457,38 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
           _activeBlockIndex = null;
         });
       }
+      return;
     }
+    // TTS quay lại phục vụ chương này (play lại sau stop, hoặc mount lúc
+    // buffering bỏ lỡ fallback) → khôi phục highlight nếu đang trống.
+    if (s == AudioProcessingState.ready && _activeBlockIndex == null) {
+      _applyFromHandlerState();
+    }
+  }
+
+  /// Highlight + scroll về đúng đoạn TTS đang phục vụ cho CHƯƠNG NÀY
+  /// (đọc trực tiếp từ state handler — không chờ chunk progress event).
+  /// Chỉ áp dụng khi handler thực sự đang serving (ready hoặc buffering)
+  /// — sau stop/dismiss (idle) thì KHÔNG tô vàng lại.
+  void _applyFromHandlerState() {
+    final handler = _handler;
+    if (handler == null) return;
+    if (handler.currentChapterId != widget.chapterId) return;
+    final s = handler.playbackState.value.processingState;
+    if (s != AudioProcessingState.ready &&
+        s != AudioProcessingState.buffering) {
+      return;
+    }
+    if (handler.currentChunkIndex < 0 || handler.chunkModels.isEmpty) return;
+    // Bound check: chunkIndex có thể trỏ ra ngoài danh sách chunk sau khi
+    // nội dung chương được cập nhật (ít chunk hơn) — trước đây RangeError
+    // bị catch (_) nuốt lặng lẽ.
+    final index = handler.currentChunkIndex;
+    if (index >= handler.chunkModels.length) return;
+    final chunk = handler.chunkModels[index];
+    _applyBlock(
+      chunk.blocks.isEmpty ? -1 : chunk.blocks.first.blockIndex,
+    );
   }
 
   /// Highlight the exact block being spoken. [blockIndex] comes straight
