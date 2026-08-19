@@ -37,24 +37,13 @@ jobs:
         run: flutter test
 
   build-android:
-    name: Build Android (demo + prod)
+    name: Build Android (APK + AAB prod)
     needs: analyze-and-test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write  # required for softprops/action-gh-release
-    strategy:
-      matrix:
-        flavor:
-          - name: demo
-            app_env: demo
-            # Demo build → talks to https://demo.khongdich.com
-            # (QA can install this side-by-side with the prod build
-            #  thanks to a distinct applicationIdSuffix ".demo".)
-          - name: prod
-            app_env: prod
-            # Production build → talks to https://khongdich.com
     steps:
       - uses: actions/checkout@v4
 
@@ -90,7 +79,6 @@ jobs:
 
       - name: Build APK
         env:
-          APP_ENV: ${{ matrix.flavor.app_env }}
           KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
@@ -98,22 +86,35 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
         run: |
           flutter build apk --release --no-tree-shake-icons \
-            --dart-define=APP_ENV=${APP_ENV} \
-            --flavor=${APP_ENV}
+            --dart-define=APP_ENV=prod \
+            --flavor=prod
 
-      - name: Rename artifacts with build sha + flavor
+      - name: Build AAB (Google Play)
+        env:
+          KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
+          KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
+          KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
+          KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+        run: |
+          flutter build appbundle --release --no-tree-shake-icons \
+            --dart-define=APP_ENV=prod \
+            --flavor=prod
+
+      - name: Rename artifacts with build sha
         run: |
           SHA=${GITHUB_SHA::7}
-          FLAVOR=${{ matrix.flavor.name }}
           mkdir -p artifacts
-          cp build/app/outputs/flutter-apk/app-${FLAVOR}-release.apk \
-             artifacts/khongdich-${FLAVOR}-${SHA}.apk
+          cp build/app/outputs/flutter-apk/app-prod-release.apk \
+             artifacts/khongdich-prod-${SHA}.apk
+          cp build/app/outputs/bundle/prodRelease/app-prod-release.aab \
+             artifacts/khongdich-prod-${SHA}.aab
           ls -la artifacts/
 
       - name: Upload artifacts to workflow run
         uses: actions/upload-artifact@v4
         with:
-          name: khongdich-${{ matrix.flavor.name }}-${{ github.sha }}
+          name: khongdich-prod-${{ github.sha }}
           path: artifacts/*
           retention-days: 30
 
@@ -123,6 +124,7 @@ jobs:
         with:
           files: |
             artifacts/*.apk
+            artifacts/*.aab
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
@@ -133,22 +135,21 @@ jobs:
         with:
           files: |
             artifacts/*.apk
-          name: Bản dev ${{ github.sha }} (${{ matrix.flavor.name }})
-          tag_name: dev-${{ matrix.flavor.name }}-${{ github.sha }}
+            artifacts/*.aab
+          name: Bản dev ${{ github.sha }} (prod)
+          tag_name: dev-prod-${{ github.sha }}
           prerelease: true
           generate_release_notes: true
           body: |
-            ## Bản dev tự động — ${{ matrix.flavor.name }}
+            ## Bản dev tự động — prod
 
             **Commit:** ${{ github.sha }}
-            **Flavor:** ${{ matrix.flavor.name }}
-            **Backend:** ${{ matrix.flavor.app_env == 'demo' && 'https://demo.khongdich.com (test nội bộ)' || 'https://khongdich.com (chính thức)' }}
+            **Backend:** https://khongdich.com (chính thức)
 
             ### Hướng dẫn cài đặt
 
             1. Tải file `.apk` về máy
             2. Mở file trên Android (cho phép "Cài đặt từ nguồn không xác định")
-            3. Demo + Prod có thể cài song song (khác `applicationIdSuffix`)
 
             ### Tính năng chính
 
@@ -159,4 +160,3 @@ jobs:
             - 🎨 Theme (sáng/tối/sepia) + font (Noto Serif/Sans/Mono)
             - 📖 Chế độ đọc: cuộn dọc / lật trang
             - 🔔 Thông báo (FCM khi có server config)
-            - 🏷️ Đa môi trường (demo/prod) — đổi trong Settings
