@@ -46,6 +46,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/release/
+
 
 # Firebase config đã bị bỏ — app không còn dùng Firebase.
 # google-services.json không còn cần thiết.

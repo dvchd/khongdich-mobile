@@ -160,15 +160,23 @@ flutter run --flavor=prod --dart-define=APP_ENV=prod
 
 ## CI/CD
 
-`.github/workflows/ci.yml` chạy trên mọi push và PR:
+`.github/workflows/ci.yml`:
 
-1. **Analyze + Test** — chạy `flutter analyze` + `flutter test`. Fail nếu có issue.
-2. **Build Android (demo + prod)** — matrix build 2 APK song song:
-   - `khongdich-demo-<sha>.apk` → demo.khongdich.com
-   - `khongdich-prod-<sha>.apk` → khongdich.com
-3. **Publish to GitHub Releases**:
-   - Tag `v*` → release chính thức
-   - Push main → `dev-<flavor>-<sha>` prerelease
+1. **Analyze + Test** — chạy trên mọi push (main, tag) và PR: `flutter analyze` + `flutter test`. Fail nếu có issue.
+2. **Build Android (prod)** — chỉ chạy khi push **tag `v*`**: build APK + AAB (kiểm tra tag khớp `version` trong pubspec.yaml) → tạo GitHub Release chính thức kèm artifacts.
+
+Push main **không** tạo release nữa (trước đây spam `dev-*-<sha>` prerelease).
+
+### Quy trình phát hành
+
+```bash
+scripts/bump_version.sh 0.3.1+6     # bump pubspec, commit, push main + tag v0.3.1
+# chờ CI xanh (Actions) →
+scripts/download_aab.sh              # tải AAB từ release mới nhất về ./release/
+```
+
+Sau đó upload AAB lên Google Play Console (track closed testing).
+Quy trình chi tiết gồm cả bước Play Console nằm trong skill `android-release`.
 
 ### Secrets
 
