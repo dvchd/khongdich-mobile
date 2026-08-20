@@ -53,11 +53,62 @@ class AuthService {
     serverClientId: _googleWebClientId,
   );
 
+  /// Số lần tự thử lại tối đa khi Google bị gián đoạn tạm thời
+  /// (NETWORK_ERROR / INTERNAL_ERROR — GMS mint token không tới được
+  /// máy chủ OAuth). Lỗi kiểu này thường tự khỏi sau vài phút; retry
+  /// giúp user khỏi phải bấm lại nhiều lần (bấm liên tục dễ bị Google
+  /// nghi ngờ → chặn lâu hơn).
+  static const int _maxTransientRetries = 2;
+
+  /// Delay giữa các lần retry — tăng dần (backoff) để không spam Google.
+  static const List<Duration> _retryBackoff = [
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+  ];
+
   /// Đăng nhập Google → đổi idToken lấy server JWT.
+  ///
+  /// Tự retry (tối đa [_maxTransientRetries] lần, backoff) khi gặp lỗi
+  /// thoáng qua phía Google. [onRetry] được gọi trước mỗi lần thử lại
+  /// để UI hiển thị trạng thái (attempt bắt đầu từ 1).
   ///
   /// Returns `AuthResult` chứa user info, hoặc throws `AuthError` với
   /// user-friendly Vietnamese message.
-  Future<AuthResult> signInWithGoogle() async {
+  Future<AuthResult> signInWithGoogle({
+    void Function(int attempt, int maxAttempts)? onRetry,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await _signInWithGoogleOnce();
+      } on AuthError catch (e) {
+        if (!e.isTransient || attempt >= _maxTransientRetries) rethrow;
+        attempt++;
+        final delay = _retryBackoff[attempt - 1];
+        AppLogger.warning(
+          'Google Sign-In transient error, auto-retry $attempt/'
+          '$_maxTransientRetries in ${delay.inSeconds}s: ${e.message}',
+        );
+        onRetry?.call(attempt, _maxTransientRetries);
+        await Future<void>.delayed(delay);
+      } catch (e) {
+        final err = translateSignInError(e);
+        if (!err.isTransient || attempt >= _maxTransientRetries) rethrow;
+        attempt++;
+        final delay = _retryBackoff[attempt - 1];
+        AppLogger.warning(
+          'Google Sign-In transient error, auto-retry $attempt/'
+          '$_maxTransientRetries in ${delay.inSeconds}s',
+          e,
+        );
+        onRetry?.call(attempt, _maxTransientRetries);
+        await Future<void>.delayed(delay);
+      }
+    }
+  }
+
+  /// Một lượt đăng nhập đầy đủ: picker → idToken → đổi lấy server JWT.
+  Future<AuthResult> _signInWithGoogleOnce() async {
     final account = await _googleSignIn.signIn();
     if (account == null) {
       // User cancelled the picker.
@@ -160,9 +211,13 @@ class AuthResult {
 
 /// Lỗi đăng nhập với user-friendly Vietnamese message + hint.
 class AuthError implements Exception {
-  const AuthError(this.message, this.hint);
+  const AuthError(this.message, this.hint, {this.isTransient = false});
   final String message;
   final String hint;
+
+  /// `true` = lỗi thoáng qua phía Google/mạng (retry có thể cứu),
+  /// `false` = lỗi cấu hình/cố định (retry vô ích).
+  final bool isTransient;
 
   @override
   String toString() => message;
@@ -205,14 +260,19 @@ AuthError translateSignInError(Object e) {
   } else if (msg.contains('12500') || msg.contains('SIGN_IN_CANCELLED')) {
     return const AuthError('Đăng nhập đã bị huỷ.', '');
   } else if (msg.contains('7:') || msg.contains('NETWORK_ERROR')) {
-    return const AuthError(
+    return AuthError(
       'Lỗi mạng khi đăng nhập.',
-      'Kiểm tra kết nối Internet và thử lại.',
+      'Mạng hoặc máy chủ Google tạm bị gián đoạn — không phải do app. '
+          'Hệ thống đã tự thử lại; nếu vẫn lỗi hãy chờ 5-10 phút rồi thử lại. '
+          'Bấm đăng nhập liên tục có thể bị Google tạm chặn lâu hơn.',
+      isTransient: true,
     );
   } else if (msg.contains('8:') || msg.contains('INTERNAL_ERROR')) {
-    return const AuthError(
+    return AuthError(
       'Lỗi nội bộ Google Play Services.',
-      'Thử cập nhật Google Play Services trên thiết bị rồi đăng nhập lại.',
+      'Lỗi tạm thời từ phía Google, không phải do app. Hệ thống đã tự thử '
+          'lại; nếu vẫn lỗi, hãy chờ vài phút rồi thử lại.',
+      isTransient: true,
     );
   }
   return AuthError('Đăng nhập thất bại.', 'Chi tiết: $msg');

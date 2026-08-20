@@ -33,11 +33,25 @@ class AuthScreen extends ConsumerStatefulWidget {
 class _AuthScreenState extends ConsumerState<AuthScreen> {
   bool _busy = false;
 
+  /// Hiển thị khi Google bị gián đoạn tạm thời và app đang tự thử lại.
+  String? _retryStatus;
+
   Future<void> _signInWithGoogle() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _retryStatus = null;
+    });
     try {
       final auth = ref.read(authServiceProvider);
-      final result = await auth.signInWithGoogle();
+      final result = await auth.signInWithGoogle(
+        onRetry: (attempt, maxAttempts) {
+          if (!mounted) return;
+          setState(() {
+            _retryStatus = 'Google bị gián đoạn — đang tự thử lại '
+                '($attempt/$maxAttempts)…';
+          });
+        },
+      );
       // Invalidate để Profile header (nếu đang ở back stack) cập nhật —
       // trước đây pop về Profile vẫn hiện "Chưa đăng nhập" vì provider
       // còn alive.
@@ -67,7 +81,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       if (err.hint.isEmpty) return;
       _showError(err.message, err.hint);
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _retryStatus = null;
+        });
+      }
     }
   }
 
@@ -139,6 +158,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   : const Icon(Icons.login),
               label: const Text('Đăng nhập với Google'),
             ),
+            if (_retryStatus != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _retryStatus!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+              ),
+            ],
             const SizedBox(height: 12),
             OutlinedButton(
               onPressed: () => context.go('/home'),
