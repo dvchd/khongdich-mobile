@@ -16,6 +16,7 @@ class StorySummary {
     this.wordCount,
     this.status,
     this.rating,
+    this.reviewCount = 0,
     this.followers,
     this.viewCount,
     this.updatedAt,
@@ -64,6 +65,7 @@ class StorySummary {
       status: json['status'] as String?,
       viewCount: (json['view_count'] as num?)?.toInt(),
       rating: double.tryParse(json['avg_rating']?.toString() ?? ''),
+      reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
       followers: (json['bookmark_count'] as num?)?.toInt(),
       updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
       isVip: json['is_vip'] as bool? ?? false,
@@ -90,6 +92,10 @@ class StorySummary {
   /// `is_vip` field in the backend's StoryCard JSON response.
   final bool isVip;
 
+  /// Number of story reviews (đánh giá). Always 0 on story cards; parsed
+  /// from the story detail payload.
+  final int reviewCount;
+
   StorySummary copyWith({
     String? author,
     List<String>? categories,
@@ -110,6 +116,7 @@ class StorySummary {
         wordCount: wordCount,
         status: status,
         rating: rating,
+        reviewCount: reviewCount,
         followers: followers,
         viewCount: viewCount,
         updatedAt: updatedAt,

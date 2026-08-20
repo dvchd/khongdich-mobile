@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/network/api_client.dart';
 import '../models/chapter_content.dart';
 import '../models/comment.dart';
+import '../models/review.dart';
 import '../models/story.dart';
 
 /// Interface tối thiểu mà [DownloadManager] cần từ repository — tách
@@ -95,6 +96,7 @@ class StoryRepository implements ChapterFetcher {
       authorAvatar: data['author_avatar'] as String?,
       firstChapter: (data['first_chapter'] as num?)?.toInt(),
       bookmark: data['bookmark'] as String?,
+      commentCount: (data['comment_count'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -352,6 +354,40 @@ class StoryRepository implements ChapterFetcher {
     );
   }
 
+  /// Story detail comments — merged feed (regular + segment) scoped to
+  /// the whole story like the web story detail page.
+  /// Hits `GET /api/v1/mobile/stories/{id}/comments`.
+  Future<PaginatedComments> fetchStoryComments(
+    String storyId, {
+    int page = 1,
+    int perPage = 20,
+    String sort = 'newest',
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/stories/$storyId/comments',
+      queryParameters: {'page': page, 'per_page': perPage, 'sort': sort},
+    );
+    return PaginatedComments.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Post a comment on a story (root or reply via [parentId]).
+  /// Hits `POST /api/v1/mobile/stories/{id}/comments`.
+  Future<CommentPostResult> postStoryComment(
+    String storyId, {
+    required String content,
+    String? parentId,
+  }) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/stories/$storyId/comments',
+      data: {'content': content, if (parentId != null) 'parent_id': parentId},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return CommentPostResult(
+      id: data['id'] as String,
+      wasHidden: data['was_hidden'] as bool? ?? false,
+    );
+  }
+
   /// Post a reader suggestion (góp ý sửa đoạn) for a paragraph. Like
   /// segment comments, `paraKey` may be empty — the backend resolves the
   /// anchor from the quote text.
@@ -409,6 +445,58 @@ class StoryRepository implements ChapterFetcher {
     await _dio.delete('/api/v1/mobile/segment-comments/$commentId');
   }
 
+  /// Edit the caller's own comment (regular). The server re-runs the
+  /// moderation filter; edited spam/flagged content gets auto-hidden.
+  /// Hits `PUT /api/v1/mobile/comments/{id}`.
+  Future<CommentEditResult> editComment(
+    String commentId, {
+    required String content,
+  }) async {
+    final r = await _dio.put(
+      '/api/v1/mobile/comments/$commentId',
+      data: {'content': content},
+    );
+    return CommentEditResult.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Edit the caller's own segment (paragraph) comment.
+  /// Hits `PUT /api/v1/mobile/segment-comments/{id}`.
+  Future<CommentEditResult> editSegmentComment(
+    String commentId, {
+    required String content,
+  }) async {
+    final r = await _dio.put(
+      '/api/v1/mobile/segment-comments/$commentId',
+      data: {'content': content},
+    );
+    return CommentEditResult.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Hide a comment (story author or moderator) — cascades to the whole
+  /// reply subtree when hiding a root.
+  /// Hits `POST /api/v1/mobile/comments/{id}/hide`.
+  Future<void> hideComment(String commentId) async {
+    await _dio.post('/api/v1/mobile/comments/$commentId/hide');
+  }
+
+  /// Restore a hidden comment.
+  /// Hits `POST /api/v1/mobile/comments/{id}/unhide`.
+  Future<void> unhideComment(String commentId) async {
+    await _dio.post('/api/v1/mobile/comments/$commentId/unhide');
+  }
+
+  /// Hide a segment (paragraph) comment (story author or moderator).
+  /// Hits `POST /api/v1/mobile/segment-comments/{id}/hide`.
+  Future<void> hideSegmentComment(String commentId) async {
+    await _dio.post('/api/v1/mobile/segment-comments/$commentId/hide');
+  }
+
+  /// Restore a hidden segment comment.
+  /// Hits `POST /api/v1/mobile/segment-comments/{id}/unhide`.
+  Future<void> unhideSegmentComment(String commentId) async {
+    await _dio.post('/api/v1/mobile/segment-comments/$commentId/unhide');
+  }
+
   /// Pin a root comment on the caller's own story (author or moderator).
   /// Hits `POST /api/v1/mobile/comments/{id}/pin`. The server enforces the
   /// max-3-pins rule and rejects replies/hidden comments with the error
@@ -420,6 +508,41 @@ class StoryRepository implements ChapterFetcher {
   /// Remove a pin. Hits `POST /api/v1/mobile/comments/{id}/unpin`.
   Future<void> unpinComment(String commentId) async {
     await _dio.post('/api/v1/mobile/comments/$commentId/unpin');
+  }
+
+  // ─── Reviews (đánh giá truyện) ─────────────────────────────────
+
+  /// Paginated review list + story aggregates + `my_rating` (the caller's
+  /// own rating, null when they haven't reviewed this story yet).
+  /// Hits `GET /api/v1/mobile/stories/{id}/reviews`.
+  Future<ReviewsFeed> fetchStoryReviews(
+    String storyId, {
+    int page = 1,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/stories/$storyId/reviews',
+      queryParameters: {'page': page},
+    );
+    return ReviewsFeed.fromJson(r.data as Map<String, dynamic>);
+  }
+
+  /// Create or update the caller's review (upsert — one review per user
+  /// per story). Returns the fresh aggregates to update the UI in place.
+  /// Hits `POST /api/v1/mobile/stories/{id}/reviews`.
+  Future<(double avgRating, int reviewCount)> upsertReview({
+    required String storyId,
+    required int rating,
+    required String content,
+  }) async {
+    final r = await _dio.post(
+      '/api/v1/mobile/stories/$storyId/reviews',
+      data: {'rating': rating, 'content': content},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return (
+      (data['avg_rating'] as num?)?.toDouble() ?? 0,
+      (data['review_count'] as num?)?.toInt() ?? 0,
+    );
   }
 
   // ─── Bookmarks ──────────────────────────────────────────────────
@@ -676,6 +799,7 @@ class StoryDetailPayload {
     required this.authorAvatar,
     required this.firstChapter,
     required this.bookmark,
+    this.commentCount = 0,
   });
   final StorySummary story;
   final String authorUsername;
@@ -683,6 +807,10 @@ class StoryDetailPayload {
   final String? authorAvatar;
   final int? firstChapter;
   final String? bookmark;
+
+  /// Number of visible comments on the story (same visibility rules as
+  /// the feed — moderators/authors see all, users see their own hidden).
+  final int commentCount;
 }
 
 class SearchResult {

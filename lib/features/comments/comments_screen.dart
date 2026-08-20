@@ -9,22 +9,33 @@ import '../../core/widgets/emoji_text.dart';
 import '../../models/comment.dart';
 import '../../repositories/story_repository.dart';
 
-/// Chapter comments screen (bình luận chương).
+/// Comments screen — bình luận chương OR bình luận truyện (story detail).
 ///
-/// Renders the merged feed from `GET /api/v1/mobile/chapters/{id}/comments`
-/// (regular + segment comments, threads grouped under roots like the web),
-/// with: like, reply, delete-own, pagination, and login-gated posting.
-/// Replies to a segment comment go through the segment endpoint so they
-/// inherit the paragraph anchor server-side.
+/// Chapter scope renders the merged feed from
+/// `GET /api/v1/mobile/chapters/{id}/comments` (regular + segment
+/// comments, threads grouped under roots like the web). Story scope uses
+/// `GET /api/v1/mobile/stories/{id}/comments` (the web story detail
+/// feed). Both share: like, reply, edit-own, delete-own, hide/unhide
+/// (author/mod), pin (author/mod), pagination, login-gated posting.
 class CommentsScreen extends ConsumerStatefulWidget {
   const CommentsScreen({
     super.key,
-    required this.chapterId,
-    required this.chapterTitle,
-  });
+    this.chapterId,
+    this.chapterTitle = '',
+    this.storyId,
+    this.storyTitle = '',
+  }) : assert(
+         chapterId != null || storyId != null,
+         'CommentsScreen needs a chapterId or storyId',
+       );
 
-  final String chapterId;
+  final String? chapterId;
   final String chapterTitle;
+  final String? storyId;
+  final String storyTitle;
+
+  /// True when this screen is bound to a chapter (not a story).
+  bool get isChapter => chapterId != null;
 
   @override
   ConsumerState<CommentsScreen> createState() => _CommentsScreenState();
@@ -67,11 +78,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
       _error = null;
     });
     try {
-      final feed = await _repo.fetchChapterComments(
-        widget.chapterId,
-        page: 1,
-        sort: _newest ? 'newest' : 'oldest',
-      );
+      final feed = await _fetchFeed(page: 1, sort: _newest ? 'newest' : 'oldest');
       if (!mounted || epoch != _feedEpoch) return;
       setState(() {
         _feed = feed;
@@ -86,6 +93,21 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     }
   }
 
+  /// Scope-aware feed fetch: chapter vs story comments endpoint.
+  Future<PaginatedComments> _fetchFeed({
+    required int page,
+    String sort = 'newest',
+  }) {
+    if (widget.isChapter) {
+      return _repo.fetchChapterComments(
+        widget.chapterId!,
+        page: page,
+        sort: sort,
+      );
+    }
+    return _repo.fetchStoryComments(widget.storyId!, page: page, sort: sort);
+  }
+
   Future<void> _loadMore() async {
     final feed = _feed;
     if (feed == null || _loadingMore) return;
@@ -93,8 +115,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     final epoch = _feedEpoch;
     setState(() => _loadingMore = true);
     try {
-      final next = await _repo.fetchChapterComments(
-        widget.chapterId,
+      final next = await _fetchFeed(
         page: feed.page + 1,
         sort: _newest ? 'newest' : 'oldest',
       );
@@ -141,15 +162,21 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     setState(() => _posting = true);
     final parent = _replyingTo;
     try {
-      final result = parent != null && parent.isSegment
-          ? await _repo.postSegmentComment(
-              chapterId: widget.chapterId,
-              parentId: parent.id,
-              quoteText: '',
-              content: text,
-            )
-          : await _repo.postChapterComment(
-              widget.chapterId,
+      final result = widget.isChapter
+          ? parent != null && parent.isSegment
+              ? await _repo.postSegmentComment(
+                  chapterId: widget.chapterId!,
+                  parentId: parent.id,
+                  quoteText: '',
+                  content: text,
+                )
+              : await _repo.postChapterComment(
+                  widget.chapterId!,
+                  content: text,
+                  parentId: parent?.id,
+                )
+          : await _repo.postStoryComment(
+              widget.storyId!,
               content: text,
               parentId: parent?.id,
             );
@@ -316,6 +343,158 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     }
   }
 
+  /// Edit the caller's own comment — dialog + PUT, then swap the body in
+  /// place (same contract as the web inline edit). If the edited text
+  /// trips the moderation filter the server auto-hides it: reload the
+  /// feed so the tile reflects the hidden state.
+  Future<void> _edit(CommentItem c) async {
+    final controller = TextEditingController(text: c.content);
+    final submit = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sửa bình luận'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 6,
+          maxLength: 2000,
+          decoration: const InputDecoration(hintText: 'Nội dung mới…'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Huỷ'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Lưu'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (submit == null || submit.isEmpty || !mounted) return;
+    try {
+      final result = c.isSegment
+          ? await _repo.editSegmentComment(c.id, content: submit)
+          : await _repo.editComment(c.id, content: submit);
+      if (!mounted) return;
+      if (result.wasHidden) {
+        await _load();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nội dung mới bị ẩn do vi phạm.')),
+        );
+        return;
+      }
+      setState(() {
+        final feed = _feed;
+        if (feed == null) return;
+        _feed = _mapComment(feed, c.id, (copy) {
+          return CommentItem(
+            id: copy.id,
+            userId: copy.userId,
+            username: copy.username,
+            displayName: copy.displayName,
+            avatarUrl: copy.avatarUrl,
+            content: result.content,
+            contentHtml: result.contentHtml,
+            likeCount: copy.likeCount,
+            createdAt: copy.createdAt,
+            edited: true,
+            hidden: copy.hidden,
+            isMine: copy.isMine,
+            likedByMe: copy.likedByMe,
+            pinned: copy.pinned,
+            parentId: copy.parentId,
+            replyToName: copy.replyToName,
+            replyToId: copy.replyToId,
+            isSegment: copy.isSegment,
+            quoteText: copy.quoteText,
+            paraKey: copy.paraKey,
+            segChapterId: copy.segChapterId,
+            replies: copy.replies,
+          );
+        });
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sửa bình luận thất bại: $e')),
+      );
+    }
+  }
+
+  /// Hide/unhide a comment (story author or moderator). The server
+  /// cascades subtree hides on roots; we flip the local flag so the tile
+  /// shows the hidden state without a full reload.
+  Future<void> _toggleHidden(CommentItem c) async {
+    try {
+      if (c.isSegment) {
+        if (c.hidden) {
+          await _repo.unhideSegmentComment(c.id);
+        } else {
+          await _repo.hideSegmentComment(c.id);
+        }
+      } else {
+        if (c.hidden) {
+          await _repo.unhideComment(c.id);
+        } else {
+          await _repo.hideComment(c.id);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        final feed = _feed;
+        if (feed == null) return;
+        _feed = _mapComment(feed, c.id, (copy) {
+          return CommentItem(
+            id: copy.id,
+            userId: copy.userId,
+            username: copy.username,
+            displayName: copy.displayName,
+            avatarUrl: copy.avatarUrl,
+            content: copy.content,
+            contentHtml: copy.contentHtml,
+            likeCount: copy.likeCount,
+            createdAt: copy.createdAt,
+            edited: copy.edited,
+            hidden: !copy.hidden,
+            isMine: copy.isMine,
+            likedByMe: copy.likedByMe,
+            pinned: copy.pinned,
+            parentId: copy.parentId,
+            replyToName: copy.replyToName,
+            replyToId: copy.replyToId,
+            isSegment: copy.isSegment,
+            quoteText: copy.quoteText,
+            paraKey: copy.paraKey,
+            segChapterId: copy.segChapterId,
+            replies: copy.replies,
+          );
+        });
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              c.hidden ? 'Đã hiện lại bình luận.' : 'Đã ẩn bình luận.',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is ApiException ? e.message : 'Thao tác thất bại — thử lại sau.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    }
+  }
+
   /// Rebuild the feed with [id] replaced by [replace]'s result
   /// (recursively — replies live inside their root's `replies` list).
   /// Pass [replace] = null to remove the comment entirely.
@@ -415,7 +594,13 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.chapterTitle.isEmpty ? 'Bình luận' : 'Bình luận chương',
+          widget.isChapter
+              ? (widget.chapterTitle.isEmpty
+                    ? 'Bình luận'
+                    : 'Bình luận chương')
+              : (widget.storyTitle.isEmpty
+                    ? 'Bình luận truyện'
+                    : 'Bình luận truyện'),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -517,7 +702,11 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
               item: c,
               onLike: () => _toggleLike(c),
               onReply: () => _startReply(c),
+              onEdit: c.isMine && !c.hidden ? () => _edit(c) : null,
               onDelete: c.isMine ? () => _delete(c) : null,
+              onToggleHidden: feed.canModerate
+                  ? () => _toggleHidden(c)
+                  : null,
               onTogglePin: feed.canModerate &&
                       !c.isSegment &&
                       (!c.hidden || c.pinned)
@@ -531,7 +720,11 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
                   item: r,
                   onLike: () => _toggleLike(r),
                   onReply: () => _startReply(r),
+                  onEdit: r.isMine && !r.hidden ? () => _edit(r) : null,
                   onDelete: r.isMine ? () => _delete(r) : null,
+                  onToggleHidden: feed.canModerate
+                      ? () => _toggleHidden(r)
+                      : null,
                 ),
               ),
           ],
@@ -542,20 +735,29 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
 }
 
 /// Renders a single comment (root or reply) with quote block for segment
-/// comments and like/reply/delete/pin actions.
+/// comments and like/reply/edit/delete/hide/pin actions.
 class _CommentTile extends StatelessWidget {
   const _CommentTile({
     required this.item,
     required this.onLike,
     required this.onReply,
+    this.onEdit,
     this.onDelete,
+    this.onToggleHidden,
     this.onTogglePin,
   });
 
   final CommentItem item;
   final VoidCallback onLike;
   final VoidCallback onReply;
+
+  /// Edit the caller's own comment — only wired for own, visible comments.
+  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+
+  /// Hide/unhide — only wired when the caller can moderate the story
+  /// (author or moderator).
+  final VoidCallback? onToggleHidden;
 
   /// Pin/unpin action — only wired for root comments when the caller can
   /// moderate the story (author/mod) and the comment is visible.
@@ -762,6 +964,51 @@ class _CommentTile extends StatelessWidget {
                               ?.copyWith(color: Colors.redAccent),
                         ),
                       ),
+                    if (onEdit != null || onToggleHidden != null)
+                      PopupMenuButton<_TileAction>(
+                        icon: Icon(
+                          Icons.more_vert,
+                          size: 18,
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.6,
+                          ),
+                        ),
+                        padding: EdgeInsets.zero,
+                        tooltip: 'Thêm',
+                        onSelected: (action) => switch (action) {
+                          _TileAction.edit => onEdit!(),
+                          _TileAction.hide => onToggleHidden!(),
+                        },
+                        itemBuilder: (context) => [
+                          if (onEdit != null)
+                            const PopupMenuItem(
+                              value: _TileAction.edit,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined, size: 18),
+                                  SizedBox(width: 10),
+                                  Text('Sửa'),
+                                ],
+                              ),
+                            ),
+                          if (onToggleHidden != null)
+                            PopupMenuItem(
+                              value: _TileAction.hide,
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    item.hidden
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(item.hidden ? 'Hiện lại' : 'Ẩn'),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                   ],
                 ),
               ],
@@ -772,6 +1019,10 @@ class _CommentTile extends StatelessWidget {
     );
   }
 }
+
+/// Popup menu actions for a comment tile (beyond like/reply/pin/delete:
+/// edit own, hide/unhide by author/moderator).
+enum _TileAction { edit, hide }
 
 /// Bottom composer bar: reply context chip + text field + send.
 class _ComposerBar extends StatelessWidget {

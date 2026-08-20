@@ -28,6 +28,7 @@ import '../../features/reader/widgets/reader_settings_sheet.dart';
 import '../../features/search/search_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/story/story_detail_screen.dart';
+import '../../features/story/story_reviews_screen.dart';
 import '../../features/tts/tts_audio_handler.dart';
 import '../../features/tts/tts_control_panel.dart';
 import '../../core/database/app_database.dart';
@@ -107,6 +108,26 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => CommentsScreen(
           chapterId: state.pathParameters['chapterId']!,
           chapterTitle: state.extra as String? ?? '',
+        ),
+      ),
+      // Story comments screen (bình luận truyện) — pushed from story
+      // detail with the story title as `extra`.
+      GoRoute(
+        path: '/story-comments/:storyId',
+        name: 'story_comments',
+        builder: (context, state) => CommentsScreen(
+          storyId: state.pathParameters['storyId']!,
+          storyTitle: state.extra as String? ?? '',
+        ),
+      ),
+      // Story reviews screen (đánh giá truyện) — pushed from story detail
+      // with the story title as `extra`.
+      GoRoute(
+        path: '/story-reviews/:storyId',
+        name: 'story_reviews',
+        builder: (context, state) => StoryReviewsScreen(
+          storyId: state.pathParameters['storyId']!,
+          storyTitle: state.extra as String? ?? '',
         ),
       ),
       // Offline chapter reader — loads from local Drift DB, no network.

@@ -436,6 +436,16 @@ class _StoryDetailBody extends ConsumerWidget {
             ),
           ),
         ),
+        SliverToBoxAdapter(
+          child: _StorySocialSection(
+            storyId: story.id,
+            storySlug: story.slug,
+            storyTitle: story.title,
+            initialRating: story.rating,
+            initialReviewCount: story.reviewCount,
+            initialCommentCount: detail.commentCount,
+          ),
+        ),
         const SliverToBoxAdapter(child: Divider(height: 1)),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -741,3 +751,141 @@ final _storyDetailProvider = FutureProvider.autoDispose
 // chapterListProvider is now defined in repositories/story_repository.dart
 // and shared between this screen and the chapter reader's chapter-list
 // bottom sheet.
+
+/// Đánh giá + Bình luận entry block on the story detail header (mirrors
+/// the web detail page's review/comment sections).
+///
+/// Initial counts come from the detail payload so the detail screen makes
+/// no extra network calls on open. After returning from either child
+/// screen the counts are silently refreshed (no full-screen reload / scroll
+/// reset — the parent detail provider is NOT invalidated, per the repo's
+/// scroll-preservation rule).
+class _StorySocialSection extends ConsumerStatefulWidget {
+  const _StorySocialSection({
+    required this.storyId,
+    required this.storySlug,
+    required this.storyTitle,
+    this.initialRating,
+    this.initialReviewCount = 0,
+    this.initialCommentCount = 0,
+  });
+
+  final String storyId;
+  final String storySlug;
+  final String storyTitle;
+  final double? initialRating;
+  final int initialReviewCount;
+  final int initialCommentCount;
+
+  @override
+  ConsumerState<_StorySocialSection> createState() =>
+      _StorySocialSectionState();
+}
+
+class _StorySocialSectionState extends ConsumerState<_StorySocialSection> {
+  late double? _rating = widget.initialRating;
+  late int _reviewCount = widget.initialReviewCount;
+  late int _commentCount = widget.initialCommentCount;
+
+  StoryRepository get _repo => ref.read(storyRepositoryProvider);
+
+  /// Silent background refresh after returning from a child screen: pull
+  /// fresh aggregates so the detail header matches what the user just
+  /// posted/edited. Best-effort — failures keep the previous values.
+  Future<void> _refresh() async {
+    try {
+      final reviews = await _repo.fetchStoryReviews(widget.storyId);
+      final comments = await _repo.fetchStoryComments(widget.storyId);
+      if (!mounted) return;
+      setState(() {
+        _rating = reviews.avgRating;
+        _reviewCount = reviews.reviewCount;
+        _commentCount = comments.total;
+      });
+    } catch (_) {
+      // Keep previous values; the next visit refetches everything anyway.
+    }
+  }
+
+  Future<void> _openReviews() async {
+    await context.push(
+      '/story-reviews/${widget.storyId}',
+      extra: widget.storyTitle,
+    );
+    if (!mounted) return;
+    await _refresh();
+  }
+
+  Future<void> _openComments() async {
+    await context.push(
+      '/story-comments/${widget.storyId}',
+      extra: widget.storyTitle,
+    );
+    if (!mounted) return;
+    await _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Average rounded to the nearest half for the star row (like the web).
+    final rounded = (_rating ?? 0) * 2;
+    final filledStars = (rounded + 0.5).floor().clamp(0, 10) ~/ 2;
+    return Column(
+      children: [
+        Divider(
+          height: 1,
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+        ),
+        ListTile(
+          leading: Icon(
+            Icons.star,
+            color: theme.colorScheme.primary,
+            size: 24,
+          ),
+          title: Row(
+            children: [
+              Text(
+                _rating != null && _rating! > 0
+                    ? _rating!.toStringAsFixed(2)
+                    : '—',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              for (var i = 1; i <= 5; i++)
+                Icon(
+                  i <= filledStars ? Icons.star : Icons.star_border,
+                  size: 16,
+                  color: const Color(0xFFF59E0B),
+                ),
+            ],
+          ),
+          subtitle: Text('$_reviewCount đánh giá'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _openReviews,
+        ),
+        Divider(
+          height: 1,
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+        ),
+        ListTile(
+          leading: Icon(
+            Icons.forum_outlined,
+            color: theme.colorScheme.primary,
+            size: 24,
+          ),
+          title: const Text('Bình luận truyện'),
+          subtitle: Text('$_commentCount bình luận'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _openComments,
+        ),
+        Divider(
+          height: 1,
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+        ),
+      ],
+    );
+  }
+}

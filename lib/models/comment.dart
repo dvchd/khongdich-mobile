@@ -137,3 +137,34 @@ class CommentPostResult {
   /// True when the server auto-hidden the comment (spam / banned word).
   final bool wasHidden;
 }
+
+/// Result of editing the caller's own comment.
+class CommentEditResult {
+  const CommentEditResult({
+    required this.content,
+    required this.contentHtml,
+    required this.editedAt,
+    this.wasHidden = false,
+  });
+
+  /// The sanitized content as stored by the server.
+  final String content;
+
+  /// Re-rendered HTML (custom emoji `<img>` tags).
+  final String contentHtml;
+  final DateTime editedAt;
+
+  /// True when the edited content tripped the moderation filter and the
+  /// server auto-hidden the comment.
+  final bool wasHidden;
+
+  factory CommentEditResult.fromJson(Map<String, dynamic> json) =>
+      CommentEditResult(
+        content: json['content'] as String? ?? '',
+        contentHtml: json['content_html'] as String? ?? '',
+        editedAt:
+            DateTime.tryParse(json['edited_at'] as String? ?? '') ??
+            DateTime.now(),
+        wasHidden: json['was_hidden'] as bool? ?? false,
+      );
+}
