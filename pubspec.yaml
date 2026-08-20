@@ -1,7 +1,7 @@
 name: khongdich_mobile
 description: "Không Dịch — Mobile reader app for khongdich.com (Android first)."
 publish_to: 'none'
-version: 0.3.2+7
+version: 0.3.3+8
 
 environment:
   sdk: ^3.12.2
