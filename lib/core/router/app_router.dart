@@ -42,28 +42,49 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/home',
     routes: [
-      ShellRoute(
-        builder: (context, state, child) => MainShell(child: child),
-        routes: [
-          GoRoute(
-            path: '/home',
-            name: 'home',
-            builder: (context, state) => const HomeScreen(),
+      // Bottom-nav shell: 4 tabs giữ STATE khi chuyển tab (trước đây
+      // context.go destroy + remount từng tab → Home refetch + spinner
+      // flash mỗi lần quay lại). Stack + fade nhẹ khi đổi branch.
+      StatefulShellRoute(
+        builder: (context, state, navigationShell) =>
+            MainShell(navigationShell: navigationShell),
+        navigatorContainerBuilder: _fadeIndexedStackContainerBuilder,
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/home',
+                name: 'home',
+                builder: (context, state) => const HomeScreen(),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/search',
-            name: 'search',
-            builder: (context, state) => const SearchScreen(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/search',
+                name: 'search',
+                builder: (context, state) => const SearchScreen(),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/bookshelf',
-            name: 'bookshelf',
-            builder: (context, state) => const BookshelfScreen(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/bookshelf',
+                name: 'bookshelf',
+                builder: (context, state) => const BookshelfScreen(),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/profile',
-            name: 'profile',
-            builder: (context, state) => const ProfileScreen(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/profile',
+                name: 'profile',
+                builder: (context, state) => const ProfileScreen(),
+              ),
+            ],
           ),
         ],
       ),
@@ -188,6 +209,83 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         Scaffold(body: Center(child: Text('Route not found: ${state.uri}'))),
   );
 });
+
+/// Branch container for [StatefulShellRoute]: giữ nguyên semantics của
+/// container mặc định (Offstage + TickerMode — branch không active không
+/// paint, không chạy animation) nhưng thêm fade 220ms khi chuyển tab —
+/// trước đây chuyển tab "nhấp nháy" tức thì. Branch được giữ trong cây
+/// nên state (scroll position, feed đã load) của từng tab không mất.
+Widget _fadeIndexedStackContainerBuilder(
+  BuildContext context,
+  StatefulNavigationShell navigationShell,
+  List<Widget> children,
+) {
+  return _FadeIndexedStack(
+    currentIndex: navigationShell.currentIndex,
+    children: children,
+  );
+}
+
+class _FadeIndexedStack extends StatefulWidget {
+  const _FadeIndexedStack({required this.currentIndex, required this.children});
+
+  final int currentIndex;
+  final List<Widget> children;
+
+  @override
+  State<_FadeIndexedStack> createState() => _FadeIndexedStackState();
+}
+
+class _FadeIndexedStackState extends State<_FadeIndexedStack>
+    with SingleTickerProviderStateMixin {
+  static const _fade = Duration(milliseconds: 220);
+
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: _fade,
+    value: 1,
+  );
+  late int _lastIndex = widget.currentIndex;
+
+  @override
+  void didUpdateWidget(_FadeIndexedStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.currentIndex != _lastIndex) {
+      _lastIndex = widget.currentIndex;
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = widget.currentIndex;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        for (var i = 0; i < widget.children.length; i++)
+          Offstage(
+            offstage: i != current,
+            child: TickerMode(
+              enabled: i == current,
+              // FadeTransition dùng controller của container (không nằm
+              // trong TickerMode của branch) — fade chạy được trên MỌI
+              // lần đổi tab, kể cả khi quay lại tab từng xem.
+              child: FadeTransition(
+                opacity: _controller,
+                child: widget.children[i],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
 
 /// Reads a downloaded chapter from the local Drift DB and displays it
 /// using the **shared** [ReaderBody] widget — same UI as the online

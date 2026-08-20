@@ -16,11 +16,24 @@ import '../../features/downloads/downloads_screen.dart'
 /// main tabs (so the right destination is highlighted). When the host
 /// is a detail screen (not one of the four), pass `currentIndex: -1`
 /// so no destination is highlighted.
+///
+/// [onDestinationSelected] overrides the default `context.go` tab switch
+/// — [MainShell] passes `navigationShell.goBranch` so the stateful shell
+/// keeps every tab's state. Hosts outside the shell (detail screens) keep
+/// the default `go` behavior.
 class AppBottomNav extends ConsumerWidget {
-  const AppBottomNav({super.key, this.currentIndex = -1});
+  const AppBottomNav({
+    super.key,
+    this.currentIndex = -1,
+    this.onDestinationSelected,
+  });
 
   /// Index of the currently-selected tab, or -1 if none.
   final int currentIndex;
+
+  /// Optional tab-switch handler (e.g. goBranch). Defaults to
+  /// `context.go('/tab-path')`.
+  final ValueChanged<int>? onDestinationSelected;
 
   static const _tabs = [
     _TabSpec('/home', Icons.home_outlined, Icons.home, 'Trang chủ'),
@@ -55,6 +68,11 @@ class AppBottomNav extends ConsumerWidget {
     return NavigationBar(
       selectedIndex: idx ?? 0,
       onDestinationSelected: (i) {
+        final onTap = onDestinationSelected;
+        if (onTap != null) {
+          onTap(i);
+          return;
+        }
         // Use `go` so the destination tab replaces the current route
         // in the shell — no detail screen left dangling on the back
         // stack.
