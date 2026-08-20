@@ -7,7 +7,7 @@
 Chạy theo đúng thứ tự:
 
 - `flutter analyze` — phải sạch, không để issue nào
-- `flutter test` — tất cả phải xanh (hiện ~109 tests)
+- `flutter test` — tất cả phải xanh (hiện 146 tests)
 
 Khi sửa `lib/features/tts/tts_audio_handler.dart`, bắt buộc chạy riêng `flutter test test/tts_state_machine_test.dart` — file này khóa các bug race của TTS (chú thích bug #1–#11 trong header của handler).
 
