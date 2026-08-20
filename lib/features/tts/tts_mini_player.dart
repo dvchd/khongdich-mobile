@@ -70,22 +70,42 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
           if (!mounted) return;
           // Chỉ nhận event của CHÍNH chương này — event của chương cũ/
           // chương khác (auto-advance) không được hiện sai "Đoạn x/y".
-          setState(() {
-            _progress = p.chapterId == widget.chapterId ? p : null;
-          });
+          if (p.chapterId != widget.chapterId) {
+            if (_progress != null) setState(() => _progress = null);
+            return;
+          }
+          // Bỏ qua event chỉ advance blockIndex trung gian trong cùng
+          // chunk — không đổi gì trên bar, đỡ rebuild không cần thiết.
+          final prev = _progress;
+          if (prev != null &&
+              prev.chunkIndex == p.chunkIndex &&
+              prev.totalChunks == p.totalChunks) {
+            return;
+          }
+          setState(() => _progress = p);
         });
         _playbackSub = handler.playbackState.listen((s) {
           if (!mounted) return;
+          final prev = _playbackState;
+          // Stop/idle/error/buffering → không còn "đang đọc" đoạn nào
+          // hợp lệ, xoá progress cũ để hiển thị fallback từ handler
+          // (sau stop chunk index đã reset về 0).
+          final shouldResetProgress =
+              s.processingState == AudioProcessingState.idle ||
+              s.processingState == AudioProcessingState.error ||
+              s.processingState == AudioProcessingState.buffering;
+          // buffering→ready lặp lại MỖI chunk — nếu không có gì thay đổi
+          // (playing/processingState giữ nguyên, progress đã reset) thì
+          // bỏ qua, tránh rebuild bar vài lần mỗi chunk.
+          if (prev != null &&
+              prev.playing == s.playing &&
+              prev.processingState == s.processingState &&
+              !(shouldResetProgress && _progress != null)) {
+            return;
+          }
           setState(() {
             _playbackState = s;
-            // Stop/idle/error/buffering → không còn "đang đọc" đoạn nào
-            // hợp lệ, xoá progress cũ để hiển thị fallback từ handler
-            // (sau stop chunk index đã reset về 0).
-            if (s.processingState == AudioProcessingState.idle ||
-                s.processingState == AudioProcessingState.error ||
-                s.processingState == AudioProcessingState.buffering) {
-              _progress = null;
-            }
+            if (shouldResetProgress) _progress = null;
           });
         });
       } catch (_) {

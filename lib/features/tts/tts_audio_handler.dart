@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:drift/drift.dart' show Value;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1317,9 +1318,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       unawaited(_savePlaybackState(isPlaying: true));
       _chunkProgressController.add(_chunkProgressEvent(_currentChunk));
       _scheduleBlockAdvance(chunk);
-      AppLogger.info(
-        'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.text.length} chars)',
-      );
+      // Log tần suất cao (mỗi chunk) — guard kDebugMode để release không
+      // tốn phí nội suy string dù level info bị lọc.
+      if (kDebugMode) {
+        AppLogger.info(
+          'TTS: speaking chunk $_currentChunk/${_chunks.length} (${chunk.text.length} chars)',
+        );
+      }
       // speak() với awaitSpeakCompletion(true) resolve khi chunk xong.
       // Bọc try/catch: nếu engine throw thay vì return, loop phải kết
       // thúc có kiểm soát + surface error — trước đây lỗi này thoát ra

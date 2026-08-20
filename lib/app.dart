@@ -6,6 +6,7 @@ import 'core/network/api_client.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'features/reader/services/reading_progress_service.dart';
+import 'services/chapter_cache_service.dart';
 import 'services/download_manager.dart';
 
 class KhongdichApp extends ConsumerStatefulWidget {
@@ -41,6 +42,18 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
         ref.read(readingProgressServiceProvider).flushPending();
       });
     }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    super.didHaveMemoryPressure();
+    // Android báo thiếu RAM → giải phóng cache ảnh + chapter memory
+    // cache (trước đây không bao giờ được gọi — chương đọc online giữ
+    // trong RAM suốt session, ảnh decode giữ trong ImageCache).
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+    ref.read(chapterCacheServiceProvider).clearMemoryCache();
   }
 
   @override

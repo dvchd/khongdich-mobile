@@ -26,6 +26,23 @@ class MangaImageDownloader {
 
   final AppDatabase _db;
 
+  /// Shared HTTP client — trước đây mỗi ảnh tạo một `HttpClient` mới →
+  /// DNS + TLS handshake lại từ đầu, không reuse connection. Chương
+  /// manga 50-100 ảnh phải handshake 50-100 lần.
+  HttpClient? _client;
+  bool _disposed = false;
+
+  static const int _maxConcurrent = 4;
+
+  HttpClient get _http => _client ??= HttpClient();
+
+  /// Giải phóng connection pool — gọi khi provider dispose.
+  void close() {
+    _disposed = true;
+    _client?.close(force: true);
+    _client = null;
+  }
+
   /// Download every image in [imageUrls] for chapter [chapterId].
   ///
   /// Skips URLs that already have a local mapping in the DB. Returns
@@ -47,41 +64,56 @@ class MangaImageDownloader {
     if (toDownload.isEmpty) return 0;
 
     final dir = await _mangaDirFor(chapterId);
+    // Tải song song với worker pool giới hạn [_maxConcurrent] — trước
+    // đây tuần tự từng ảnh: chương manga 100 ảnh mất vài phút.
     var downloaded = 0;
-    for (final entry in toDownload) {
-      final url = entry.value;
-      final sortOrder = entry.key;
-      try {
-        final filePath = p.join(dir.path, '$sortOrder-${_hash(url)}.jpg');
-        final file = File(filePath);
-        if (!await file.exists()) {
-          final bytes = await _fetchBytes(url);
-          await file.writeAsBytes(bytes, flush: true);
+    var cursor = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = cursor++;
+        if (index >= toDownload.length || _disposed) return;
+        final entry = toDownload[index];
+        final url = entry.value;
+        final sortOrder = entry.key;
+        try {
+          final filePath = p.join(dir.path, '$sortOrder-${_hash(url)}.jpg');
+          final file = File(filePath);
+          if (!await file.exists()) {
+            final bytes = await _fetchBytes(url);
+            await file.writeAsBytes(bytes, flush: true);
+          }
+          // Bảng downloaded_chapter_images không có unique constraint
+          // (chỉ autoIncrement PK) nên `insertOnConflictUpdate` không bao
+          // giờ conflict → re-download để lại duplicate rows. Xoá mapping
+          // cũ của URL này trước khi insert.
+          await _db.deleteDownloadedImageByUrl(chapterId, url);
+          await _db.upsertDownloadedImage(
+            DownloadedChapterImagesCompanion.insert(
+              chapterId: chapterId,
+              imageUrl: url,
+              localPath: filePath,
+              sortOrder: Value(sortOrder),
+            ),
+          );
+          downloaded++;
+        } catch (e, s) {
+          // Don't abort the whole batch — log and continue. The reader
+          // will fall back to the remote URL for the failed images.
+          AppLogger.warning(
+            'MangaImageDownloader: failed to download image $url',
+            e,
+            s,
+          );
         }
-        // Bảng downloaded_chapter_images không có unique constraint
-        // (chỉ autoIncrement PK) nên `insertOnConflictUpdate` không bao
-        // giờ conflict → re-download để lại duplicate rows. Xoá mapping
-        // cũ của URL này trước khi insert.
-        await _db.deleteDownloadedImageByUrl(chapterId, url);
-        await _db.upsertDownloadedImage(
-          DownloadedChapterImagesCompanion.insert(
-            chapterId: chapterId,
-            imageUrl: url,
-            localPath: filePath,
-            sortOrder: Value(sortOrder),
-          ),
-        );
-        downloaded++;
-      } catch (e, s) {
-        // Don't abort the whole batch — log and continue. The reader
-        // will fall back to the remote URL for the failed images.
-        AppLogger.warning(
-          'MangaImageDownloader: failed to download image $url',
-          e,
-          s,
-        );
       }
     }
+
+    await Future.wait([
+      for (var i = 0;
+          i < _maxConcurrent && i < toDownload.length;
+          i++)
+        worker(),
+    ]);
     AppLogger.info(
       'MangaImageDownloader: downloaded $downloaded/${toDownload.length} images for chapter $chapterId',
     );
@@ -166,7 +198,7 @@ class MangaImageDownloader {
   /// client so we don't pull in another dependency. The backend serves
   /// images via MinIO / CDN so no special headers are needed.
   Future<List<int>> _fetchBytes(String url) async {
-    final client = HttpClient();
+    final client = _http;
     try {
       client.connectionTimeout = const Duration(seconds: 15);
       final req = await client.getUrl(Uri.parse(url));
@@ -179,8 +211,12 @@ class MangaImageDownloader {
         (acc, chunk) => acc..addAll(chunk),
       );
       return builder;
-    } finally {
-      client.close();
+    } catch (e) {
+      // Connection của shared client có thể bị lỗi giữa chừng (mạng đổi
+      // DNS/emulator) — recreate pool để lần sau không dính connection cũ.
+      _client?.close(force: true);
+      _client = null;
+      rethrow;
     }
   }
 
@@ -199,5 +235,7 @@ class MangaImageDownloader {
 
 final mangaImageDownloaderProvider = Provider<MangaImageDownloader>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return MangaImageDownloader(db);
+  final downloader = MangaImageDownloader(db);
+  ref.onDispose(downloader.close);
+  return downloader;
 });

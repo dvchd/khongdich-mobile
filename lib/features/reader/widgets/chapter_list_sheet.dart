@@ -180,6 +180,10 @@ class _ChapterListSheetState extends ConsumerState<ChapterListSheet> {
                     ? const Center(child: Text('Chưa có chương nào.'))
                     : ListView.builder(
                         controller: scrollController,
+                        // Mọi hàng ListTile đồng dạng (title 1 dòng, không
+                        // subtitle) → itemExtent cố định, cuộn nhanh danh
+                        // sách hàng trăm chương không phải đo từng item.
+                        itemExtent: 56,
                         itemCount: widget.entries.length,
                         itemBuilder: (_, i) {
                           final e = widget.entries[i];

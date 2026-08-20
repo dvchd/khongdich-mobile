@@ -60,7 +60,20 @@ class _PanelContentState extends State<_PanelContent> {
     // the subscription was created inline and never cancelled → memory
     // leak accumulating with each panel open/close.
     _progressSub = widget.handler.chunkProgress.listen((p) {
-      if (mounted) setState(() => _progress = p);
+      if (!mounted) return;
+      // Lọc theo chapterId (AGENTS.md) — event của chương khác không
+      // được đụng state. Đồng thời bỏ qua event chỉ advance blockIndex
+      // trung gian TRONG cùng một chunk — trước đây mỗi event như vậy
+      // (vài lần mỗi chunk) rebuild cả panel gồm dropdown 100+ voice.
+      if (p.chapterId != widget.handler.currentChapterId) return;
+      final prev = _progress;
+      if (prev != null &&
+          prev.chapterId == p.chapterId &&
+          prev.chunkIndex == p.chunkIndex &&
+          prev.totalChunks == p.totalChunks) {
+        return;
+      }
+      setState(() => _progress = p);
     });
     // Đồng bộ với mini player: khi stop/idle/error/buffering, xoá
     // progress cũ — trước đây panel giữ nguyên "Đoạn x/y" cũ sau khi
@@ -70,7 +83,9 @@ class _PanelContentState extends State<_PanelContent> {
       if (s.processingState == AudioProcessingState.idle ||
           s.processingState == AudioProcessingState.error ||
           s.processingState == AudioProcessingState.buffering) {
-        setState(() => _progress = null);
+        // Chỉ setState khi thực sự cần reset — tránh rebuild kép cùng
+        // event với StreamBuilder bên dưới.
+        if (_progress != null) setState(() => _progress = null);
       }
     });
   }

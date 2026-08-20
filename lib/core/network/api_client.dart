@@ -138,6 +138,28 @@ class ApiClient {
           handler.next(options);
         },
         onError: (e, handler) async {
+          // Retry giới hạn (1 lần) cho lỗi mạng nhất thời — emulator/mạng
+          // kém hay "Software caused connection abort" giữa chừng trước
+          // đây fail ngay, user phải bấm lại. Chỉ retry khi chắc chắn
+          // không có side-effect kép (connection fail trước khi server
+          // nhận, hoặc gateway 502/504).
+          final options = e.requestOptions;
+          if (options.extra['kd_retried'] != true && _isRetryable(e)) {
+            options.extra['kd_retried'] = true;
+            AppLogger.warning(
+              'ApiClient: retrying ${options.path} '
+              '(${e.type.name}${e.response != null ? ' ${e.response!.statusCode}' : ''})',
+            );
+            await Future<void>.delayed(const Duration(milliseconds: 350));
+            try {
+              final retryResp = await dio.fetch<dynamic>(options);
+              return handler.resolve(retryResp);
+            } catch (retryErr) {
+              return handler.next(
+                retryErr is DioException ? retryErr : e,
+              );
+            }
+          }
           final resp = e.response;
           if (resp != null) {
             // 401 Unauthorized: JWT expired or revoked. Clear the stored
@@ -206,6 +228,23 @@ class ApiClient {
     );
 
     return ApiClient._(dio, storage, env, jwtStore);
+  }
+
+  /// Có nên retry một lần? Chỉ lỗi connection-level (server chưa chắc đã
+  /// xử lý request) và gateway 502/504 (thường chưa tới backend).
+  static bool _isRetryable(DioException e) {
+    if (e.response == null) {
+      return switch (e.type) {
+        DioExceptionType.connectionError ||
+        DioExceptionType.connectionTimeout ||
+        DioExceptionType.receiveTimeout ||
+        DioExceptionType.sendTimeout =>
+          true,
+        _ => false,
+      };
+    }
+    final s = e.response!.statusCode;
+    return s == 502 || s == 504;
   }
 
   static String _defaultMessageFor(int? status) {

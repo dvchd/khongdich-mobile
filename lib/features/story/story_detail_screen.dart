@@ -51,6 +51,21 @@ final vipStatusProvider =
   return repo.fetchVipStatus(storyId);
 });
 
+/// Bookmark listType của MỘT story, phản ứng theo [bookshelfProvider] —
+/// sau toggle bookmark icon cập nhật ngay mà KHÔNG cần invalidate
+/// detail provider (invalidate trước đây refetch cả màn → loading flash
+/// + mất scroll position của danh sách chương).
+final storyBookmarkTypeProvider =
+    Provider.autoDispose.family<String?, String>((ref, storyId) {
+  final state = ref.watch(bookshelfProvider);
+  final list = state.valueOrNull;
+  if (list == null) return null;
+  for (final b in list) {
+    if (b.storyId == storyId) return b.listType;
+  }
+  return null;
+});
+
 /// Story detail screen. Plan §5.3.
 ///
 /// Hits:
@@ -86,11 +101,14 @@ class _StoryDetailBody extends ConsumerWidget {
   final StoryDetailPayload detail;
   final String? localBookmark;
 
-  String? get _effectiveBookmark => localBookmark;
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final story = detail.story;
+    // Reactive bookmark — cập nhật ngay sau toggle, không invalidate
+    // detail provider (giữ scroll + không refetch toàn màn).
+    final reactiveBookmark =
+        ref.watch(storyBookmarkTypeProvider(story.id));
+    final effectiveBookmark = reactiveBookmark ?? localBookmark;
     final chaptersAsync = ref.watch(chapterListProvider(story.id));
     final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
     final queueAsync = ref.watch(downloadQueueForStoryProvider(story.id));
@@ -215,8 +233,8 @@ class _StoryDetailBody extends ConsumerWidget {
                               visualDensity: VisualDensity.compact,
                               backgroundColor: const Color(0xFFFEF3C7),
                             ),
-                          if (_effectiveBookmark != null)
-                            _BookmarkChip(listType: _effectiveBookmark!),
+                          if (effectiveBookmark != null)
+                            _BookmarkChip(listType: effectiveBookmark),
                           if (story.chapterCount != null)
                             Chip(
                               label: Text('${story.chapterCount} chương'),
@@ -302,7 +320,7 @@ class _StoryDetailBody extends ConsumerWidget {
                     ),
                     const SizedBox(width: 8),
                     IconButton.outlined(
-                      icon: Icon(_effectiveBookmark == null
+                      icon: Icon(effectiveBookmark == null
                           ? Icons.bookmark_border
                           : Icons.bookmark),
                       onPressed: () async {
@@ -318,7 +336,10 @@ class _StoryDetailBody extends ConsumerWidget {
                                   ? story.contentTypes.first
                                   : 'text',
                             );
-                        ref.invalidate(_storyDetailProvider(story.slug));
+                        // Bookmark icon giờ phản ứng qua
+                        // storyBookmarkTypeProvider — không invalidate
+                        // detail provider nữa (giữ scroll + hết loading
+                        // flash cả màn mỗi lần bấm bookmark).
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(

@@ -1,5 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:drift/drift.dart' show OrderingTerm;
+import 'package:drift/drift.dart' show BaseAggregate, OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -165,10 +165,14 @@ Set<String>? _lastDownloadedStoryIds;
 /// Number of chapters the user has manually downloaded (excludes
 /// background auto-cache). Powers the "Đã lưu X chương" hero stat on
 /// the home screen; live-updates via Drift `watch()`.
+///
+/// Dùng `COUNT(*)` ở tầng SQL (selectOnly) thay vì watch() cả bảng rồi
+/// đếm — không materialize hàng nghìn rows mỗi khi 1 chương tải xong.
 final downloadedChaptersCountProvider = StreamProvider<int>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return (db.select(db.downloadedChapters)
-        ..where((t) => t.source.equals('manual_download')))
-      .watch()
-      .map((rows) => rows.length);
+  final countCol = db.downloadedChapters.chapterId.count();
+  final query = db.selectOnly(db.downloadedChapters)
+    ..addColumns([countCol])
+    ..where(db.downloadedChapters.source.equals('manual_download'));
+  return query.watchSingle().map((row) => row.read(countCol) ?? 0);
 });
