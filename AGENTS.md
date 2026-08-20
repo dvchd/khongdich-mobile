@@ -29,6 +29,7 @@ Tiếng Việt, prefix conventional (`fix(tts):`, `feat(reader):`, ...) như cá
 
 ## Test trên emulator (thủ công)
 
+- **RAM local hạn chế: KHÔNG build và chạy máy ảo cùng lúc.** Muốn test trên máy ảo thì build APK trước, TẮT emulator rồi mới build bản tiếp theo; build xong mới bật emulator cài + test. Tương tự, không chạy `flutter test`/`flutter analyze` trong lúc emulator đang chạy nếu thấy thiếu RAM.
 - AVD: `Pixel_6_Pro_API_35`. Khởi động: `~/Android/Sdk/emulator/emulator -avd Pixel_6_Pro_API_35 -no-snapshot -no-audio &`
 - `-no-audio` làm Google TTS thỉnh thoảng lỗi synth giữa chừng → engine tự cancel (KHÔNG phải lỗi app). Hành vi đúng: UI chuyển về paused, bấm play phục hồi được.
 - Build + cài: `flutter build apk --debug --flavor prod && adb install -r build/app/outputs/flutter-apk/app-prod-debug.apk`
