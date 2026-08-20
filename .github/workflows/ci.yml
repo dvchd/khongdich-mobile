@@ -69,6 +69,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write  # required for softprops/action-gh-release
+    env:
+      HAS_PLAY_KEY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -170,7 +172,7 @@ jobs:
       # Play Console không có UI để đặt inAppUpdatePriority — action này
       # set qua Publishing API (Edits.tracks). Track alpha = Closed Testing.
       - name: Prepare Play release notes
-        if: secrets.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: env.HAS_PLAY_KEY == 'true'
         run: |
           mkdir -p play/whatsnew
           printf 'Phiên bản %s: nâng cấp đăng nhập Google, tự động thử lại khi mạng gặp lỗi tạm thời, sửa lỗi và cải thiện trải nghiệm.\n' "$RELEASE_NAME" > play/whatsnew/whatsnew-vi
@@ -178,11 +180,11 @@ jobs:
           cat play/whatsnew/whatsnew-vi
 
       - name: Decode Play service account
-        if: secrets.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: env.HAS_PLAY_KEY == 'true'
         run: echo "${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}" | base64 -d > play-sa.json
 
       - name: Upload release to Play Console (Closed Testing)
-        if: secrets.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: env.HAS_PLAY_KEY == 'true'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJson: play-sa.json
