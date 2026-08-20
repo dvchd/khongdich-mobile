@@ -191,7 +191,7 @@ jobs:
           packageName: com.khongdich.app
           releaseFile: artifacts/khongdich-prod-${{ env.SHA7 }}.aab
           releaseName: ${{ env.RELEASE_NAME }}
-          track: alpha
+          track: '${{ vars.PLAY_TRACK_NAME }}'
           status: completed
           inAppUpdatePriority: '0'
           whatsNewDirectory: play/whatsnew
