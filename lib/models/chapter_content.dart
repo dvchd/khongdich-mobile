@@ -239,21 +239,39 @@ class VisualChapterContent extends ChapterContent {
 }
 
 class MangaPage {
-  const MangaPage({required this.url, this.altText, this.caption});
+  const MangaPage({
+    required this.url,
+    this.altText,
+    this.caption,
+    this.width,
+    this.height,
+  });
+
   final String url;
   final String? altText;
   final String? caption;
+
+  /// Pixel dimensions reported by the server (populated from the
+  /// `assets` table at upload time). `null` for legacy rows or GIFs —
+  /// the reader falls back to on-the-fly dimension decoding so the
+  /// page's `AspectRatio` is still reserved before the image loads.
+  final int? width;
+  final int? height;
 
   Map<String, dynamic> toJson() => {
         'image_url': url,
         if (altText != null) 'alt_text': altText,
         if (caption != null) 'caption': caption,
+        if (width != null) 'width': width,
+        if (height != null) 'height': height,
       };
 
   factory MangaPage.fromJson(Map<String, dynamic> json) => MangaPage(
         url: json['image_url'] as String,
         altText: (json['alt_text'] as String?)?.takeIfNonEmpty,
         caption: (json['caption'] as String?)?.takeIfNonEmpty,
+        width: (json['width'] as num?)?.toInt(),
+        height: (json['height'] as num?)?.toInt(),
       );
 }
 

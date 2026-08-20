@@ -142,7 +142,7 @@ Widget buildChapterContent(
         onParagraphLongPress: onParagraphLongPress,
       ),
     MangaChapterContent(:final images) => MangaChapterView(
-      images: [for (final p in images) p.url],
+      pages: images,
       scrollController: scrollController,
       localImagePaths: mangaLocalImagePaths,
     ),
