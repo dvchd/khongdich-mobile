@@ -7,9 +7,18 @@ on:
   pull_request:
     branches: [main]
 
+# Push mới hủy run cũ của cùng ref (tiết kiệm runner phút). Tag là ref
+# duy nhất nên build release không bao giờ bị hủy.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.44.2'
+
 jobs:
-  analyze-and-test:
-    name: Analyze + Test
+  analyze:
+    name: Analyze
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -18,14 +27,11 @@ jobs:
       - uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Flutter version
-        run: flutter --version
-
       - name: Pub get
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Generate Drift codegen
         run: dart run build_runner build --delete-conflicting-outputs
@@ -33,12 +39,31 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get --enforce-lockfile
+
+      - name: Generate Drift codegen
+        run: dart run build_runner build --delete-conflicting-outputs
+
       - name: Test
         run: flutter test
 
   build-android:
     name: Build Android (APK + AAB prod)
-    needs: analyze-and-test
+    needs: [analyze, test]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -47,19 +72,43 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Fail-fast: kiểm tra tag khớp pubspec trước khi tốn phút build.
+      - name: Validate tag matches pubspec version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PUB_VERSION=$(grep -E '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          echo "tag=$TAG_VERSION pubspec=$PUB_VERSION"
+          [ "$TAG_VERSION" = "$PUB_VERSION" ] || {
+            echo "::error::Tag v$TAG_VERSION không khớp pubspec version $PUB_VERSION"
+            exit 1
+          }
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      # Cache Gradle wrapper + dependency/artifact caches — bước tối ưu lớn
+      # nhất so với CI cũ (trước đây mỗi release tải lại toàn bộ Gradle).
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          dependency-graph: 'disabled'
+
       - uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      # Gradle tự tắt daemon trong môi trường CI — bật lại để build AAB tái
+      # sử dụng JVM + task output ấm từ build APK chạy trước đó.
+      - name: Enable Gradle daemon + limit workers
+        run: |
+          echo "org.gradle.daemon=true" >> android/gradle.properties
+          echo "org.gradle.workers.max=2" >> android/gradle.properties
+
       - name: Pub get
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Generate Drift codegen
         run: dart run build_runner build --delete-conflicting-outputs
@@ -77,24 +126,12 @@ jobs:
       # GOOGLE_WEB_CLIENT_ID đã được hardcode trong lib/core/auth/auth_service.dart
       # (public identifier, không phải secret).
 
-      - name: Validate tag matches pubspec version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PUB_VERSION=$(grep -E '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
-          echo "tag=$TAG_VERSION pubspec=$PUB_VERSION"
-          [ "$TAG_VERSION" = "$PUB_VERSION" ] || {
-            echo "::error::Tag v$TAG_VERSION không khớp pubspec version $PUB_VERSION"
-            exit 1
-          }
-
       - name: Build APK
         env:
           KHONGDICH_KEYSTORE_BASE64: ${{ secrets.KHONGDICH_KEYSTORE_BASE64 }}
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
           KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
         run: |
           flutter build apk --release --no-tree-shake-icons \
             --dart-define=APP_ENV=prod \
@@ -106,7 +143,6 @@ jobs:
           KHONGDICH_KEYSTORE_PASSWORD: ${{ secrets.KHONGDICH_KEYSTORE_PASSWORD }}
           KHONGDICH_KEY_ALIAS: ${{ secrets.KHONGDICH_KEY_ALIAS }}
           KHONGDICH_KEY_PASSWORD: ${{ secrets.KHONGDICH_KEY_PASSWORD }}
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
         run: |
           flutter build appbundle --release --no-tree-shake-icons \
             --dart-define=APP_ENV=prod \
