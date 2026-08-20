@@ -11,7 +11,7 @@ Chạy theo đúng thứ tự:
 
 Khi sửa `lib/features/tts/tts_audio_handler.dart`, bắt buộc chạy riêng `flutter test test/tts_state_machine_test.dart` — file này khóa các bug race của TTS (chú thích bug #1–#11 trong header của handler).
 
-CI chạy `flutter analyze` và `flutter test` song song (2 job) trên mọi push/PR; khi push tag `v*` job `build-android` build APK + AAB prod (có cache Gradle, daemon bật) rồi đăng lên GitHub Release. Commit hỏng CI = hỏng release.
+CI chạy `flutter analyze` và `flutter test` song song (2 job) trên mọi push/PR; khi push tag `v*` job `build-android` build APK + AAB prod (có cache Gradle, daemon bật) rồi đăng lên GitHub Release và **tự upload AAB lên Closed Testing (track `alpha`) qua GitHub Action** bằng service account `play-release@khongdich-play` (secret `PLAY_SERVICE_ACCOUNT_JSON` — base64 file key JSON, xem skill android-release). Release notes CI tự sinh theo tag (`play/whatsnew/whatsnew-vi|en-US`). Commit hỏng CI = hỏng release.
 
 ### Commit message
 
