@@ -134,6 +134,15 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
   Widget build(BuildContext context) {
     final chapter = ref.watch(chapterProvider(_ref));
     final settings = ref.watch(readerSettingsProvider);
+    // Prefetch chương kế tiếp ngầm (fire-and-forget) — qua ref.listen thay
+    // vì chạy side-effect trong nhánh `data` của build (build phải pure).
+    // Idempotent — chỉ chạy MỘT lần per chapter id.
+    ref.listen(chapterProvider(_ref), (prev, next) {
+      final c = next.valueOrNull;
+      if (c == null || _prefetchedChapterId == c.id) return;
+      _prefetchedChapterId = c.id;
+      unawaited(ref.read(chapterCacheServiceProvider).prefetchNext(c));
+    });
     return Scaffold(
       body: chapter.when(
         loading: () => const _ReaderSkeleton(),
@@ -142,16 +151,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           onRetry: () => ref.invalidate(chapterProvider(_ref)),
         ),
         data: (c) {
-          // Prefetch chương kế tiếp ngầm (fire-and-forget). Khi user bấm
-          // Next, chapterProvider check cache → nếu hit → render ngay
-          // không loading spinner. Idempotent — skip nếu đã cache/đang
-          // fetch. Chỉ chạy MỘT lần per chapter id — trước đây chạy trên
-          // mọi rebuild của data branch (vd. mỗi lần mở settings sheet).
           final cache = ref.read(chapterCacheServiceProvider);
-          if (_prefetchedChapterId != c.id) {
-            _prefetchedChapterId = c.id;
-            unawaited(cache.prefetchNext(c));
-          }
           return _AccessGate(
             chapter: c,
             storyId: widget.storyId,

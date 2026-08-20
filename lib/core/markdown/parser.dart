@@ -107,7 +107,7 @@ class MarkdownParser {
     final level = m.group(1)!.length;
     var text = m.group(2)!.trim();
     // Strip trailing # sequence ("## foo ##").
-    text = text.replaceFirst(RegExp(r'\s+#+\s*$'), '');
+    text = text.replaceFirst(_trailingHeadingRegExp, '');
     ctx.advance();
     return Heading(level, _parseInline(text));
   }
@@ -116,7 +116,7 @@ class MarkdownParser {
     final inner = <String>[];
     while (!ctx.isAtEnd && !ctx.currentIsBlank) {
       final line = ctx.current;
-      final stripped = line.replaceFirst(RegExp(r'^\s{0,3}>\s?'), '');
+      final stripped = line.replaceFirst(_blockquoteStripRegExp, '');
       if (stripped == line && !line.trimLeft().startsWith('>')) {
         // Line no longer belongs to the blockquote.
         break;
@@ -200,10 +200,7 @@ class MarkdownParser {
     }
     ctx.advance();
     final code = StringBuffer();
-    final close = RegExp(
-      '^\\s{0,3}${RegExp.escape(fenceChar) * fenceLen}'
-      '${RegExp.escape(fenceChar)}*\\s*\$',
-    );
+    final close = _fenceCloseRegExp(fenceLen);
     while (!ctx.isAtEnd) {
       final l = ctx.current;
       if (close.hasMatch(l)) {
@@ -460,6 +457,8 @@ class MarkdownParser {
   static const String _escapableChars = r'\`*_{}[]()#+-.!|~>';
 
   static final RegExp _headingRegExp = RegExp(r'^\s{0,3}(#{1,6})\s+(.*)$');
+  static final RegExp _trailingHeadingRegExp = RegExp(r'\s+#+\s*$');
+  static final RegExp _blockquoteStripRegExp = RegExp(r'^\s{0,3}>\s?');
   // Fence regex: only backtick fences (```), NOT `~~~` (tilde fences).
   // Vietnamese authors sometimes type `~~~` as a decorative separator
   // (similar to `---`), so we deliberately don't recognise it as a code
@@ -467,6 +466,15 @@ class MarkdownParser {
   static final RegExp _fenceRegExp = RegExp(
     r'^\s{0,3}`{3,}\s*([\w\-+#.]*)\s*$',
   );
+
+  /// Close-fence matchers, compiled once per distinct fence length.
+  static final Map<int, RegExp> _fenceCloseCache = {};
+
+  static RegExp _fenceCloseRegExp(int fenceLen) {
+    return _fenceCloseCache.putIfAbsent(fenceLen, () {
+      return RegExp('^\\s{0,3}`{$fenceLen,}\\s*\$');
+    });
+  }
   static final RegExp _orderedListStartRegExp = RegExp(r'^(\d{1,9})[.)]\s+');
 
   static final RegExp _codeSpanRegExp = RegExp(r'`+((?:[^`]|(?<=\\)`)*?)`+');
@@ -485,9 +493,9 @@ class MarkdownParser {
     final first = trimmed[0];
     if (first != '-' && first != '*' && first != '_') return false;
     var count = 0;
-    for (final c in trimmed.split('')) {
-      if (c == ' ') continue;
-      if (c != first) return false;
+    for (final code in trimmed.codeUnits) {
+      if (code == 0x20) continue; // ' '
+      if (code != first.codeUnitAt(0)) return false;
       count++;
     }
     return count >= 3;

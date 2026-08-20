@@ -31,8 +31,11 @@ class StoryCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final downloadedIds = ref.watch(downloadedStoryIdsProvider);
-    final isDownloaded = downloadedIds.contains(story.id);
+    // Select theo membership của TỪNG story — trước đây watch nguyên Set
+    // khiến mọi card rebuild mỗi khi set đổi (bắt đầu/xong tải 1 chương).
+    final isDownloaded = ref.watch(
+      downloadedStoryIdsProvider.select((ids) => ids.contains(story.id)),
+    );
 
     return Material(
       color: Colors.transparent,
@@ -64,6 +67,9 @@ class StoryCard extends ConsumerWidget {
                         : CachedNetworkImage(
                             imageUrl: story.coverUrl!,
                             fit: BoxFit.cover,
+                            // Cover hiển thị ~120-200px — decode ở độ phân
+                            // giải đó thay vì ảnh gốc (giảm RAM + jank).
+                            memCacheWidth: 360,
                             placeholder: (_, _) => Container(
                               color: Theme.of(context)
                                   .colorScheme

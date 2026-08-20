@@ -90,10 +90,11 @@ class TtsMarkdownPreprocessor {
   /// Split a long paragraph into <= [maxLen]-char pieces on sentence
   /// boundaries (`. `, `! `, `? `). Falls back to hard slicing if a single
   /// sentence exceeds [maxLen].
+  static final RegExp _sentenceEndRegExp = RegExp(r'(?<=[.!?])\s+');
+
   static List<String> _splitSentences(String text, int maxLen) {
     final result = <String>[];
-    final sentenceEnd = RegExp(r'(?<=[.!?])\s+');
-    final sentences = text.split(sentenceEnd);
+    final sentences = text.split(_sentenceEndRegExp);
     var buf = StringBuffer();
     for (final s in sentences) {
       if (s.isEmpty) continue;

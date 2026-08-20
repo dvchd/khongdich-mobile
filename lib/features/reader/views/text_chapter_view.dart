@@ -61,11 +61,20 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   TtsAudioHandler? _handler;
   StreamSubscription<TtsChunkProgress>? _ttsSub;
   StreamSubscription<PlaybackState>? _playbackSub;
-  int? _activeBlockIndex;
+  /// Listenable highlight — renderer lắng nghe để chỉ rebuild block
+  /// active cũ + mới thay vì setState rebuild cả chương mỗi chunk TTS.
+  final ValueNotifier<int?> _activeBlock = ValueNotifier<int?>(null);
+  int? get _activeBlockIndex => _activeBlock.value;
   // Content width captured from LayoutBuilder in scroll mode — needed
   // by _measureBlockHeight for accurate scroll offset calculation.
   // In page mode, _lastSize.width is used instead.
   double? _scrollModeWidth;
+
+  /// Cache chiều cao block đã đo — key `(blockIndex, maxWidth)`. Trước
+  /// đây mỗi lần TTS chunk advance, `_scrollOrFlipToActive` đo lại TẤT
+  /// CẢ block từ đầu chương tới block active bằng TextPainter mới → O(n)
+  /// layout mỗi chunk (chương dài + TTS đang đọc = jank kép với rebuild).
+  final Map<String, double> _heightCache = {};
 
   @override
   void initState() {
@@ -120,9 +129,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     if (oldWidget.markdown != widget.markdown) {
       _blocks = MarkdownParser().parse(widget.markdown);
       _lastSize = null;
+      _heightCache.clear();
       // Clear highlight when chapter changes — the new chunk event for
       // the new chapter will set a fresh highlight starting from block 0.
-      _activeBlockIndex = null;
+      _activeBlock.value = null;
       // Reset to page 0 on the next frame, after _pageBlockIndices
       // has been re-computed by _computePages() during the next
       // LayoutBuilder pass. Using WidgetsBinding.addPostFrameCallback
@@ -135,6 +145,8 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       });
     } else if (themeChanged) {
       _lastSize = null;
+      // Chiều cao block phụ thuộc font/size/line-height → đo lại.
+      _heightCache.clear();
     }
   }
 
@@ -149,6 +161,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   void dispose() {
     _ttsSub?.cancel();
     _playbackSub?.cancel();
+    _activeBlock.dispose();
     // Only dispose if we created the controller internally
     if (widget.pageController == null) {
       _pageController.dispose();
@@ -159,8 +172,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   /// Measure the height of rendering a set of blocks with the current
   /// theme + font size. Uses TextPainter on a RichText for text blocks,
   /// and estimated heights for other block types.
-  double _measureBlockHeight(Block block, double maxWidth) {
-    final style = widget.theme.bodyStyle;
+  double _measureBlockHeight(Block block, double maxWidth) {    final style = widget.theme.bodyStyle;
     final padding = widget.theme.paragraphSpacing;
 
     return switch (block) {
@@ -234,6 +246,17 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     };
   }
 
+  /// [_measureBlockHeight] có cache theo (blockIndex, maxWidth) — dùng
+  /// cho các vòng lặp đo lặp lại (page split, auto-scroll TTS).
+  double _measureBlockHeightCached(int index, Block block, double maxWidth) {
+    final key = '$index|${maxWidth.toStringAsFixed(1)}';
+    final cached = _heightCache[key];
+    if (cached != null) return cached;
+    final h = _measureBlockHeight(block, maxWidth);
+    _heightCache[key] = h;
+    return h;
+  }
+
   InlineSpan _inlineToSpan(Inline inline, ReaderTheme t) {
     return switch (inline) {
       TextRun(:final text) => TextSpan(text: text),
@@ -284,7 +307,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     var currentHeight = 0.0;
 
     for (var i = 0; i < _blocks.length; i++) {
-      final h = _measureBlockHeight(_blocks[i], maxWidth);
+      final h = _measureBlockHeightCached(i, _blocks[i], maxWidth);
       if (currentHeight + h > maxHeight && current.isNotEmpty) {
         // Current page is full — flush it and start a new page.
         _pageBlockIndices.add(current);
@@ -330,7 +353,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
           child: MarkdownRenderer(
             blocks: _blocks,
             theme: widget.theme,
-            activeBlockIndex: _activeBlockIndex,
+            activeBlock: _activeBlock,
             onParagraphLongPress: widget.onParagraphLongPress,
           ),
         );
@@ -351,7 +374,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             MarkdownRenderer(
               blocks: _blocks,
               theme: widget.theme,
-              activeBlockIndex: _activeBlockIndex,
+              activeBlock: _activeBlock,
               onParagraphLongPress: widget.onParagraphLongPress,
             ),
             const SizedBox(height: 32),
@@ -375,13 +398,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       itemBuilder: (context, pageIndex) {
         final blockIndices = _pageBlockIndices[pageIndex];
         final pageBlocks = [for (final i in blockIndices) _blocks[i]];
-        // Convert the global active block index to a local index within
-        // this page's block list. The renderer highlights by local index.
-        final localActive =
-            (_activeBlockIndex != null &&
-                blockIndices.contains(_activeBlockIndex))
-            ? blockIndices.indexOf(_activeBlockIndex!)
-            : null;
+        // Highlight theo GLOBAL block index — renderer trừ đi baseIndex
+        // của trang này. Không cần rebuild PageView khi active đổi (đã do
+        // ValueListenableBuilder trong renderer lo).
+        final baseIndex = blockIndices.isNotEmpty ? blockIndices.first : 0;
         return SingleChildScrollView(
           // Allow vertical scrolling for pages with tall blocks that
           // exceed the viewport height. Previously NeverScrollable caused
@@ -392,11 +412,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               MarkdownRenderer(
-              blocks: pageBlocks,
-              theme: widget.theme,
-              activeBlockIndex: localActive,
-              onParagraphLongPress: widget.onParagraphLongPress,
-            ),
+                blocks: pageBlocks,
+                theme: widget.theme,
+                activeBlock: _activeBlock,
+                baseBlockIndex: baseIndex,
+                onParagraphLongPress: widget.onParagraphLongPress,
+              ),
               const SizedBox(height: 32),
               Center(
                 child: Text(
@@ -434,8 +455,8 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     if (!mounted) return;
     // Ignore chunks for other chapters — they shouldn't highlight here.
     if (p.chapterId != widget.chapterId) {
-      if (_activeBlockIndex != null) {
-        setState(() => _activeBlockIndex = null);
+      if (_activeBlock.value != null) {
+        _activeBlock.value = null;
       }
       return;
     }
@@ -452,10 +473,8 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     if (s == AudioProcessingState.idle ||
         s == AudioProcessingState.error ||
         s == AudioProcessingState.completed) {
-      if (_activeBlockIndex != null) {
-        setState(() {
-          _activeBlockIndex = null;
-        });
+      if (_activeBlock.value != null) {
+        _activeBlock.value = null;
       }
       return;
     }
@@ -479,12 +498,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         s != AudioProcessingState.buffering) {
       return;
     }
-    if (handler.currentChunkIndex < 0 || handler.chunkModels.isEmpty) return;
+    if (handler.currentChunkIndex < 0 || handler.chunkCount == 0) return;
     // Bound check: chunkIndex có thể trỏ ra ngoài danh sách chunk sau khi
     // nội dung chương được cập nhật (ít chunk hơn) — trước đây RangeError
     // bị catch (_) nuốt lặng lẽ.
     final index = handler.currentChunkIndex;
-    if (index >= handler.chunkModels.length) return;
+    if (index >= handler.chunkCount) return;
     final chunk = handler.chunkModels[index];
     _applyBlock(
       chunk.blocks.isEmpty ? -1 : chunk.blocks.first.blockIndex,
@@ -498,14 +517,16 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   /// highlight vàng dính ở block trước đó.
   void _applyBlock(int blockIndex) {
     if (blockIndex < 0) {
-      if (_activeBlockIndex != null) {
-        setState(() => _activeBlockIndex = null);
+      if (_activeBlock.value != null) {
+        _activeBlock.value = null;
       }
       return;
     }
     if (blockIndex >= _blocks.length) return;
-    if (blockIndex == _activeBlockIndex) return;
-    setState(() => _activeBlockIndex = blockIndex);
+    if (blockIndex == _activeBlock.value) return;
+    // Chỉ đổi notifier — renderer rebuild đúng 2 block (cũ + mới),
+    // không setState cả chương.
+    _activeBlock.value = blockIndex;
     // After the next frame (so the renderer has laid out the new
     // highlighted block), scroll or page-flip to keep it in view.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -557,7 +578,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
           _scrollModeWidth ?? MediaQuery.of(context).size.width;
       double offset = 0;
       for (var i = 0; i < active && i < _blocks.length; i++) {
-        offset += _measureBlockHeight(_blocks[i], contentWidth);
+        offset += _measureBlockHeightCached(i, _blocks[i], contentWidth);
       }
       // Subtract a small top padding so the highlighted block isn't
       // flush against the AppBar — bring it to roughly the upper third.

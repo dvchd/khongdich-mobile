@@ -48,6 +48,11 @@ class ChapterCacheService {
   /// Phục vụ tốc độ truy cập instant trong session.
   final Map<String, ChapterContent> _chapterCache = {};
 
+  /// Giới hạn memory cache — mỗi chương có thể ~100KB+; giữ vô hạn suốt
+  /// session (đọc 100+ chương) ngốn chục MB RAM. Evict chương cũ nhất
+  /// (Map mặc định giữ thứ tự chèn) khi vượt giới hạn.
+  static const int _maxMemoryChapters = 50;
+
   /// Cache chapter list per story. Key = storyId. Value = (chapters, cachedAt).
   /// TTL 5 phút — tránh refetch list mỗi lần next/prev.
   final Map<String, _ChapterListCache> _chapterListCache = {};
@@ -66,6 +71,16 @@ class ChapterCacheService {
   static const int _maxAutoCachePerStory = 20;
   /// Prefetch bao nhiêu chương kế tiếp. 2 = N+1 + N+2.
   static const int _prefetchCount = 2;
+
+  /// Insert into the memory cache with a simple oldest-first eviction cap.
+  void _cacheChapter(String chapterId, ChapterContent chapter) {
+    _chapterCache.remove(chapterId);
+    if (_chapterCache.length >= _maxMemoryChapters) {
+      final oldest = _chapterCache.keys.first;
+      _chapterCache.remove(oldest);
+    }
+    _chapterCache[chapterId] = chapter;
+  }
 
   /// Cập nhật locked chapter IDs từ VipStatus. Gọi khi user mở story
   /// detail → prefetch skip các chương locked.
@@ -103,7 +118,7 @@ class ChapterCacheService {
         final chapter = ChapterContent.fromJson(
           jsonDecode(dbCached.contentRaw) as Map<String, dynamic>,
         );
-        _chapterCache[chapterId] = chapter;
+        _cacheChapter(chapterId, chapter);
         AppLogger.info('ChapterCache: DB HIT for N$chapterNumber '
             '(source: ${dbCached.source})');
         // Update lastReadAt để LRU evict biết chương này được đọc gần đây.
@@ -128,7 +143,7 @@ class ChapterCacheService {
     _inFlightFetches[chapterId] = future;
     try {
       final chapter = await future;
-      _chapterCache[chapterId] = chapter;
+      _cacheChapter(chapterId, chapter);
       return chapter;
     } finally {
       _inFlightFetches.remove(chapterId);
@@ -187,7 +202,7 @@ class ChapterCacheService {
     try {
       AppLogger.info('ChapterCache: prefetching N$chapterNum');
       final chapter = await _repo.fetchChapter(chapterId);
-      _chapterCache[chapterId] = chapter;
+      _cacheChapter(chapterId, chapter);
       await _saveToDb(chapter, source: 'auto_cache');
       // LRU evict: giữ tối đa _maxAutoCachePerStory auto-cache per story.
       await _db.evictOldAutoCache(storyId, keep: _maxAutoCachePerStory);

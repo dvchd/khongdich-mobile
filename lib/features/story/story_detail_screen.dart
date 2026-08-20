@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart' show OrderingTerm;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -142,10 +143,11 @@ class _StoryDetailBody extends ConsumerWidget {
                             color: AppTheme.primary.withValues(alpha: 0.2),
                             child: const Icon(Icons.book, size: 48),
                           )
-                        : Image.network(
-                            story.coverUrl!,
+                        : CachedNetworkImage(
+                            imageUrl: story.coverUrl!,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Container(
+                            memCacheWidth: 360,
+                            errorWidget: (_, _, _) => Container(
                               color: AppTheme.primary.withValues(alpha: 0.2),
                               child: const Icon(Icons.book, size: 48),
                             ),

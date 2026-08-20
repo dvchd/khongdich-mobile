@@ -225,10 +225,28 @@ class StoryRepository implements ChapterFetcher {
     if (page.chapters.length >= page.total || page.totalPages <= 1) {
       return page.chapters;
     }
+    // Fetch các trang còn lại SONG SONG (giới hạn concurrency 6) — trước
+    // đây await tuần tự từng trang: truyện 2000+ chương = 10+ round-trip
+    // nối tiếp, mở story detail phải chờ cả chuỗi.
+    const maxConcurrent = 6;
+    final remaining = <List<ChapterSummary>>[];
+    var nextPage = 2;
+    Future<void> worker() async {
+      while (true) {
+        final p = nextPage++;
+        if (p > page.totalPages) return;
+        final res = await fetchChapterList(storyId, page: p, perPage: perPage);
+        remaining.add(res.chapters);
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < maxConcurrent && i < page.totalPages - 1; i++)
+        worker(),
+    ]);
     final all = <ChapterSummary>[...page.chapters];
-    for (var p = 2; p <= page.totalPages; p++) {
-      final next = await fetchChapterList(storyId, page: p, perPage: perPage);
-      all.addAll(next.chapters);
+    for (final list in remaining) {
+      all.addAll(list);
     }
     // Sort by chapter number — page boundaries can split a volume group,
     // and older stories may have been renumbered after caching.

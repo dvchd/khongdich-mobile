@@ -135,7 +135,7 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
     }
     final scheme = Theme.of(context).colorScheme;
     final playing = _playbackState?.playing ?? false;
-    final total = _progress?.totalChunks ?? handler.chunkModels.length;
+    final total = _progress?.totalChunks ?? handler.chunkCount;
     final index = _progress?.chunkIndex ?? handler.currentChunkIndex;
     final ratio = total > 0
         ? ((index + 1) / total).clamp(0.0, 1.0)

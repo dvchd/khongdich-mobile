@@ -122,6 +122,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   final FlutterTts _tts;
   List<TtsChunk> _chunks = const [];
+  /// Unmodifiable view of [_chunks] — tránh copy lại toàn bộ list mỗi
+  /// lần UI đọc `chunkModels` (rebuild thường xuyên khi TTS chạy).
+  List<TtsChunk> _chunkModelsView = const [];
   int _currentChunk = 0;
   String? _currentChapterId;
   String? _currentStoryId;
@@ -137,6 +140,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   bool _initialised = false;
   bool _isSpeaking = false; // Guard against re-entrant completion handlers
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSub;
   // Future của speak loop hiện tại — dùng để cancel khi stop/pause.
   Future<void>? _speakLoopFuture;
   // Generation guard chống "zombie loop": một số engine không bao giờ
@@ -254,8 +258,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
 
   /// Block-aligned chunk models of the currently-loaded chapter (the same
   /// length as [chunks]). Each entry carries the exact rendered-block
-  /// indices the chunk covers.
-  List<TtsChunk> get chunkModels => List.unmodifiable(_chunks);
+  /// indices the chunk covers. Cached unmodifiable view — không copy lại
+  /// mỗi lần đọc (UI gọi nhiều lần trong mỗi build).
+  List<TtsChunk> get chunkModels => _chunkModelsView;
+
+  /// Số chunk của chương hiện tại — chỉ đọc length, không copy list.
+  int get chunkCount => _chunks.length;
 
   /// Index of the chunk currently being spoken. -1 when idle.
   int get currentChunkIndex => _currentChunk;
@@ -291,7 +299,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         ));
         _sessionConfigured = true;
         // Auto-pause khi bị interruption (cuộc gọi, nhạc khác, ...).
-        session.interruptionEventStream.listen((event) {
+        // Cancel sub cũ trước khi listen lại — phòng init retry (configure
+        // fail trước đó) đăng ký listener chồng nhau → mỗi interruption
+        // gọi pause() nhiều lần.
+        await _interruptionSub?.cancel();
+        _interruptionSub = session.interruptionEventStream.listen((event) {
           if (!event.begin) return;
           AppLogger.info('TTS: interruption begin (${event.type.name})');
           if (event.type == AudioInterruptionType.duck) {
@@ -853,6 +865,7 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     await _awaitSpeakLoop();
     _cancelBlockAdvanceTimer();
     _chunks = TtsMarkdownPreprocessor.processWithBlocks(contentMarkdown);
+    _chunkModelsView = List.unmodifiable(_chunks);
     AppLogger.info('TTS: loaded chapter $chapterId — ${_chunks.length} chunks');
     _currentChapterId = chapterId;
     _currentStoryId = storyId;

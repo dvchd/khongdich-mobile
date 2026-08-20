@@ -246,11 +246,13 @@ extension InlinePlainText on Inline {
 /// `normalize_paragraph_text` (and the web reader's
 /// `s.replace(/\s+/g, ' ').trim()`) so the server resolves the exact
 /// same paragraph anchor from an empty `para_key`.
+final RegExp _whitespaceRunRegExp = RegExp(r'\s+');
+
 String normalizeParagraphPlain(List<Inline> children) {
   return children
       .map((i) => i.plainText)
       .join()
-      .split(RegExp(r'\s+'))
+      .split(_whitespaceRunRegExp)
       .where((s) => s.isNotEmpty)
       .join(' ');
 }

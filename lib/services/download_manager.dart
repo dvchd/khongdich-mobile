@@ -474,6 +474,7 @@ class DownloadManager {
       // các row của chunk đó (không hủy cả batch).
       final byId = <String, ChapterContent>{};
       final fallbackRows = <DownloadQueueData>[];
+      final fallbackChapterIds = <String>{};
       for (var i = 0; i < accessibleIds.length; i += _batchChunkSize) {
         final end = math.min(i + _batchChunkSize, accessibleIds.length);
         final chunkRows = accessibleRows.sublist(i, end);
@@ -489,6 +490,7 @@ class DownloadManager {
               'failed, falling back to single for ${chunkIds.length} rows',
               e, s);
           fallbackRows.addAll(chunkRows);
+          fallbackChapterIds.addAll(chunkIds);
         }
       }
 
@@ -496,7 +498,7 @@ class DownloadManager {
         final ch = byId[row.chapterId];
         if (ch != null) {
           await _saveChapter(row, ch);
-        } else if (!fallbackRows.contains(row)) {
+        } else if (!fallbackChapterIds.contains(row.chapterId)) {
           // Chapter not returned — skip / mark failed.
           await _markFailed(row.id, 'Không tìm thấy chương trên máy chủ');
         }

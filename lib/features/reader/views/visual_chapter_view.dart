@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/markdown/markdown.dart';
@@ -44,10 +45,11 @@ class VisualChapterView extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               child: AspectRatio(
                 aspectRatio: 16 / 9,
-                child: Image.network(
-                  thumbnailUrl!,
+                child: CachedNetworkImage(
+                  imageUrl: thumbnailUrl!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  memCacheWidth: 1200,
+                  errorWidget: (_, _, _) => const SizedBox.shrink(),
                 ),
               ),
             ),

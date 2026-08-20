@@ -96,10 +96,24 @@ class _MangaGallery extends StatefulWidget {
 class _MangaGalleryState extends State<_MangaGallery> {
   late final PageController _pageController;
 
+  /// Kết quả `existsSync()` cache theo path — tránh I/O đồng bộ trên UI
+  /// thread mỗi lần builder chạy lại (swipe qua nhiều trang).
+  final Map<String, bool> _localExists = {};
+
+  /// Chiều rộng decode mục tiêu cho gallery (2x màn hình — đủ sắc nét
+  /// cho pinch-zoom mà không decode full-res 2000px+ gây OOM).
+  int? _decodeWidth;
+
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _decodeWidth ??= (View.of(context).physicalSize.width * 2).round();
   }
 
   @override
@@ -111,10 +125,14 @@ class _MangaGalleryState extends State<_MangaGallery> {
   ImageProvider _resolveProvider(int i) {
     final url = widget.pages[i].url;
     final localPath = widget.localImagePaths[url];
-    if (localPath != null && File(localPath).existsSync()) {
-      return FileImage(File(localPath));
+    if (localPath != null &&
+        (_localExists[localPath] ??= File(localPath).existsSync())) {
+      return ResizeImage(FileImage(File(localPath)), width: _decodeWidth!);
     }
-    return CachedNetworkImageProvider(url);
+    return ResizeImage(
+      CachedNetworkImageProvider(url),
+      width: _decodeWidth!,
+    );
   }
 
   @override
@@ -178,8 +196,19 @@ class _MangaPageImage extends StatefulWidget {
 
 class _MangaPageImageState extends State<_MangaPageImage> {
   /// Session-wide `imageUrl → decoded Size`, shared across chapters so
-  /// pages seen before keep their reserved ratio instantly.
+  /// pages seen before keep their reserved ratio instantly. Capped — map
+  /// tăng không giới hạn khi đọc nhiều truyện trong 1 session.
   static final Map<String, Size> _sizeCache = {};
+  static const int _sizeCacheMaxEntries = 500;
+
+  /// Kết quả `existsSync()` — check MỘT lần trong initState thay vì mỗi
+  /// build tile (I/O đồng bộ trên UI thread).
+  late final bool _hasLocalFile;
+
+  /// Chiều rộng decode mục tiêu (px vật lý) cho ảnh hiển thị trong list.
+  int? _displayWidth;
+
+  bool _dimensionsRequested = false;
 
   ImageStream? _stream;
   ImageStreamListener? _listener;
@@ -197,17 +226,34 @@ class _MangaPageImageState extends State<_MangaPageImage> {
   }
 
   ImageProvider _provider() {
-    final localPath = widget.localPath;
-    if (localPath != null && File(localPath).existsSync()) {
-      return FileImage(File(localPath));
+    if (_hasLocalFile) {
+      final file = File(widget.localPath!);
+      return ResizeImage(FileImage(file), width: _displayWidth!);
     }
-    return CachedNetworkImageProvider(widget.page.url);
+    return ResizeImage(
+      CachedNetworkImageProvider(widget.page.url),
+      width: _displayWidth!,
+    );
   }
 
   @override
   void initState() {
     super.initState();
-    if (_aspectRatio == null) _decodeDimensions();
+    final localPath = widget.localPath;
+    _hasLocalFile =
+        localPath != null && File(localPath).existsSync();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _displayWidth ??= View.of(context).physicalSize.width.round();
+    // Probe kích thước chỉ sau khi có display width — initState không
+    // được đọc inherited widget (View).
+    if (!_dimensionsRequested && _aspectRatio == null) {
+      _dimensionsRequested = true;
+      _decodeDimensions();
+    }
   }
 
   @override
@@ -219,7 +265,9 @@ class _MangaPageImageState extends State<_MangaPageImage> {
   /// Resolve the provider just to learn the pixel size. The decoded
   /// frame lands in Flutter's image cache keyed by the same provider
   /// (FileImage/`CachedNetworkImageProvider` compare by path/URL), so
-  /// the render below reuses it — no extra network round trip.
+  /// the render below reuses it — no extra network round trip. Resolving
+  /// with `ResizeImage` cũng làm frame decode ở display resolution luôn
+  /// (không full-res) → vừa nhẹ hơn vừa được render tái sử dụng.
   void _decodeDimensions() {
     final stream = _provider().resolve(ImageConfiguration.empty);
     _stream = stream;
@@ -230,6 +278,9 @@ class _MangaPageImageState extends State<_MangaPageImage> {
           info.image.width.toDouble(),
           info.image.height.toDouble(),
         );
+        if (_sizeCache.length >= _sizeCacheMaxEntries) {
+          _sizeCache.remove(_sizeCache.keys.first);
+        }
         _sizeCache[widget.page.url] = size;
         setState(() => _decodedSize = size);
       },
@@ -239,19 +290,21 @@ class _MangaPageImageState extends State<_MangaPageImage> {
   }
 
   Widget _buildImage() {
-    final localPath = widget.localPath;
-    if (localPath != null && File(localPath).existsSync()) {
+    if (_hasLocalFile) {
       // Local file exists — render directly from disk. No network
       // needed, no cache lookup, no placeholder flicker.
       return Image.file(
-        File(localPath),
+        File(widget.localPath!),
         fit: BoxFit.fitWidth,
+        cacheWidth: _displayWidth,
         errorBuilder: (_, _, _) => _buildNetworkFallback(),
       );
     }
     return CachedNetworkImage(
       imageUrl: widget.page.url,
       fit: BoxFit.fitWidth,
+      memCacheWidth: _displayWidth,
+      maxWidthDiskCache: _displayWidth,
       placeholder: (_, _) => const Center(
         child: SizedBox(
           width: 24,
@@ -270,6 +323,8 @@ class _MangaPageImageState extends State<_MangaPageImage> {
     return CachedNetworkImage(
       imageUrl: widget.page.url,
       fit: BoxFit.fitWidth,
+      memCacheWidth: _displayWidth,
+      maxWidthDiskCache: _displayWidth,
       placeholder: (_, _) => const Center(
         child: SizedBox(
           width: 24,

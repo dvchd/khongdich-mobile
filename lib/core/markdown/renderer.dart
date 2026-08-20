@@ -1,3 +1,5 @@
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -77,13 +79,22 @@ class ReaderTheme {
 
 /// Turn a [List<Block>] AST (from [MarkdownParser]) into a column of native
 /// Flutter widgets. Per `docs/plan-flutter-app.md` §4.4.
-class MarkdownRenderer extends StatelessWidget {
+///
+/// Hiệu năng: highlight TTS dùng [ValueListenable] — khi block đang đọc
+/// đổi, chỉ block cũ + block mới rebuild (qua `child` của
+/// `ValueListenableBuilder`), KHÔNG rebuild cả chương như kiểu truyền
+/// `int? activeBlockIndex` trước đây (mỗi chunk TTS rebuild hàng trăm
+/// RichText). Recognizer của link được dispose trong state; plain-text
+/// của paragraph được cache theo AST node (tính 1 lần, không lặp lại
+/// mỗi rebuild khi có long-press handler).
+class MarkdownRenderer extends StatefulWidget {
   const MarkdownRenderer({
     super.key,
     required this.blocks,
     required this.theme,
     this.onLinkTap,
-    this.activeBlockIndex,
+    this.activeBlock,
+    this.baseBlockIndex = 0,
     this.onParagraphLongPress,
   });
 
@@ -91,11 +102,18 @@ class MarkdownRenderer extends StatelessWidget {
   final ReaderTheme theme;
   final void Function(Uri url)? onLinkTap;
 
-  /// Index of the block currently being read by TTS. The renderer wraps
-  /// that block in a yellow-tinted background so the user can see where
-  /// the audio is up to. Null when TTS is idle or the active chunk
-  /// doesn't map to any block (e.g. horizontal rule).
-  final int? activeBlockIndex;
+  /// Index of the block currently being read by TTS (GLOBAL index into
+  /// the chapter's block list — subtract [baseBlockIndex] to map into
+  /// [blocks]). The renderer wraps that block in a yellow-tinted
+  /// background so the user can see where the audio is up to. Null when
+  /// TTS is idle or the active chunk doesn't map to any block (e.g.
+  /// horizontal rule). Listenable cho phép highlight đổi mà không rebuild
+  /// cả cây widget.
+  final ValueListenable<int?>? activeBlock;
+
+  /// Global block index of [blocks].first — dùng khi render một page con
+  /// của chương (page mode chia blocks thành nhiều trang).
+  final int baseBlockIndex;
 
   /// Fired when a paragraph block is long-pressed. Receives the block's
   /// normalized plain text (used as the paragraph quote for bình luận
@@ -103,26 +121,81 @@ class MarkdownRenderer extends StatelessWidget {
   final void Function(String plainText)? onParagraphLongPress;
 
   @override
+  State<MarkdownRenderer> createState() => _MarkdownRendererState();
+}
+
+class _MarkdownRendererState extends State<MarkdownRenderer> {
+  /// TapGestureRecognizer tạo ra trong build — dispose khi build tiếp
+  /// theo thay thế chúng hoặc khi widget unmount. Trước đây (stateless)
+  /// recognizer mới được tạo mỗi rebuild và không bao giờ dispose.
+  final List<TapGestureRecognizer> _recognizers = [];
+
+  /// Cache plain-text per AST node identity — [normalizeParagraphPlain]
+  /// chạy regex + join cho MỌI paragraph trong MỌI rebuild (khi có
+  /// long-press handler); node identity ổn định giữa các rebuild.
+  final Map<Object, String> _plainCache = {};
+
+  @override
+  void didUpdateWidget(covariant MarkdownRenderer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.blocks, widget.blocks)) {
+      _plainCache.clear();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Dispose recognizers của build trước — chúng không còn được
+    // RenderParagraph mới tham chiếu sau khi build này hoàn tất.
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < blocks.length; i++)
-          _maybeHighlight(i, _renderBlock(blocks[i], theme, context)),
+        for (var i = 0; i < widget.blocks.length; i++)
+          _maybeHighlight(
+            i,
+            _renderBlock(widget.blocks[i], widget.theme, context),
+          ),
       ],
     );
   }
 
   /// Wrap the block in a yellow-tinted background if its index matches
-  /// [activeBlockIndex]. The tint is semi-transparent so the underlying
+  /// the active TTS block. The tint is semi-transparent so the underlying
   /// text colour is still readable on both light and dark themes.
+  ///
+  /// Chỉ block có trạng thái highlight THAY ĐỔI mới rebuild — các block
+  /// khác trả về đúng instance `child` cũ (Flutter bỏ qua khi so sánh).
   Widget _maybeHighlight(int index, Widget child) {
-    if (index != activeBlockIndex) return child;
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0x44FFD54F), // ~27% amber-yellow tint
-        borderRadius: BorderRadius.circular(4),
-      ),
+    final activeBlock = widget.activeBlock;
+    if (activeBlock == null) return child;
+    final globalIndex = widget.baseBlockIndex + index;
+    return ValueListenableBuilder<int?>(
+      valueListenable: activeBlock,
+      builder: (context, active, child) {
+        if (active == globalIndex) {
+          return Container(
+            decoration: BoxDecoration(
+              color: const Color(0x44FFD54F), // ~27% amber-yellow tint
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: child,
+          );
+        }
+        return child!;
+      },
       child: child,
     );
   }
@@ -220,9 +293,14 @@ class MarkdownRenderer extends StatelessWidget {
         ),
       ),
     );
-    final callback = onParagraphLongPress;
+    final callback = widget.onParagraphLongPress;
     if (callback == null) return text;
-    final plain = _paragraphPlain(children);
+    // Cache theo identity của AST node — node ổn định giữa các rebuild
+    // (parse 1 lần/chương), không tính lại regex+join cho mọi paragraph.
+    final plain = _plainCache.putIfAbsent(
+      children,
+      () => normalizeParagraphPlain(children),
+    );
     if (plain.isEmpty) return text;
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -287,10 +365,12 @@ class MarkdownRenderer extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.network(
-              url,
+            child: CachedNetworkImage(
+              imageUrl: url,
               fit: BoxFit.fitWidth,
-              errorBuilder: (_, __, ___) => Container(
+              memCacheWidth: 1200,
+              maxWidthDiskCache: 1200,
+              errorWidget: (_, __, ___) => Container(
                 height: 120,
                 color: t.blockBackground,
                 alignment: Alignment.center,
@@ -336,15 +416,7 @@ class MarkdownRenderer extends StatelessWidget {
           color: t.accentColor,
           decoration: TextDecoration.underline,
         ),
-        recognizer: TapGestureRecognizer()
-          ..onTap = () {
-            final uri = Uri.tryParse(url);
-            if (uri != null) {
-              if (onLinkTap != null) {
-                onLinkTap!(uri);
-              }
-            }
-          },
+        recognizer: _createLinkRecognizer(url),
         children: [for (final i in children) _renderInline(i, t, context)],
       ),
       CodeRun(:final code) => WidgetSpan(
@@ -363,11 +435,18 @@ class MarkdownRenderer extends StatelessWidget {
     };
   }
 
-  /// Normalized plain text of a paragraph's inline children — collapses
-  /// whitespace runs to single spaces and trims, mirroring the backend's
-  /// `normalize_paragraph_text` so the quote resolves to the same segment
-  /// anchor server-side (images contribute nothing, like `textContent`).
-  String _paragraphPlain(List<Inline> children) => normalizeParagraphPlain(
-    children,
-  );
+  /// Tạo recognizer cho một link và theo dõi để dispose ở build sau /
+  /// unmount (xem [_recognizers]).
+  TapGestureRecognizer _createLinkRecognizer(String url) {
+    final recognizer = TapGestureRecognizer()
+      ..onTap = () {
+        final uri = Uri.tryParse(url);
+        if (uri != null) {
+          final cb = widget.onLinkTap;
+          if (cb != null) cb(uri);
+        }
+      };
+    _recognizers.add(recognizer);
+    return recognizer;
+  }
 }

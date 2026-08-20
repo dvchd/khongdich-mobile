@@ -109,7 +109,13 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
             if (_messages.any((m) => m.id == message.id)) return;
             _messages.add(message);
             if (_messages.length > _maxRows) {
-              _messages.removeRange(0, _messages.length - _maxRows);
+              // Trim phải xóa luôn GlobalKey của tin bị đẩy ra — trước
+              // đây _msgKeys chỉ thêm không xóa → rò rỉ vô hạn.
+              final overflow = _messages.length - _maxRows;
+              for (final m in _messages.take(overflow)) {
+                _msgKeys.remove(m.id);
+              }
+              _messages.removeRange(0, overflow);
             }
           });
           if (storyAdded && !_loading) {
@@ -120,7 +126,10 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
         case MarketResetEvent():
           // Weekly wipe / Chủ Chợ change: drop the stale session and pull
           // the fresh section (master, grid, history) in one request.
-          setState(() => _messages.clear());
+          setState(() {
+            _messages.clear();
+            _msgKeys.clear();
+          });
           unawaited(_refreshSection());
         case MarketEditEvent(:final message):
           setState(() {
@@ -128,7 +137,10 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
             if (i >= 0) _messages[i] = message;
           });
         case MarketDeleteEvent(:final id):
-          setState(() => _messages.removeWhere((m) => m.id == id));
+          setState(() {
+            _messages.removeWhere((m) => m.id == id);
+            _msgKeys.remove(id);
+          });
       }
     });
   }
@@ -143,6 +155,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       if (!mounted || _section == null) return;
       setState(() {
         _section = section;
+        _msgKeys.clear();
         _messages
           ..clear()
           ..addAll(section.messages);

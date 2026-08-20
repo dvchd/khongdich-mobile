@@ -58,11 +58,17 @@ class ApiException implements Exception {
 /// CSRF guard (see `src/main.rs`). The mobile client does not need to
 /// send any CSRF token.
 class ApiClient {
-  ApiClient._(this._dio, this._storage, this.env);
+  ApiClient._(this._dio, this._storage, this.env, this._jwt);
 
   final Dio _dio;
   final FlutterSecureStorage _storage;
   final AppEnv env;
+
+  /// In-memory mirror of the stored JWT. Reading secure storage costs a
+  /// platform-channel round trip on EVERY request; the mirror serves the
+  /// token from memory after the first read and is kept in sync by
+  /// [writeJwt]/[clearJwt] and the 401 handler.
+  final _JwtStore _jwt;
 
   Dio get dio => _dio;
   String get baseUrl => env.baseUrl;
@@ -100,6 +106,7 @@ class ApiClient {
         validateStatus: (s) => s != null && s >= 200 && s < 300,
       ),
     );
+    final jwtStore = _JwtStore();
 
     // Inject / refresh the JWT on every request.
     dio.interceptors.add(
@@ -114,7 +121,16 @@ class ApiClient {
           // clear a perfectly valid JWT (silent logout).
           final path = options.path;
           if (path.startsWith('/api/v1/') && !path.endsWith('/auth/token')) {
-            final token = await storage.read(key: _kJwt);
+            // Serve from memory after the first storage read — secure
+            // storage is a platform channel per call, needlessly slow
+            // when the token hasn't changed.
+            final token = jwtStore.loaded
+                ? jwtStore.value
+                : await storage.read(key: _kJwt);
+            if (!jwtStore.loaded) {
+              jwtStore.value = token;
+              jwtStore.loaded = true;
+            }
             if (token != null) {
               options.headers['Authorization'] = 'Bearer $token';
             }
@@ -145,6 +161,9 @@ class ApiClient {
               if (sentBearer && !isTokenExchange) {
                 try {
                   await storage.delete(key: _kJwt);
+                  jwtStore
+                    ..value = null
+                    ..loaded = true;
                   AppLogger.info(
                     'ApiClient: cleared expired/revoked JWT after 401',
                   );
@@ -186,7 +205,7 @@ class ApiClient {
       ),
     );
 
-    return ApiClient._(dio, storage, env);
+    return ApiClient._(dio, storage, env, jwtStore);
   }
 
   static String _defaultMessageFor(int? status) {
@@ -208,14 +227,30 @@ class ApiClient {
     }
   }
 
-  /// Read the stored JWT (if any).
-  Future<String?> readJwt() => _storage.read(key: _kJwt);
+  /// Read the stored JWT (if any). Refreshes the in-memory mirror.
+  Future<String?> readJwt() async {
+    final v = await _storage.read(key: _kJwt);
+    _jwt
+      ..value = v
+      ..loaded = true;
+    return v;
+  }
 
   /// Persist a JWT issued by `POST /api/v1/mobile/auth/token`.
-  Future<void> writeJwt(String jwt) => _storage.write(key: _kJwt, value: jwt);
+  Future<void> writeJwt(String jwt) async {
+    await _storage.write(key: _kJwt, value: jwt);
+    _jwt
+      ..value = jwt
+      ..loaded = true;
+  }
 
   /// Wipe the stored JWT — used by "Đăng xuất" + on 401 from the server.
-  Future<void> clearJwt() => _storage.delete(key: _kJwt);
+  Future<void> clearJwt() async {
+    await _storage.delete(key: _kJwt);
+    _jwt
+      ..value = null
+      ..loaded = true;
+  }
 
   /// Are we authenticated (i.e. is there a JWT in secure storage)?
   Future<bool> isAuthenticated() async => (await readJwt()) != null;
@@ -228,6 +263,12 @@ class ApiClient {
     await _storage.write(key: _kEnv, value: newEnv.name);
     AppLogger.info('AppEnv switched to ${newEnv.name}');
   }
+}
+
+/// Mutable holder for the in-memory JWT mirror (see [ApiClient._jwt]).
+class _JwtStore {
+  String? value;
+  bool loaded = false;
 }
 
 /// Provider for the singleton [ApiClient].

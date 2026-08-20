@@ -42,6 +42,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   // epoch đã đổi, nếu không dữ liệu cũ sẽ ghi đè feed mới.
   int _feedEpoch = 0;
   final TextEditingController _composer = TextEditingController();
+  final FocusNode _replyFocus = FocusNode(debugLabel: 'reply-composer');
   CommentItem? _replyingTo;
 
   @override
@@ -53,6 +54,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   @override
   void dispose() {
     _composer.dispose();
+    _replyFocus.dispose();
     super.dispose();
   }
 
@@ -384,7 +386,9 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   void _startReply(CommentItem c) {
     setState(() => _replyingTo = c);
     _composer.text = '';
-    FocusScope.of(context).requestFocus(FocusNode());
+    // Dùng một FocusNode giữ trong state (dispose khi unmount) — trước
+    // đây mỗi lần bấm Trả lời tạo FocusNode mới không bao giờ dispose.
+    FocusScope.of(context).requestFocus(_replyFocus);
   }
 
   void _cancelReply() {

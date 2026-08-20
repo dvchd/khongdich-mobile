@@ -7,6 +7,9 @@ import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
 
+final RegExp _chapterLinkRegExp = RegExp(r'/truyen/([^/?#]+)/chuong/(\d+)');
+final RegExp _storyLinkRegExp = RegExp(r'/truyen/([^/?#]+)');
+
 /// Notifications screen. Plan §6.2.
 ///
 /// Uses the backend's existing `/hx/notifications` HTML fragment
@@ -131,11 +134,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                             // API call, navigate to the story detail where
                             // the user can open the chapter (or continue
                             // reading if already in progress).
-                            final m = RegExp(
-                                    r'/truyen/([^/?#]+)/chuong/(\d+)')
-                                .firstMatch(item.link!);
-                            final m2 = RegExp(r'/truyen/([^/?#]+)')
-                                .firstMatch(item.link!);
+                            final m = _chapterLinkRegExp.firstMatch(item.link!);
+                            final m2 = _storyLinkRegExp.firstMatch(item.link!);
                             final slug = m?.group(1) ?? m2?.group(1);
                             if (slug != null) {
                               context.push('/story/$slug');

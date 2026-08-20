@@ -153,11 +153,16 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (m) => m.createAll(),
+        onCreate: (m) async {
+          await m.createAll();
+          for (final stmt in _indexStatements) {
+            await m.database.customStatement(stmt);
+          }
+        },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             // v2: added storyTitle, storySlug, coverUrl, author,
@@ -193,8 +198,29 @@ class AppDatabase extends _$AppDatabase {
             // thị tên truyện thay vì slug thô.
             await m.addColumn(downloadQueue, downloadQueue.storyTitle);
           }
+          if (from < 7) {
+            // v7: performance indexes on hot query paths (offline reader,
+            // TTS resolve, LRU evict, download queue status polling).
+            for (final stmt in _indexStatements) {
+              await m.database.customStatement(stmt);
+            }
+          }
         },
       );
+
+  /// Indexes on the hot lookup columns. Drift's `@TableIndex` would also
+  /// need a matching schema bump — raw `CREATE INDEX IF NOT EXISTS` keeps
+  /// this idempotent across create/upgrade.
+  static const List<String> _indexStatements = [
+    'CREATE INDEX IF NOT EXISTS idx_downloaded_chapters_story_num '
+        'ON downloaded_chapters (story_id, chapter_number)',
+    'CREATE INDEX IF NOT EXISTS idx_downloaded_chapters_story_source '
+        'ON downloaded_chapters (story_id, source)',
+    'CREATE INDEX IF NOT EXISTS idx_downloaded_images_chapter '
+        'ON downloaded_chapter_images (chapter_id, sort_order)',
+    'CREATE INDEX IF NOT EXISTS idx_download_queue_status '
+        'ON download_queue (status)',
+  ];
 
   // ---- Downloaded chapters ----
 

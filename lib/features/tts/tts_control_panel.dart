@@ -206,15 +206,15 @@ class _PanelContentState extends State<_PanelContent> {
                 // khi chưa có event stream nào (panel mở ngay sau khi play:
                 // event chunk progress đầu tiên bị bỏ lỡ vì subscribe sau).
                 if (_progress != null ||
-                    widget.handler.chunkModels.isNotEmpty) ...[
+                    widget.handler.chunkCount > 0) ...[
                   LinearProgressIndicator(
                     value: (_progress?.totalChunks ??
-                                widget.handler.chunkModels.length) >
+                                widget.handler.chunkCount) >
                             0
                         ? (_progress?.chunkIndex ??
                                 widget.handler.currentChunkIndex) /
                             (_progress?.totalChunks ??
-                                widget.handler.chunkModels.length)
+                                widget.handler.chunkCount)
                         : 0,
                     minHeight: 6,
                     borderRadius: BorderRadius.circular(3),
@@ -222,7 +222,7 @@ class _PanelContentState extends State<_PanelContent> {
                   const SizedBox(height: 4),
                   Text(
                     'Đoạn ${(_progress?.chunkIndex ?? widget.handler.currentChunkIndex) + 1}/'
-                    '${_progress?.totalChunks ?? widget.handler.chunkModels.length}',
+                    '${_progress?.totalChunks ?? widget.handler.chunkCount}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),
