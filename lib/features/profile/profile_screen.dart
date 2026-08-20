@@ -131,7 +131,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ? 'v${info.version}+${info.buildNumber}'
                     : '...';
                 return Text(
-                  'Không Dịch $ver\nFlutter 3.x · Riverpod · Drift · Dio',
+                  'Không Dịch $ver',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodySmall,
                 );

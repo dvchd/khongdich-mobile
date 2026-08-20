@@ -44,7 +44,7 @@ dependencies:
   audio_session: ^0.1.21
 
   # Auth — Google Sign-In → exchange idToken for server JWT
-  google_sign_in: ^6.2.1
+  google_sign_in: ^7.2.0
 
   # Push notifications: KHÔNG dùng Firebase. App dùng in-app notifications
   # (GET /api/v1/mobile/notifications) + media notification của audio_service
