@@ -2,9 +2,9 @@
 
 Ứng dụng đọc truyện mobile cho [khongdich.com](https://khongdich.com). Android-first, xây dựng theo `docs/plan-flutter-app.md` (v4) trong repo backend.
 
-## Trạng thái hiện tại (v0.4.0)
+## Trạng thái hiện tại (v0.3.3)
 
-**Build:** `flutter analyze` → 0 lỗi · GitHub Actions build demo + prod APK song song, tự động publish lên GitHub Releases.
+**Build:** `flutter analyze` → 0 lỗi · ~109 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases.
 
 ### Kiến trúc
 
@@ -50,13 +50,13 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 | **TTS voice dropdown** (hiện cả locale: `vi-vn-language (vi-VN)`) | ✅ |
 | TTS control panel (play/pause/speed/voice/engine/progress) | ✅ |
 | TTS text highlighting (bôi đoạn đang đọc) | ✅ |
-| Drift on-disk SQLite store (7 bảng, schema v4) | ✅ |
+| Drift on-disk SQLite store (7 bảng, schema v7) | ✅ |
 | Batch sync (`POST /api/v1/mobile/sync`) | ✅ |
 | FCM push (`firebase_messaging`) | ❌ đã bỏ — dùng in-app notifications |
 | In-app notifications (GET /api/v1/mobile/notifications) | ✅ |
 | Launcher icons (từ web OG image) | ✅ |
 | Multi-env flavor build (demo / prod) | ✅ |
-| GitHub Actions CI/CD → APK → Releases | ✅ |
+| GitHub Actions CI/CD → APK + AAB → Releases | ✅ |
 | Theme app (system/light/dark) + persisted | ✅ |
 | Page-flip mode (lật trang + chia trang theo TextPainter) | ✅ |
 | Tap zones — center mở ReaderSettingsSheet | ✅ |
@@ -82,7 +82,7 @@ lib/
 ├── app.dart                             # MaterialApp.router + splash khi ApiClient loading
 ├── core/
 │   ├── auth/auth_service.dart           # Google Sign-In → server JWT (single source of truth)
-│   ├── database/app_database.dart       # Drift schema (7 bảng, v4)
+│   ├── database/app_database.dart       # Drift schema (7 bảng, v7)
 │   ├── markdown/                        # AST + parser + renderer + TTS preprocessor
 │   ├── network/api_client.dart          # Dio + Bearer JWT + env từ dart-define
 │   ├── observability/app_logger.dart
@@ -137,7 +137,6 @@ lib/
 
 android/
 └── app/
-    ├── google-services.placeholder.json
     ├── build.gradle.kts                  # demo + prod flavors, signing, desugaring
     └── src/{main,demo,prod,debug,profile}/
         └── res/values/strings.xml        # app_name override per flavor
@@ -160,23 +159,25 @@ flutter run --flavor=prod --dart-define=APP_ENV=prod
 
 ## CI/CD
 
-`.github/workflows/ci.yml`:
+`.github/workflows/ci.yml` (3 job, tối ưu cache):
 
-1. **Analyze + Test** — chạy trên mọi push (main, tag) và PR: `flutter analyze` + `flutter test`. Fail nếu có issue.
-2. **Build Android (prod)** — chỉ chạy khi push **tag `v*`**: build APK + AAB (kiểm tra tag khớp `version` trong pubspec.yaml) → tạo GitHub Release chính thức kèm artifacts.
+1. **Analyze** + **Test** — 2 job chạy song song trên mọi push (main, tag) và PR. Fail nếu có issue (~109 tests).
+2. **Build Android (prod)** — chỉ chạy khi push **tag `v*`** (sau khi 2 job trên xanh): build APK + AAB với cache Gradle (`gradle/actions/setup-gradle`) + daemon bật để tái dùng giữa 2 build → validate tag khớp `version` trong pubspec.yaml → tạo GitHub Release chính thức kèm artifacts.
 
-Push main **không** tạo release nữa (trước đây spam `dev-*-<sha>` prerelease).
+Push main **không** tạo release (trước đây spam `dev-*-<sha>` prerelease). Push mới hủy run cũ của cùng ref (concurrency).
 
 ### Quy trình phát hành
 
 ```bash
-scripts/bump_version.sh 0.3.1+6     # bump pubspec, commit, push main + tag v0.3.1
+scripts/bump_version.sh 0.3.4+9     # check branch main + tree sạch + versionCode tăng → bump pubspec, commit, push main + tag v0.3.4
 # chờ CI xanh (Actions) →
 scripts/download_aab.sh              # tải AAB từ release mới nhất về ./release/
 ```
 
-Sau đó upload AAB lên Google Play Console (track closed testing).
-Quy trình chi tiết gồm cả bước Play Console nằm trong skill `android-release`.
+Sau đó upload AAB lên Google Play Console (track closed testing). Có thể dùng
+`scripts/playstore/inject_file.py aab <file.aab>` (kèm `local_serve.py`, qua
+opencli) để inject thẳng AAB vào Play Console; `inject_file.py store` để thay
+ảnh store listing. Quy trình chi tiết nằm trong skill `android-release`.
 
 ### Secrets
 
@@ -271,7 +272,7 @@ Copy cả 2 SHA-1 (debug + release) để thêm vào Client ID ở bước sau.
 
 ### Bước 2 — Tạo 2 Android OAuth Client ID trên Google Cloud Console
 
-1. Vào **[Google Cloud Console](https://console.cloud.google.com/)** → chọn project (cùng project với Firebase của app).
+1. Vào **[Google Cloud Console](https://console.cloud.google.com/)** → chọn project (cùng Google Cloud project của app).
 2. Menu **APIs & Services** → **Credentials**.
 3. Nút **+ CREATE CREDENTIALS** → **OAuth client ID**.
 4. Form hiện ra (đúng như ảnh chụp màn hình):
