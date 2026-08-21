@@ -114,12 +114,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             onTap: () => context.push('/settings'),
           ),
           const Divider(),
-          ListTile(
-            leading: const Icon(Icons.logout, color: AppTheme.primary),
-            title: const Text('Đăng xuất',
-                style: TextStyle(color: AppTheme.primary)),
-            onTap: _signOut,
-          ),
+          // Nút Đăng xuất chỉ có nghĩa khi đã đăng nhập — chưa đăng nhập
+          // thì ẩn (trước đây luôn hiện, gây nhầm lẫn).
+          if (userAsync.value != null) ...[
+            ListTile(
+              leading: const Icon(Icons.logout, color: AppTheme.primary),
+              title: const Text('Đăng xuất',
+                  style: TextStyle(color: AppTheme.primary)),
+              onTap: _signOut,
+            ),
+          ],
           const SizedBox(height: 24),
           Padding(
             padding: const EdgeInsets.all(16),

@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -8,16 +9,53 @@ plugins {
     // google_sign_in hoạt động độc lập với Firebase (không cần plugin này).
 }
 
-// Decode a base64-encoded keystore (passed via env in CI) into a temp file.
-// Local dev: fall back to the debug keystore when no release keystore is set.
-fun keystoreFileFromEnv(): File? {
+// Keystore thật bắt buộc — KHÔNG fallback sang debug key.
+// Nguồn keystore:
+//   1. `android/key.properties` (local dev — đã trong .gitignore)
+//   2. Env `KHONGDICH_KEYSTORE_BASE64` + password vars (CI secrets)
+// Nếu cả hai đều thiếu → release build FAIL (debug-signed APK bị Google
+// Play reject và SHA-1 không khớp OAuth client → đăng nhập Google lỗi).
+data class KeystoreConfig(
+    val file: File,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+fun resolveKeystore(): KeystoreConfig? {
+    // Local: android/key.properties (chuẩn Flutter).
+    val propsFile = rootProject.file("key.properties")
+    if (propsFile.isFile) {
+        val p = Properties().apply {
+            propsFile.inputStream().use { load(it) }
+        }
+        val file = File(propsFile.parentFile, p.getProperty("storeFile")).absoluteFile
+        if (file.isFile) {
+            return KeystoreConfig(
+                file = file,
+                storePassword = p.getProperty("storePassword"),
+                keyAlias = p.getProperty("keyAlias"),
+                keyPassword = p.getProperty("keyPassword"),
+            )
+        }
+    }
+    // CI: env base64 keystore.
     val env = System.getenv("KHONGDICH_KEYSTORE_BASE64")
-    if (env.isNullOrEmpty()) return null
-    val decoded = Base64.getDecoder().decode(env)
-    val out = File(System.getProperty("java.io.tmpdir"), "khongdich-release.jks")
-    out.writeBytes(decoded)
-    return out
+    if (!env.isNullOrEmpty()) {
+        val decoded = Base64.getDecoder().decode(env)
+        val out = File(System.getProperty("java.io.tmpdir"), "khongdich-release.jks")
+        out.writeBytes(decoded)
+        return KeystoreConfig(
+            file = out,
+            storePassword = System.getenv("KHONGDICH_KEYSTORE_PASSWORD"),
+            keyAlias = System.getenv("KHONGDICH_KEY_ALIAS"),
+            keyPassword = System.getenv("KHONGDICH_KEY_PASSWORD"),
+        )
+    }
+    return null
 }
+
+val releaseKeystore: KeystoreConfig? = resolveKeystore()
 
 android {
     namespace = "com.khongdich.khongdich_mobile"
@@ -76,38 +114,23 @@ android {
 
     signingConfigs {
         create("release") {
-            val ksFile = keystoreFileFromEnv()
-            if (ksFile != null) {
-                storeFile = ksFile
-                storePassword = System.getenv("KHONGDICH_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KHONGDICH_KEY_ALIAS")
-                keyPassword = System.getenv("KHONGDICH_KEY_PASSWORD")
+            val ks = releaseKeystore
+            check(ks != null) {
+                "Không tìm thấy release keystore. Tạo android/key.properties " +
+                    "(xem AGENTS.md) hoặc set KHONGDICH_KEYSTORE_BASE64 env."
             }
+            storeFile = ks.file
+            storePassword = ks.storePassword
+            keyAlias = ks.keyAlias
+            keyPassword = ks.keyPassword
         }
     }
 
     buildTypes {
         release {
-            // Use the release signing config if a keystore was supplied,
-            // otherwise fall back to the debug signing config so local
-            // `flutter build apk --release` still works.
-            val ksFile = keystoreFileFromEnv()
-            val releaseKs = ksFile != null
-            signingConfig = if (releaseKs) {
-                signingConfigs.getByName("release")
-            } else {
-                // ⚠️ Google Play REJECTS debug-signed APKs. This fallback
-                // exists only for local dev builds. The CI pipeline
-                // (see .github/workflows/ci.yml) injects the keystore via
-                // KHONGDICH_KEYSTORE_BASE64 secrets — make sure those
-                // secrets are set before publishing a release tag.
-                logger.warn(
-                    "KHONGDICH_KEYSTORE_BASE64 not set — release build is " +
-                        "signed with the DEBUG keystore. Do NOT upload to " +
-                        "Google Play. Set the keystore secrets in CI."
-                )
-                signingConfigs.getByName("debug")
-            }
+            // Bắt buộc ký bằng key thật — KHÔNG fallback debug (debug-signed
+            // APK bị Google Play reject + SHA-1 sai → Google Sign-In fail).
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
         }
