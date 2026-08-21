@@ -304,6 +304,28 @@ class _CacheTileState extends ConsumerState<_CacheTile> {
     _clearing = true;
     try {
       await AppImageCache.instance.emptyCache();
+      // emptyCache() chỉ xoá file có entry trong DB của flutter_cache_manager.
+      // File vật lý sót lại trong thư mục (DB bị lỗi/trống, file từ phiên
+      // crash) không nằm trong DB → phải xoá trực tiếp để thật sự giải
+      // phóng dung lượng.
+      final baseDir = await getTemporaryDirectory();
+      // Cache manager hiện tại (AppImageCache) + cache cũ 'libCachedImageData'
+      // (key mặc định của cached_network_image các phiên trước — giờ không
+      // còn được dùng nhưng file vẫn nằm lại trên disk).
+      for (final key in ['khongdichImageCache', 'libCachedImageData']) {
+        final dir = Directory('${baseDir.path}/$key');
+        if (await dir.exists()) {
+          await for (final entity in dir.list(recursive: true)) {
+            if (entity is File) {
+              try {
+                await entity.delete();
+              } catch (_) {
+                // File đang bị dùng bởi image stream — bỏ qua, lần sau dọn.
+              }
+            }
+          }
+        }
+      }
       // Memory cache cũng giữ ảnh đã decode — xoá luôn để giải phóng RAM
       // và đảm bảo ảnh mới không lẫn ảnh cũ.
       PaintingBinding.instance.imageCache.clear();
