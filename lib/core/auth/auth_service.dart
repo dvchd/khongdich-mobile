@@ -264,6 +264,24 @@ AuthError translateSignInError(Object e) {
     switch (e.code) {
       case GoogleSignInExceptionCode.canceled:
       case GoogleSignInExceptionCode.interrupted:
+        // Trên thực tế plugin map nhiều lỗi thoáng qua phía Google thành
+        // `canceled` — điển hình là "[16] Account reauth failed" (tài khoản
+        // cần xác thực lại, thường tự khỏi sau vài phút). Nếu description
+        // cho thấy đây là lỗi reauth chứ KHÔNG phải user chủ động hủy →
+        // coi là transient để auto-retry (user hủy thật không có description
+        // dạng "[<code>] ...").
+        final desc = e.description ?? '';
+        final isReauth = desc.contains('reauth') ||
+            desc.startsWith('[16]') ||
+            desc.contains('Account reauth failed');
+        if (isReauth) {
+          return AuthError(
+            'Google yêu cầu xác thực lại tài khoản.',
+            'Lỗi thoáng qua từ phía Google — hệ thống đã tự thử lại. '
+                'Nếu vẫn lỗi, hãy chờ vài phút rồi thử lại.',
+            isTransient: true,
+          );
+        }
         return const AuthError('Đăng nhập đã bị huỷ.', '');
       case GoogleSignInExceptionCode.clientConfigurationError:
         return AuthError(
