@@ -35,9 +35,10 @@ import '../repositories/story_repository.dart';
 /// - VIP gate: skip nếu chương thuộc lockedChapterIds (user không có
 ///   quyền đọc → fetch vô nghĩa).
 ///
-/// **Cập nhật chương**: cache có thể cũ khi tác giả sửa chương. MVP:
-/// user xóa truyện cũ + tải lại nếu muốn cập nhật. Phase 2: check
-/// `updated_at` từ server → refetch nếu cache cũ.
+/// **Cập nhật chương**: cache tự phát hiện stale bằng cách so sánh
+/// `updated_at` từ chapter list (server) với `updated_at` của cache —
+/// tác giả sửa chương → server `updated_at` mới hơn → refetch + ghi đè
+/// cache cũ. Không cần user xóa truyện/tải lại.
 class ChapterCacheService {
   ChapterCacheService(this._repo, this._db);
 
@@ -82,6 +83,18 @@ class ChapterCacheService {
     _chapterCache[chapterId] = chapter;
   }
 
+  /// Cache stale khi server `updated_at` mới hơn cache (tác giả sửa chương).
+  /// Backend tăng `updated_at` khi sửa nội dung (`UPDATE chapters SET ...
+  /// updated_at = NOW()`), content_version thì không → dùng updated_at.
+  ///
+  /// Public static để unit test.
+  static bool isStale(DateTime cachedAt, DateTime? serverAt) {
+    if (serverAt == null) return false; // server cũ không trả → tin cache
+    // Dung sai 1s — updated_at có độ phân giải giây, tránh false positive
+    // khi cùng giá trị nhưng parse lệch.
+    return serverAt.difference(cachedAt).inSeconds > 1;
+  }
+
   /// Cập nhật locked chapter IDs từ VipStatus. Gọi khi user mở story
   /// detail → prefetch skip các chương locked.
   void setLockedChapterIds(Set<String> ids) {
@@ -104,11 +117,18 @@ class ChapterCacheService {
     final chapterMeta = match;
     final chapterId = chapterMeta.id;
 
-    // 2. Check memory cache → instant return.
+    // 2. Check memory cache → instant return (trừ khi stale).
     final memCached = _chapterCache[chapterId];
     if (memCached != null) {
-      AppLogger.info('ChapterCache: memory HIT for N$chapterNumber');
-      return memCached;
+      if (isStale(memCached.updatedAt, chapterMeta.updatedAt)) {
+        _chapterCache.remove(chapterId);
+        AppLogger.info('ChapterCache: memory STALE for N$chapterNumber '
+            '(cache ${memCached.updatedAt.toIso8601String()} vs server '
+            '${chapterMeta.updatedAt?.toIso8601String()}) — refetch');
+      } else {
+        AppLogger.info('ChapterCache: memory HIT for N$chapterNumber');
+        return memCached;
+      }
     }
 
     // 3. Check DB cache (downloaded_chapters) → parse JSON → return.
@@ -118,12 +138,18 @@ class ChapterCacheService {
         final chapter = ChapterContent.fromJson(
           jsonDecode(dbCached.contentRaw) as Map<String, dynamic>,
         );
-        _cacheChapter(chapterId, chapter);
-        AppLogger.info('ChapterCache: DB HIT for N$chapterNumber '
-            '(source: ${dbCached.source})');
-        // Update lastReadAt để LRU evict biết chương này được đọc gần đây.
-        await _db.markChapterRead(chapterId);
-        return chapter;
+        if (isStale(chapter.updatedAt, chapterMeta.updatedAt)) {
+          AppLogger.info('ChapterCache: DB STALE for N$chapterNumber '
+              '(cache ${chapter.updatedAt.toIso8601String()} vs server '
+              '${chapterMeta.updatedAt?.toIso8601String()}) — refetch');
+        } else {
+          _cacheChapter(chapterId, chapter);
+          AppLogger.info('ChapterCache: DB HIT for N$chapterNumber '
+              '(source: ${dbCached.source})');
+          // Update lastReadAt để LRU evict biết chương này được đọc gần đây.
+          await _db.markChapterRead(chapterId);
+          return chapter;
+        }
       } catch (e) {
         AppLogger.warning('ChapterCache: DB parse failed for N$chapterNumber, refetching', e);
       }
