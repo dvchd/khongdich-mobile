@@ -127,6 +127,10 @@ void _showQrDialog(BuildContext sheetContext, String url) {
                 version: QrVersions.auto,
                 size: 240,
                 padding: EdgeInsets.zero,
+                // EC level H (30%) — bắt buộc khi có logo chèn giữa (che
+                // ~22% module). qr_flutter mặc định L (7%) → máy quét
+                // không đọc được phần bị che. Web dùng H (`detail.html`).
+                errorCorrectionLevel: QrErrorCorrectLevel.H,
                 eyeStyle: const QrEyeStyle(
                   eyeShape: QrEyeShape.square,
                   color: Color(0xFF0F172A),
@@ -135,10 +139,14 @@ void _showQrDialog(BuildContext sheetContext, String url) {
                   dataModuleShape: QrDataModuleShape.square,
                   color: Color(0xFF0F172A),
                 ),
-                // Launcher logo (white circle background, like the web's
-                // favicon stamp) so the code stays scannable.
-                embeddedImage: const AssetImage('assets/icons/ic_launcher.png'),
+                // Logo trên nền trắng bo tròn (giống web: vẽ hình tròn
+                // trắng trước, logo lên trên) — tăng nhận diện + máy quét
+                // phân biệt logo với module QR. Asset qr_logo.png đã
+                // vẽ sẵn nền tròn (mirror templates/story/detail.html).
+                embeddedImage: const AssetImage('assets/icons/qr_logo.png'),
                 embeddedImageStyle: const QrEmbeddedImageStyle(
+                  // ~21% cạnh QR (240px) — trong khoảng chuẩn ≤30%,
+                  // logo bên trong nền tròn hiển thị ~50px.
                   size: Size(52, 52),
                 ),
                 semanticsLabel: url,
