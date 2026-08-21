@@ -47,6 +47,8 @@ dependencies:
   audio_service: ^0.18.19
   flutter_tts: ^4.2.5
   audio_session: ^0.2.4
+  # Share sheet cho tác giả tải audio chương (TTS → WAV → lưu/chia sẻ)
+  share_plus: ^13.3.0
 
   # Auth — Google Sign-In → exchange idToken for server JWT
   google_sign_in: ^7.2.0

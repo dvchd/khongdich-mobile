@@ -3,7 +3,13 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../../core/observability/app_logger.dart';
+import '../../repositories/story_repository.dart';
+import '../profile/profile_screen.dart' show currentUserProvider;
+import 'tts_audio_exporter.dart';
 import 'tts_audio_handler.dart';
 
 /// Full-screen TTS control panel with:
@@ -415,6 +421,10 @@ class _PanelContentState extends State<_PanelContent> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 16),
+                // Tải audio chương (chỉ tác giả truyện): TTS on-device →
+                // 1 file WAV → share sheet để lưu/chia sẻ.
+                AuthorChapterDownloadButton(handler: widget.handler),
               ],
             ),
           ),
@@ -432,5 +442,156 @@ class _PanelContentState extends State<_PanelContent> {
     final locale = v['locale'] ?? v['language'] ?? '';
     if (locale.isEmpty) return name;
     return '$name ($locale)';
+  }
+}
+
+/// Nút "Tải audio chương" — chỉ hiện khi user đang đăng nhập LÀ TÁC GIẢ
+/// của truyện đang nghe.
+///
+/// Luồng: lấy các chunk text hiện tại của handler → `TtsAudioExporter`
+/// tổng hợp từng chunk bằng TTS on-device (synthesizeToFile) → ghép
+/// thành 1 file WAV → mở share sheet để tác giả lưu vào máy/gửi đi.
+class AuthorChapterDownloadButton extends ConsumerStatefulWidget {
+  const AuthorChapterDownloadButton({super.key, required this.handler});
+
+  final TtsAudioHandler handler;
+
+  @override
+  ConsumerState<AuthorChapterDownloadButton> createState() =>
+      _AuthorChapterDownloadButtonState();
+}
+
+class _AuthorChapterDownloadButtonState
+    extends ConsumerState<AuthorChapterDownloadButton> {
+  bool _exporting = false;
+  bool? _isAuthor; // null = chưa xác định / không phải tác giả
+  String _error = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthor();
+  }
+
+  /// Xác định user hiện tại có phải tác giả của story đang nghe không
+  /// (so author_id của story với id user — API trả author_id ở story
+  /// detail, xem story_repository.dart:106).
+  Future<void> _checkAuthor() async {
+    final user = ref.read(currentUserProvider).value;
+    final storyId = widget.handler.currentStoryId;
+    if (user == null || storyId == null || storyId.isEmpty) return;
+    try {
+      final repo = ref.read(storyRepositoryProvider);
+      final detail = await repo.fetchStoryDetail(storyId);
+      if (!mounted) return;
+      setState(() => _isAuthor = detail.authorId == user.id);
+    } catch (e, s) {
+      AppLogger.warning('Author download: không xác định được tác giả', e, s);
+      if (mounted) setState(() => _isAuthor = false);
+    }
+  }
+
+  Future<void> _exportAndShare() async {
+    if (_exporting) return;
+    final chunks = widget.handler.chunks;
+    if (chunks.isEmpty) {
+      setState(() => _error = 'Chưa có nội dung chương để tổng hợp.');
+      return;
+    }
+    setState(() {
+      _exporting = true;
+      _error = '';
+    });
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final fileName =
+          'chuong-${widget.handler.currentChapterNumber ?? '?'}-'
+          '${DateTime.now().millisecondsSinceEpoch}.wav';
+      final outPath = '${docDir.path}/$fileName';
+
+      final exporter = TtsAudioExporter(
+        chunks: chunks,
+        engine: widget.handler.selectedEngine,
+        voiceName: widget.handler.selectedVoiceName,
+        speed: widget.handler.speed,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _error = 'Đang tổng hợp $done/$total...');
+        },
+      );
+      final file = await exporter.export(outPath);
+      if (!mounted) return;
+
+      // Share sheet — tác giả chọn nơi lưu (Files/Drive/gửi...).
+      final result = await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'audio/wav')],
+          fileNameOverrides: [fileName],
+          subject: 'Audio chương truyện — Không Dịch',
+        ),
+      );
+      if (result.status == ShareResultStatus.dismissed && mounted) {
+        setState(() => _error = 'Đã huỷ chia sẻ — file vẫn lưu tại '
+            '${file.path}');
+      }
+    } catch (e, s) {
+      AppLogger.warning('Tải audio chương thất bại', e, s);
+      if (mounted) {
+        setState(() => _error =
+            'Tổng hợp audio thất bại: ${e is TtsExportException ? e.message : '$e'}');
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Chỉ hiện khi chưa xác định được là tác giả — đang kiểm tra.
+    if (_isAuthor != true) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Divider(height: 8),
+        Row(
+          children: [
+            Icon(
+              _exporting ? Icons.downloading : Icons.file_download_outlined,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _exporting
+                    ? _error.isEmpty
+                        ? 'Đang tổng hợp audio...'
+                        : _error
+                    : 'Tải audio chương (WAV) — giọng đang chọn',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            if (_exporting)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              FilledButton.tonal(
+                onPressed: _exportAndShare,
+                child: const Text('Tải audio'),
+              ),
+          ],
+        ),
+        if (!_exporting && _error.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              _error,
+              style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+            ),
+          ),
+      ],
+    );
   }
 }
