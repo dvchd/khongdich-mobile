@@ -55,8 +55,14 @@ class DownloadManager {
   /// reset them to 'retry' and resume processing. Called when the
   /// downloads screen opens (the queue is invisible until then).
   Future<void> recoverInterrupted() async {
-    await _db.resetStuckDownloadingRows();
-    unawaited(_processQueue());
+    try {
+      await _db.resetStuckDownloadingRows();
+      unawaited(_processQueue());
+    } catch (e, s) {
+      // DB reset fail (vd. app vừa khởi động, DB chưa sẵn sàng) — log
+      // và bỏ qua; lần mở downloads screen sau sẽ retry.
+      AppLogger.warning('DownloadManager: recoverInterrupted failed', e, s);
+    }
   }
 
   /// Re-queue a failed row without creating a duplicate queue row.
@@ -209,6 +215,13 @@ class DownloadManager {
         _rerunRequested = false;
         await _processQueueOnce();
       } while (_rerunRequested);
+    } catch (e, s) {
+      // Lỗi DB/mạng bất ngờ trong lúc xử lý queue — log + để queue ở
+      // trạng thái hiện tại (rows vẫn 'pending'/'retry' → retry lần sau
+      // qua recoverInterrupted / retry()). Trước đây ngoại lệ thoát ra
+      // khỏi future fire-and-forget → unhandled async error.
+      AppLogger.warning('DownloadManager: _processQueue crashed (queue giữ '
+          'nguyên, sẽ retry ở lần chạy sau)', e, s);
     } finally {
       _processing = false;
     }

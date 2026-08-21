@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_client.dart';
+import '../core/observability/app_logger.dart';
 
 /// A single custom emoji from the backend picker feed.
 class EmojiItem {
@@ -90,9 +91,10 @@ class EmojiService {
           _resolved[e.name] = e.imageUrl;
         }
       }
-    } catch (_) {
+    } catch (e, s) {
       // Best-effort — the picker falls back to an empty grid and the
       // resolver keeps working for individual tokens.
+      AppLogger.warning('EmojiService: loadFeed failed — picker trống', e, s);
       _feed = const EmojiFeed(
         popular: [],
         recent: [],
@@ -112,7 +114,8 @@ class EmojiService {
       });
       final feed = EmojiFeed.fromJson(r.data as Map<String, dynamic>);
       return feed.popular;
-    } catch (_) {
+    } catch (e, s) {
+      AppLogger.warning('EmojiService: search failed', e, s);
       return const [];
     }
   }
@@ -127,7 +130,8 @@ class EmojiService {
       final feed = EmojiFeed.fromJson(r.data as Map<String, dynamic>);
       _mergeFeed(feed);
       return feed.popular;
-    } catch (_) {
+    } catch (e, s) {
+      AppLogger.warning('EmojiService: loadMorePopular failed', e, s);
       return const [];
     }
   }

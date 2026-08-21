@@ -14,31 +14,37 @@ import 'package:logger/logger.dart';
 class AppLogger {
   AppLogger._();
 
-  static late final Logger _instance;
+  static Logger? _instance;
+
+  /// Lazy singleton — tự tạo logger nếu [init] chưa chạy (vd. widget
+  /// test không gọi main()). `init()` chỉ để khởi tạo sớm / rõ ràng.
+  static Logger get _log => _instance ??= _build();
+
+  static Logger _build() => Logger(
+        printer: PrettyPrinter(
+          methodCount: 0,
+          errorMethodCount: 8,
+          lineLength: 100,
+          colors: true,
+          printEmojis: false,
+          dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
+        ),
+        level: kDebugMode ? Level.debug : Level.warning,
+      );
 
   static void init() {
-    _instance = Logger(
-      printer: PrettyPrinter(
-        methodCount: 0,
-        errorMethodCount: 8,
-        lineLength: 100,
-        colors: true,
-        printEmojis: false,
-        dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
-      ),
-      level: kDebugMode ? Level.debug : Level.warning,
-    );
+    _instance ??= _build();
   }
 
   static void debug(String message, [Object? error, StackTrace? stack]) =>
-      _instance.d(message, error: error, stackTrace: stack);
+      _log.d(message, error: error, stackTrace: stack);
 
   static void info(String message, [Object? error, StackTrace? stack]) =>
-      _instance.i(message, error: error, stackTrace: stack);
+      _log.i(message, error: error, stackTrace: stack);
 
   static void warning(String message, [Object? error, StackTrace? stack]) =>
-      _instance.w(message, error: error, stackTrace: stack);
+      _log.w(message, error: error, stackTrace: stack);
 
   static void error(String message, [Object? error, StackTrace? stack]) =>
-      _instance.e(message, error: error, stackTrace: stack);
+      _log.e(message, error: error, stackTrace: stack);
 }

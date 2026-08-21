@@ -74,26 +74,41 @@ class StoryRepository implements ChapterFetcher {
     final r = await _dio.get('/api/v1/mobile/stories/$idOrSlug');
     final data = r.data as Map<String, dynamic>;
     final storyJson = data['story'] as Map<String, dynamic>;
+    final categories = [
+      for (final c in (data['categories'] as List? ?? const []))
+        ((c as Map<String, dynamic>)['name'] as String?) ?? '',
+    ].where((s) => s.isNotEmpty).toList();
+    final categorySlugs = [
+      for (final c in (data['categories'] as List? ?? const []))
+        ((c as Map<String, dynamic>)['slug'] as String?) ?? '',
+    ].where((s) => s.isNotEmpty).toList();
+    final tags = [
+      for (final t in (data['tags'] as List? ?? const []))
+        ((t as Map<String, dynamic>)['name'] as String?) ?? '',
+    ].where((s) => s.isNotEmpty).toList();
+    final tagSlugs = [
+      for (final t in (data['tags'] as List? ?? const []))
+        ((t as Map<String, dynamic>)['slug'] as String?) ?? '',
+    ].where((s) => s.isNotEmpty).toList();
     final story = StorySummary.fromStoryJson(storyJson).copyWith(
       author:
           (data['author_display_name'] as String?) ??
           (data['author_username'] as String?) ??
           'Không rõ',
-      categories: [
-        for (final c in (data['categories'] as List? ?? const []))
-          ((c as Map<String, dynamic>)['name'] as String?) ?? '',
-      ].where((s) => s.isNotEmpty).toList(),
-      tags: [
-        for (final t in (data['tags'] as List? ?? const []))
-          ((t as Map<String, dynamic>)['name'] as String?) ?? '',
-      ].where((s) => s.isNotEmpty).toList(),
+      categories: categories,
+      tags: tags,
+      categorySlugs: categorySlugs,
+      tagSlugs: tagSlugs,
       synopsis: storyJson['synopsis'] as String?,
     );
     return StoryDetailPayload(
       story: story,
+      authorId: data['author_id'] as String? ?? '',
       authorUsername: data['author_username'] as String? ?? '',
       authorDisplayName: data['author_display_name'] as String? ?? '',
       authorAvatar: data['author_avatar'] as String?,
+      isFollowing: data['is_following'] as bool? ?? false,
+      lastReadChapter: (data['last_read_chapter'] as num?)?.toInt(),
       firstChapter: (data['first_chapter'] as num?)?.toInt(),
       bookmark: data['bookmark'] as String?,
       commentCount: (data['comment_count'] as num?)?.toInt() ?? 0,
@@ -545,6 +560,148 @@ class StoryRepository implements ChapterFetcher {
     );
   }
 
+  // ─── Follow author + Report ────────────────────────────────────
+
+  /// Toggle theo dõi một tác giả. Returns (following, followerCount).
+  /// Hits `POST /api/v1/mobile/follows/{author_id}`.
+  Future<(bool following, int followerCount)> toggleFollow(
+    String authorId,
+  ) async {
+    final r = await _dio.post('/api/v1/mobile/follows/$authorId');
+    final data = r.data as Map<String, dynamic>;
+    return (
+      data['following'] as bool? ?? false,
+      (data['follower_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// Báo cáo vi phạm (story/chapter/comment/user).
+  /// Hits `POST /api/v1/mobile/reports`.
+  Future<void> submitReport({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String? description,
+  }) async {
+    await _dio.post(
+      '/api/v1/mobile/reports',
+      data: {
+        'target_type': targetType,
+        'target_id': targetId,
+        'reason': reason,
+        if (description != null && description.trim().isNotEmpty)
+          'description': description.trim(),
+      },
+    );
+  }
+
+  // ─── Discover: ranking / categories / tags ─────────────────────
+
+  /// BXH truyện hot theo kỳ (period: day|week|month|all).
+  /// Hits `GET /api/v1/mobile/ranking`.
+  Future<PaginatedStories> fetchRanking({String period = 'all'}) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/ranking',
+      queryParameters: {'period': period},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedStories(
+      stories: [
+        for (final s in (data['stories'] as List? ?? const []))
+          StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+      ],
+      total: (data['stories'] as List?)?.length ?? 0,
+      page: 1,
+      perPage: (data['stories'] as List?)?.length ?? 0,
+      totalPages: 1,
+    );
+  }
+
+  /// BXH truyện VIP theo kỳ.
+  /// Hits `GET /api/v1/mobile/ranking/vip`.
+  Future<List<StorySummary>> fetchRankingVip({String period = 'all'}) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/ranking/vip',
+      queryParameters: {'period': period},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final s in (data['stories'] as List? ?? const []))
+        StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+    ];
+  }
+
+  /// Danh sách thể loại (cho màn browse thể loại).
+  /// Hits `GET /api/v1/mobile/categories`.
+  Future<List<CategoryInfo>> fetchCategories() async {
+    final r = await _dio.get('/api/v1/mobile/categories');
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final c in (data['categories'] as List? ?? const []))
+        CategoryInfo.fromJson(c as Map<String, dynamic>),
+    ];
+  }
+
+  /// Danh sách tag kèm số truyện công khai.
+  /// Hits `GET /api/v1/mobile/tags`.
+  Future<List<TagInfo>> fetchTags() async {
+    final r = await _dio.get('/api/v1/mobile/tags');
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final t in (data['tags'] as List? ?? const []))
+        TagInfo.fromJson(t as Map<String, dynamic>),
+    ];
+  }
+
+  /// Truyện theo thể loại (sort: newest|views|rating|chapters).
+  /// Hits `GET /api/v1/mobile/stories/by-category/{slug}`.
+  Future<PaginatedStories> fetchStoriesByCategory(
+    String slug, {
+    String sort = 'newest',
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/stories/by-category/$slug',
+      queryParameters: {'sort': sort, 'page': page, 'per_page': perPage},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedStories(
+      stories: [
+        for (final s in (data['stories'] as List? ?? const []))
+          StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? 1,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// Truyện theo tag.
+  /// Hits `GET /api/v1/mobile/stories/by-tag/{slug}`.
+  Future<PaginatedStories> fetchStoriesByTag(
+    String slug, {
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/stories/by-tag/$slug',
+      queryParameters: {'page': page, 'per_page': perPage},
+    );
+    final data = r.data as Map<String, dynamic>;
+    return PaginatedStories(
+      stories: [
+        for (final s in (data['stories'] as List? ?? const []))
+          StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? 1,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
+    );
+  }
+
   // ─── Bookmarks ──────────────────────────────────────────────────
 
   /// List bookmarks by `list_type` (or all if null).
@@ -794,17 +951,28 @@ class PaginatedChapters {
 class StoryDetailPayload {
   const StoryDetailPayload({
     required this.story,
+    required this.authorId,
     required this.authorUsername,
     required this.authorDisplayName,
     required this.authorAvatar,
+    this.isFollowing = false,
+    this.lastReadChapter,
     required this.firstChapter,
     required this.bookmark,
     this.commentCount = 0,
   });
   final StorySummary story;
+  final String authorId;
   final String authorUsername;
   final String authorDisplayName;
   final String? authorAvatar;
+
+  /// True when the current user follows this story's author.
+  final bool isFollowing;
+
+  /// Chapter number of the current user's reading progress, if any
+  /// (drives the "Tiếp tục đọc" button like the web story detail).
+  final int? lastReadChapter;
   final int? firstChapter;
   final String? bookmark;
 
@@ -817,6 +985,47 @@ class SearchResult {
   const SearchResult({required this.stories, required this.posts});
   final List<StorySummary> stories;
   final List<PostCard> posts;
+}
+
+/// Một thể loại truyện (backend models::category::Category).
+class CategoryInfo {
+  const CategoryInfo({
+    required this.id,
+    required this.name,
+    required this.slug,
+    this.description = '',
+  });
+
+  final int id;
+  final String name;
+  final String slug;
+  final String description;
+
+  factory CategoryInfo.fromJson(Map<String, dynamic> json) => CategoryInfo(
+    id: (json['id'] as num?)?.toInt() ?? 0,
+    name: json['name'] as String? ?? '',
+    slug: json['slug'] as String? ?? '',
+    description: json['description'] as String? ?? '',
+  );
+}
+
+/// Một tag + số truyện công khai gắn tag đó.
+class TagInfo {
+  const TagInfo({
+    required this.name,
+    required this.slug,
+    this.storyCount = 0,
+  });
+
+  final String name;
+  final String slug;
+  final int storyCount;
+
+  factory TagInfo.fromJson(Map<String, dynamic> json) => TagInfo(
+    name: json['name'] as String? ?? '',
+    slug: json['slug'] as String? ?? '',
+    storyCount: (json['story_count'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class PostCard {
@@ -1084,6 +1293,7 @@ class AuthorInfo {
     this.avatarUrl,
     this.bio = '',
     this.followerCount = 0,
+    this.isFollowing = false,
   });
 
   final String id;
@@ -1092,6 +1302,9 @@ class AuthorInfo {
   final String? avatarUrl;
   final String bio;
   final int followerCount;
+
+  /// True when the current user follows this author (màn hình tác giả).
+  final bool isFollowing;
 
   /// Tên hiển thị — fallback về username khi display_name trống.
   String get name => displayName.isNotEmpty ? displayName : username;
@@ -1105,6 +1318,7 @@ class AuthorInfo {
             : null,
         bio: json['bio'] as String? ?? '',
         followerCount: (json['follower_count'] as num?)?.toInt() ?? 0,
+        isFollowing: json['is_following'] as bool? ?? false,
       );
 }
 

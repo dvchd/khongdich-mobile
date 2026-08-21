@@ -160,7 +160,18 @@ class ChapterCacheService {
 
   /// Prefetch N+1 và N+2 ngầm (fire-and-forget). Idempotent.
   /// VIP gate: skip nếu chương thuộc lockedChapterIds.
+  /// Toàn bộ body bọc try/catch — hàm này được gọi qua `unawaited(...)`
+  /// từ reader; lỗi mạng/DB ở `_getChapterList` nếu không bắt sẽ thành
+  /// unhandled async error → crash.
   Future<void> prefetchNext(ChapterContent currentChapter) async {
+    try {
+      await _prefetchNextInner(currentChapter);
+    } catch (e, s) {
+      AppLogger.warning('ChapterCache: prefetchNext failed (ignored)', e, s);
+    }
+  }
+
+  Future<void> _prefetchNextInner(ChapterContent currentChapter) async {
     final nextNum = currentChapter.nextChapter;
     if (nextNum == null) return;
 

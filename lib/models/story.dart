@@ -10,6 +10,8 @@ class StorySummary {
     required this.author,
     required this.categories,
     required this.tags,
+    this.categorySlugs = const [],
+    this.tagSlugs = const [],
     required this.contentTypes,
     this.synopsis,
     this.chapterCount,
@@ -35,6 +37,8 @@ class StorySummary {
           'Không rõ',
       categories: const [],
       tags: const [],
+      categorySlugs: const [],
+      tagSlugs: const [],
       contentTypes: [json['content_type'] as String? ?? 'text'],
       synopsis: json['synopsis'] as String?,
       chapterCount: (json['chapter_count'] as num?)?.toInt(),
@@ -58,6 +62,8 @@ class StorySummary {
       author: '', // filled by the parent StoryDetail payload
       categories: const [],
       tags: const [],
+      categorySlugs: const [],
+      tagSlugs: const [],
       contentTypes: [json['content_type'] as String? ?? 'text'],
       synopsis: json['synopsis'] as String?,
       chapterCount: (json['chapter_count'] as num?)?.toInt(),
@@ -79,6 +85,10 @@ class StorySummary {
   final String author;
   final List<String> categories;
   final List<String> tags;
+  /// Slug song song với [categories]/[tags] — dùng cho navigation browse.
+  /// Chỉ có ở payload detail (story cards không kèm slug).
+  final List<String> categorySlugs;
+  final List<String> tagSlugs;
   final List<String> contentTypes;
   final String? synopsis;
   final int? chapterCount;
@@ -100,6 +110,8 @@ class StorySummary {
     String? author,
     List<String>? categories,
     List<String>? tags,
+    List<String>? categorySlugs,
+    List<String>? tagSlugs,
     String? synopsis,
   }) =>
       StorySummary(
@@ -110,6 +122,8 @@ class StorySummary {
         author: author ?? this.author,
         categories: categories ?? this.categories,
         tags: tags ?? this.tags,
+        categorySlugs: categorySlugs ?? this.categorySlugs,
+        tagSlugs: tagSlugs ?? this.tagSlugs,
         contentTypes: contentTypes,
         synopsis: synopsis ?? this.synopsis,
         chapterCount: chapterCount,

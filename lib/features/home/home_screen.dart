@@ -7,6 +7,7 @@ import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
+import '../notifications/unread_badge_provider.dart';
 import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import 'publish_web_sheet.dart';
 import 'widgets/home_hero.dart';
@@ -94,9 +95,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             tooltip: 'Đăng truyện (web)',
             onPressed: () => showPublishWebSheet(context),
           ),
-          IconButton(
-            icon: const Icon(Icons.notifications_outlined),
-            onPressed: () => context.push('/notifications'),
+          Consumer(
+            builder: (context, ref, _) {
+              final unread = ref.watch(unreadNotificationsProvider)
+                  .valueOrNull;
+              return IconButton(
+                icon: Badge(
+                  isLabelVisible: (unread ?? 0) > 0,
+                  label: Text('${unread ?? 0}'),
+                  child: const Icon(Icons.notifications_outlined),
+                ),
+                tooltip: 'Thông báo',
+                onPressed: () => context.push('/notifications'),
+              );
+            },
           ),
         ],
       ),
@@ -130,6 +142,8 @@ class _HomeContent extends ConsumerWidget {
     return ListView(
       children: [
         const HomeHero(),
+        // Khám phá nhanh: BXH / Thể loại / Tag / Khám phá (lọc).
+        const _DiscoverShortcuts(),
         // Chợ Phiên — hidden while the chợ is closed (best-effort fetch,
         // mirrors the web home section).
         ref.watch(homeMarketProvider).whenData((section) {
@@ -494,5 +508,53 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
     } catch (e, s) {
       state = AsyncValue.error(e, s);
     }
+  }
+}
+
+/// Hàng phím tắt khám phá trên Home: BXH / Thể loại / Tag / Khám phá.
+class _DiscoverShortcuts extends StatelessWidget {
+  const _DiscoverShortcuts();
+
+  static const _items = [
+    (Icons.emoji_events_outlined, 'BXH', '/ranking'),
+    (Icons.category_outlined, 'Thể loại', '/category-index'),
+    (Icons.tag, 'Tag', '/tag-index'),
+    (Icons.explore_outlined, 'Khám phá', '/explore'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Row(
+        children: [
+          for (final (icon, label, path) in _items)
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => context.push(path),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      Icon(
+                        icon,
+                        color: theme.colorScheme.primary,
+                        size: 26,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        label,
+                        style: theme.textTheme.labelSmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

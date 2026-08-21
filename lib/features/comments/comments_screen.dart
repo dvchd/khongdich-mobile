@@ -142,6 +142,11 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     } catch (_) {
       if (mounted && epoch == _feedEpoch) {
         setState(() => _loadingMore = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không tải thêm được bình luận — thử lại sau.'),
+          ),
+        );
       }
     }
   }

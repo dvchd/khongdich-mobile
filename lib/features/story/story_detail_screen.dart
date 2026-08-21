@@ -7,11 +7,14 @@ import 'package:go_router/go_router.dart';
 import '../../core/database/app_database.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
+import '../../core/widgets/follow_button.dart';
+import '../../core/widgets/report_sheet.dart';
 import '../../core/widgets/share_story_sheet.dart';
 import '../../models/story.dart' show ChapterSummary, StorySummary;
 import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
+import '../profile/profile_screen.dart' show currentUserProvider;
 
 /// Stream of download queue rows for a specific story — auto-updates
 /// via Drift's `watch()`.
@@ -109,6 +112,7 @@ class _StoryDetailBody extends ConsumerWidget {
     final reactiveBookmark =
         ref.watch(storyBookmarkTypeProvider(story.id));
     final effectiveBookmark = reactiveBookmark ?? localBookmark;
+    final currentUser = ref.watch(currentUserProvider).valueOrNull;
     final chaptersAsync = ref.watch(chapterListProvider(story.id));
     final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
     final queueAsync = ref.watch(downloadQueueForStoryProvider(story.id));
@@ -139,6 +143,32 @@ class _StoryDetailBody extends ConsumerWidget {
                 storySlug: story.slug,
                 storyTitle: story.title,
               ),
+            ),
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'Thêm',
+              onSelected: (value) {
+                if (value == 'report') {
+                  showReportSheet(
+                    context,
+                    targetType: 'story',
+                    targetId: story.id,
+                    targetLabel: 'truyện',
+                  );
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'report',
+                  child: Row(
+                    children: [
+                      Icon(Icons.flag_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Báo cáo vi phạm'),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -216,6 +246,14 @@ class _StoryDetailBody extends ConsumerWidget {
                           );
                         },
                       ),
+                      if (detail.authorId.isNotEmpty &&
+                          currentUser?.id != detail.authorId)
+                        FollowButton(
+                          authorId: detail.authorId,
+                          initialFollowing: detail.isFollowing,
+                          initialFollowerCount: 0,
+                          compact: true,
+                        ),
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 6,
@@ -278,10 +316,20 @@ class _StoryDetailBody extends ConsumerWidget {
                     spacing: 6,
                     runSpacing: 6,
                     children: [
-                      for (final cat in story.categories)
-                        Chip(
-                            label: Text(cat),
-                            visualDensity: VisualDensity.compact),
+                      for (var i = 0; i < story.categories.length; i++)
+                        ActionChip(
+                          label: Text(story.categories[i]),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () {
+                            final slug = i < story.categorySlugs.length
+                                ? story.categorySlugs[i]
+                                : story.categories[i];
+                            context.push(
+                              '/category/$slug',
+                              extra: story.categories[i],
+                            );
+                          },
+                        ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -291,11 +339,20 @@ class _StoryDetailBody extends ConsumerWidget {
                     spacing: 6,
                     runSpacing: 6,
                     children: [
-                      for (final tag in story.tags)
-                        Chip(
-                          label: Text('#$tag'),
+                      for (var i = 0; i < story.tags.length; i++)
+                        ActionChip(
+                          label: Text('#${story.tags[i]}'),
                           visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
+                          onPressed: () {
+                            final slug = i < story.tagSlugs.length
+                                ? story.tagSlugs[i]
+                                : story.tags[i];
+                            context.push(
+                              '/tag/$slug',
+                              extra: story.tags[i],
+                            );
+                          },
                         ),
                     ],
                   ),
@@ -309,13 +366,28 @@ class _StoryDetailBody extends ConsumerWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: FilledButton.icon(
-                        onPressed: detail.firstChapter == null
-                            ? null
-                            : () => context.push(
-                                '/chapter/${story.id}:${detail.firstChapter}'),
-                        icon: const Icon(Icons.menu_book),
-                        label: const Text('Bắt đầu đọc'),
+                      child: Builder(
+                        builder: (context) {
+                          // "Tiếp tục đọc" như web: có last_read_chapter →
+                          // vào thẳng chương đó; không → "Bắt đầu đọc".
+                          final resume = detail.lastReadChapter;
+                          final target = (resume != null &&
+                                  resume != detail.firstChapter)
+                              ? resume
+                              : detail.firstChapter;
+                          return FilledButton.icon(
+                            onPressed: target == null
+                                ? null
+                                : () => context.push(
+                                    '/chapter/${story.id}:$target'),
+                            icon: const Icon(Icons.menu_book),
+                            label: Text(
+                              resume != null
+                                  ? 'Tiếp tục chương $resume'
+                                  : 'Bắt đầu đọc',
+                            ),
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -323,6 +395,7 @@ class _StoryDetailBody extends ConsumerWidget {
                       icon: Icon(effectiveBookmark == null
                           ? Icons.bookmark_border
                           : Icons.bookmark),
+                      tooltip: 'Thêm vào tủ truyện — giữ để chọn danh sách',
                       onPressed: () async {
                         final added = await ref
                             .read(bookshelfProvider.notifier)
@@ -351,6 +424,12 @@ class _StoryDetailBody extends ConsumerWidget {
                           );
                         }
                       },
+                      onLongPress: () => _pickBookmarkType(
+                        context,
+                        ref,
+                        story,
+                        effectiveBookmark,
+                      ),
                     ),
                     IconButton.outlined(
                       tooltip: activeDownloads > 0
@@ -626,6 +705,109 @@ class _StoryDetailBody extends ConsumerWidget {
             content: Text('Không tải được chương: $e'),
           ),
         );
+    }
+  }
+
+  /// Chọn danh sách tủ truyện cho bookmark (giữ nút 📚) — tương tự các
+  /// tab tủ trên web: Đang đọc / Đã đọc xong / Sẽ đọc / Yêu thích.
+  /// Chọn đúng loại hiện tại = bỏ bookmark; chọn loại khác = chuyển loại.
+  Future<void> _pickBookmarkType(
+    BuildContext context,
+    WidgetRef ref,
+    StorySummary story,
+    String? currentListType,
+  ) async {
+    const options = [
+      (Icons.auto_stories_outlined, 'reading', 'Đang đọc'),
+      (Icons.check_circle_outline, 'completed', 'Đã đọc xong'),
+      (Icons.schedule_outlined, 'plan_to_read', 'Sẽ đọc'),
+      (Icons.favorite_outline, 'favorite', 'Yêu thích'),
+    ];
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(
+                'Thêm vào tủ truyện',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              subtitle: const Text('Chạm để chọn danh sách'),
+            ),
+            for (final (icon, type, label) in options)
+              ListTile(
+                leading: Icon(icon),
+                title: Text(label),
+                trailing: currentListType == type
+                    ? const Icon(Icons.check, color: AppTheme.primary)
+                    : null,
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(type),
+              ),
+            if (currentListType != null)
+              ListTile(
+                leading: const Icon(Icons.bookmark_remove_outlined),
+                title: const Text('Xoá khỏi tủ truyện'),
+                textColor: Theme.of(context).colorScheme.error,
+                onTap: () =>
+                    Navigator.of(sheetContext).pop('__remove__'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null || !context.mounted) return;
+    final notifier = ref.read(bookshelfProvider.notifier);
+    if (chosen == '__remove__') {
+      await notifier.toggle(
+        story.id,
+        listType: currentListType!,
+        title: story.title,
+        slug: story.slug,
+        coverUrl: story.coverUrl,
+        author: story.author,
+        contentType: story.contentTypes.isNotEmpty
+            ? story.contentTypes.first
+            : 'text',
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã xoá khỏi tủ truyện'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+      return;
+    }
+    final label = options.firstWhere((o) => o.$2 == chosen).$3;
+    await notifier.toggle(
+      story.id,
+      listType: chosen,
+      title: story.title,
+      slug: story.slug,
+      coverUrl: story.coverUrl,
+      author: story.author,
+      contentType: story.contentTypes.isNotEmpty
+          ? story.contentTypes.first
+          : 'text',
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            currentListType == chosen
+                ? 'Đã xoá khỏi tủ truyện'
+                : 'Đã thêm vào "$label"',
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
     }
   }
 }

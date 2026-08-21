@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/follow_button.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../home/widgets/story_card.dart';
@@ -129,6 +130,12 @@ class _AuthorContent extends ConsumerWidget {
                               value: 'người theo dõi',
                             ),
                         ],
+                      ),
+                      const SizedBox(height: 6),
+                      FollowButton(
+                        authorId: author.id,
+                        initialFollowing: author.isFollowing,
+                        initialFollowerCount: author.followerCount,
                       ),
                     ],
                   ),

@@ -105,6 +105,11 @@ class _StoryReviewsScreenState extends ConsumerState<StoryReviewsScreen> {
     } catch (_) {
       if (mounted && epoch == _feedEpoch) {
         setState(() => _loadingMore = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không tải thêm được đánh giá — thử lại sau.'),
+          ),
+        );
       }
     }
   }

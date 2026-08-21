@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/network/api_client.dart';
+import '../core/observability/app_logger.dart';
 import '../models/market.dart';
 
 /// Client for the Chợ Phiên / Họp Chợ endpoints mounted at
@@ -77,6 +78,11 @@ class MarketRepository {
       return controller.close();
     };
 
+    // Reconnect với exponential backoff (1s → 30s tối đa) thay vì cố định
+    // 3s mãi mãi — server down lâu thì không spam request + drain pin.
+    var retryDelay = const Duration(seconds: 1);
+    const maxRetryDelay = Duration(seconds: 30);
+
     Future<void> connect() async {
       try {
         final response = await _dio.get<ResponseBody>(
@@ -147,12 +153,19 @@ class MarketRepository {
         }
         // Server closed the stream cleanly — reconnect after a pause.
         if (!controller.isClosed) {
-          await Future.delayed(const Duration(seconds: 3));
+          retryDelay = const Duration(seconds: 1);
+          await Future.delayed(retryDelay);
+          retryDelay = _nextDelay(retryDelay, maxRetryDelay);
           if (!controller.isClosed) unawaited(connect());
         }
-      } catch (_) {
+      } catch (e, s) {
+        AppLogger.warning(
+            'Market: SSE mất kết nối — reconnect sau ${retryDelay.inSeconds}s',
+            e,
+            s);
         if (!controller.isClosed) {
-          await Future.delayed(const Duration(seconds: 3));
+          await Future.delayed(retryDelay);
+          retryDelay = _nextDelay(retryDelay, maxRetryDelay);
           if (!controller.isClosed) unawaited(connect());
         }
       }
@@ -161,6 +174,13 @@ class MarketRepository {
     unawaited(connect());
     return controller.stream.listen(onEvent);
   }
+}
+
+/// Exponential backoff cho SSE reconnect — nhân đôi mỗi lần, chặn ở
+/// [maxDelay] (1s → 2s → 4s → … → 30s).
+Duration _nextDelay(Duration current, Duration maxDelay) {
+  final next = current * 2;
+  return next > maxDelay ? maxDelay : next;
 }
 
 /// Result of posting a chat message.

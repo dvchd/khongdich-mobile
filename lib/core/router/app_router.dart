@@ -15,6 +15,9 @@ import '../../features/comments/segment_composer_sheet.dart';
 import '../../features/downloads/downloads_screen.dart';
 import '../../features/downloads/offline_library_screen.dart';
 import '../../features/downloads/offline_story_detail_screen.dart';
+import '../../features/discover/browse_screens.dart';
+import '../../features/discover/explore_screen.dart';
+import '../../features/discover/ranking_screen.dart';
 import '../../features/home/home_screen.dart';
 import '../../features/market/market_screen.dart';
 import '../../features/notifications/notifications_screen.dart';
@@ -101,6 +104,43 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'author',
         builder: (context, state) =>
             AuthorScreen(username: state.pathParameters['username']!),
+      ),
+      // Khám phá: BXH, thể loại, tag, explore filter.
+      GoRoute(
+        path: '/ranking',
+        name: 'ranking',
+        builder: (context, state) => const RankingScreen(),
+      ),
+      GoRoute(
+        path: '/explore',
+        name: 'explore',
+        builder: (context, state) => const ExploreScreen(),
+      ),
+      GoRoute(
+        path: '/category-index',
+        name: 'category_index',
+        builder: (context, state) => const CategoryIndexScreen(),
+      ),
+      GoRoute(
+        path: '/category/:slug',
+        name: 'category',
+        builder: (context, state) => CategoryStoriesScreen(
+          slug: state.pathParameters['slug']!,
+          title: state.extra as String? ?? '',
+        ),
+      ),
+      GoRoute(
+        path: '/tag-index',
+        name: 'tag_index',
+        builder: (context, state) => const TagIndexScreen(),
+      ),
+      GoRoute(
+        path: '/tag/:slug',
+        name: 'tag',
+        builder: (context, state) => TagStoriesScreen(
+          slug: state.pathParameters['slug']!,
+          title: state.extra as String? ?? '',
+        ),
       ),
       GoRoute(
         path: '/chapter/:ref',

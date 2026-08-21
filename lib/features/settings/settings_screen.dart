@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/manga_image_downloader.dart';
 import '../reader/reader_settings_provider.dart';
@@ -19,6 +20,10 @@ import '../reader/reader_settings_provider.dart';
 /// simply installs the right flavor for the environment they want.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
+
+  // Busy-guard: tránh xoá trùng khi user bấm nhiều lần (ConsumerWidget
+  // không có setState — dùng cờ tĩnh là đủ cho thao tác tức thời này).
+  static bool _clearingDownloads = false;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -192,15 +197,29 @@ class SettingsScreen extends ConsumerWidget {
     );
     if (confirmed != true) return;
 
-    final db = ref.read(appDatabaseProvider);
-    await db.deleteAllDownloadedChapters();
-    await db.clearDownloadQueue();
-    // File ảnh manga + bảng downloaded_chapter_images — trước đây không
-    // được xoá → hàng trăm MB ảnh bị bỏ lại vĩnh viễn trên disk.
-    await ref.read(mangaImageDownloaderProvider).deleteAllImages();
+    // Busy-guard: tránh user bấm nhiều lần / chạm các thao tác xoá khác
+    // trong lúc đang xoá (3 thao tác xoá tuần tự — trước đây không có
+    // guard, lỗi giữa chừng = unhandled + không feedback).
+    if (_clearingDownloads) return;
+    _clearingDownloads = true;
+    try {
+      final db = ref.read(appDatabaseProvider);
+      await db.deleteAllDownloadedChapters();
+      await db.clearDownloadQueue();
+      // File ảnh manga + bảng downloaded_chapter_images — trước đây không
+      // được xoá → hàng trăm MB ảnh bị bỏ lại vĩnh viễn trên disk.
+      await ref.read(mangaImageDownloaderProvider).deleteAllImages();
 
-    if (context.mounted) {
-      _toast(context, 'Đã xoá tất cả truyện đã tải.');
+      if (context.mounted) {
+        _toast(context, 'Đã xoá tất cả truyện đã tải.');
+      }
+    } catch (e, s) {
+      AppLogger.warning('Xoá toàn bộ download thất bại', e, s);
+      if (context.mounted) {
+        _toast(context, 'Xoá thất bại — thử lại sau.');
+      }
+    } finally {
+      _clearingDownloads = false;
     }
   }
 
