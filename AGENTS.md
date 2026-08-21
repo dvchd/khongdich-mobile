@@ -11,7 +11,14 @@ Chạy theo đúng thứ tự:
 
 Khi sửa `lib/features/tts/tts_audio_handler.dart`, bắt buộc chạy riêng `flutter test test/tts_state_machine_test.dart` — file này khóa các bug race của TTS (chú thích bug #1–#11 trong header của handler).
 
-CI chạy `flutter analyze` và `flutter test` song song (2 job) trên mọi push/PR; khi push tag `v*` job `build-android` build APK + AAB prod (có cache Gradle, daemon bật) rồi đăng lên GitHub Release và **tự upload AAB lên Closed Testing (track `PLAY_TRACK_NAME` = `Closed Test`) qua GitHub Action** bằng service account `play-release@khongdich-play` (secret `PLAY_SERVICE_ACCOUNT_JSON` — base64 file key JSON, xem skill android-release). Release notes CI tự sinh theo tag (`play/whatsnew/whatsnew-vi|en-US`). Commit hỏng CI = hỏng release.
+CI chạy `flutter analyze` và `flutter test` song song (2 job) trên mọi push/PR; khi push tag `v*` job `build-android` build APK + AAB prod (có cache Gradle, daemon bật) rồi đăng lên GitHub Release và **tự upload AAB lên Closed Testing (track `PLAY_TRACK_NAME` = `Closed Test`) qua GitHub Action** bằng service account `play-release@khongdich-play` (secret `PLAY_SERVICE_ACCOUNT_JSON` — base64 file key JSON, xem skill android-release). Commit hỏng CI = hỏng release.
+
+### Release notes (nguồn duy nhất)
+
+- Nguồn duy nhất: `docs/release-notes/v<version>.md` (tiếng Việt) và `v<version>.en-US.md` (tiếng Anh) — viết markdown, commit TRƯỚC khi bump version (script `scripts/bump_version.sh` fail nếu thiếu).
+- **GitHub Release** đọc thẳng file md qua `body_path` (markdown render đẹp).
+- **Play Console** đọc cùng file đó, CI dùng `scripts/md_to_whatsnew.py` strip markdown → plain text `play/whatsnew/whatsnew-vi|en-US` → upload qua `whatsNewDirectory`.
+- `scripts/bump_version.sh` kiểm tra 2 file tồn tại trước khi tạo tag.
 
 ### Commit message
 

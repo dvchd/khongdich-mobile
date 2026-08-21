@@ -169,14 +169,19 @@ jobs:
           path: artifacts/*
           retention-days: 30
 
-      # Play Console không có UI để đặt inAppUpdatePriority — action này
-      # set qua Publishing API (Edits.tracks). Track alpha = Closed Testing.
+      # Release notes là nguồn duy nhất trong docs/release-notes/v<version>.md
+      # (và .en-US.md) — GitHub Release dùng body_path trỏ thẳng vào file md,
+      # Play Console dùng bản plain-text do scripts/md_to_whatsnew.py sinh ra.
       - name: Prepare Play release notes
         if: env.HAS_PLAY_KEY == 'true'
         run: |
+          NOTES_VI="docs/release-notes/v${RELEASE_NAME}.md"
+          NOTES_EN="docs/release-notes/v${RELEASE_NAME}.en-US.md"
+          [ -f "$NOTES_VI" ] || { echo "::error::Thiếu file release notes $NOTES_VI"; exit 1; }
+          [ -f "$NOTES_EN" ] || { echo "::error::Thiếu file release notes $NOTES_EN"; exit 1; }
           mkdir -p play/whatsnew
-          printf 'Phiên bản %s: nâng cấp đăng nhập Google, tự động thử lại khi mạng gặp lỗi tạm thời, sửa lỗi và cải thiện trải nghiệm.\n' "$RELEASE_NAME" > play/whatsnew/whatsnew-vi
-          printf 'Version %s: upgraded Google sign-in with automatic retry on transient network errors, bug fixes and improvements.\n' "$RELEASE_NAME" > play/whatsnew/whatsnew-en-US
+          python3 scripts/md_to_whatsnew.py "$NOTES_VI" play/whatsnew/whatsnew-vi
+          python3 scripts/md_to_whatsnew.py "$NOTES_EN" play/whatsnew/whatsnew-en-US
           cat play/whatsnew/whatsnew-vi
 
       - name: Decode Play service account
@@ -203,6 +208,6 @@ jobs:
           files: |
             artifacts/*.apk
             artifacts/*.aab
-          generate_release_notes: true
+          body_path: docs/release-notes/v${{ env.RELEASE_NAME }}.md
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}

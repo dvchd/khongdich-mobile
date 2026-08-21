@@ -57,6 +57,15 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   exit 1
 fi
 
+# Release notes là nguồn duy nhất (docs/release-notes/v<version>.md + .en-US.md)
+# được cả GitHub Release lẫn Play Console đọc — bắt buộc có sẵn trước khi tag.
+for NOTES in "docs/release-notes/${TAG}.md" "docs/release-notes/${TAG}.en-US.md"; do
+  if [ ! -f "$NOTES" ]; then
+    echo "Thiếu file release notes $NOTES — tạo trước rồi commit rồi mới bump (CI sẽ fail nếu thiếu)" >&2
+    exit 1
+  fi
+done
+
 sed -i "s/^version: .*/version: ${VERSION}/" pubspec.yaml
 
 git add pubspec.yaml
