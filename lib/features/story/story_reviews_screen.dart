@@ -8,6 +8,7 @@ import '../../core/widgets/emoji_picker_sheet.dart';
 import '../../core/widgets/emoji_text.dart';
 import '../../models/review.dart';
 import '../../repositories/story_repository.dart';
+import '../profile/profile_screen.dart' show currentUserProvider;
 
 /// Story reviews screen (đánh giá truyện) — mirrors the web story detail
 /// review section: star summary, upsert form (one review per user per
@@ -348,8 +349,9 @@ class _ReviewForm extends StatelessWidget {
     final theme = Theme.of(context);
     return Consumer(
       builder: (context, ref, _) {
-        final api = ref.watch(apiClientProvider).valueOrNull;
-        final loggedIn = api != null;
+        // Đăng nhập mới hiện form (apiClient luôn non-null — phải check
+        // qua currentUserProvider, trước đây form hiện cả khi chưa login).
+        final loggedIn = ref.watch(currentUserProvider).valueOrNull != null;
         final label = myRating == null ? 'Gửi đánh giá' : 'Cập nhật đánh giá';
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
