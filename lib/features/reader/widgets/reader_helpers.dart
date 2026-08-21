@@ -117,22 +117,36 @@ Widget buildChapterContent(
   Map<String, String> mangaLocalImagePaths = const {},
 }) {
   return switch (chapter) {
-    TextChapterContent(:final id, :final contentMarkdown) => TextChapterView(
-      markdown: contentMarkdown,
-      theme: theme,
-      chapterId: id,
-      scrollController: scrollController,
-      pageController: isPageMode ? pageController : null,
-      isPageMode: isPageMode,
-      onParagraphLongPress: onParagraphLongPress,
-    ),
+    TextChapterContent(
+      :final id,
+      :final contentMarkdown,
+      :final contentFormat,
+    ) =>
+      TextChapterView(
+        // Chapter format 'plain' (WYSIWYG trên web: 1 Enter = ngắt dòng)
+        // khác markdown (soft break = dính chữ). Convert sang markdown
+        // tương đương để pipeline render dùng chung cho đúng — trước đây
+        // mọi chương đều render như markdown, chương plain bị dính dòng.
+        markdown: contentFormat == 'plain'
+            ? plainTextToMarkdown(contentMarkdown)
+            : contentMarkdown,
+        theme: theme,
+        chapterId: id,
+        scrollController: scrollController,
+        pageController: isPageMode ? pageController : null,
+        isPageMode: isPageMode,
+        onParagraphLongPress: onParagraphLongPress,
+      ),
     VisualChapterContent(
       :final id,
       :final contentMarkdown,
+      :final contentFormat,
       :final thumbnailUrl,
     ) =>
       VisualChapterView(
-        markdown: contentMarkdown,
+        markdown: contentFormat == 'plain'
+            ? plainTextToMarkdown(contentMarkdown)
+            : contentMarkdown,
         theme: theme,
         chapterId: id,
         thumbnailUrl: thumbnailUrl,

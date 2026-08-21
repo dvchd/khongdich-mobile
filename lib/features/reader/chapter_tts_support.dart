@@ -1,3 +1,4 @@
+import '../../core/markdown/markdown.dart';
 import '../../models/chapter_content.dart';
 
 /// Shared TTS-related helpers for chapter content — dùng bởi cả reader
@@ -8,10 +9,20 @@ import '../../models/chapter_content.dart';
 
 /// Markdown payload for TTS — `text` and `visual` (Bách khoa) chapters
 /// share the text pipeline; manga / chat / video have no TTS.
+///
+/// Chương `content_format == 'plain'` (WYSIWYG trên web: 1 Enter = ngắt
+/// dòng) được convert sang markdown tương đương để TTS ngắt nghỉ đúng
+/// cấu trúc đoạn — giống reader render.
 String? chapterMarkdownOrNull(ChapterContent? chapter) {
   return switch (chapter) {
-    TextChapterContent(:final contentMarkdown) => contentMarkdown,
-    VisualChapterContent(:final contentMarkdown) => contentMarkdown,
+    TextChapterContent(:final contentMarkdown, :final contentFormat) =>
+      contentFormat == 'plain'
+          ? plainTextToMarkdown(contentMarkdown)
+          : contentMarkdown,
+    VisualChapterContent(:final contentMarkdown, :final contentFormat) =>
+      contentFormat == 'plain'
+          ? plainTextToMarkdown(contentMarkdown)
+          : contentMarkdown,
     _ => null,
   };
 }
