@@ -374,7 +374,7 @@ class _OfflineOrErrorState extends ConsumerWidget {
                 FilledButton.icon(
                   icon: const Icon(Icons.download_done),
                   label: const Text('Xem truyện đã tải'),
-                  onPressed: () => context.go('/offline-library'),
+                  onPressed: () => context.push('/offline-library'),
                 ),
               OutlinedButton(
                 onPressed: onRetry,

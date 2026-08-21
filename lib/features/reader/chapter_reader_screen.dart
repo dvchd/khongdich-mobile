@@ -484,7 +484,13 @@ class _AccessCheckError extends ConsumerWidget {
               child: const Text('Thử lại'),
             ),
             TextButton(
-              onPressed: () => context.go('/story/$storyId'),
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/story/$storyId');
+                }
+              },
               child: const Text('Về trang truyện'),
             ),
           ],
@@ -554,7 +560,13 @@ class VipLockedScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: () => context.go('/story/$storyId'),
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/story/$storyId');
+                }
+              },
               icon: const Icon(Icons.arrow_back),
               label: const Text('Về trang truyện'),
             ),
