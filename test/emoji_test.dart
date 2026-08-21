@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:khongdich_mobile/core/widgets/emoji_text.dart';
@@ -60,6 +61,37 @@ void main() {
       );
       expect(w.text, 'A & B :emoji:');
     });
+
+    group('layout: emoji cách dòng như web (display:block)', () {
+      const img = '<img class="custom-emoji" src="u" alt=":a:">';
+      const only = '<img class="custom-emoji-only" src="u" alt=":a:">';
+      const lead = '<img class="custom-emoji-lead" src="u" alt=":a:">';
+      const trail = '<img class="custom-emoji-trail" src="u" alt=":a:">';
+
+      testWidgets('emoji-only → mỗi icon một dòng (E N E)', (tester) async {
+        expect(await _emojiSpans(tester, '$only $only'), 'ENE');
+      });
+
+      testWidgets('single emoji-only → chỉ E, không newline thừa', (tester) async {
+        expect(await _emojiSpans(tester, only), 'E');
+      });
+
+      testWidgets('emoji lead → cách dòng sau icon (E N T)', (tester) async {
+        expect(await _emojiSpans(tester, '$lead chào bạn'), 'ENT');
+      });
+
+      testWidgets('emoji trail → cách dòng trước icon (T N E)', (tester) async {
+        expect(await _emojiSpans(tester, 'chào bạn $trail'), 'TNE');
+      });
+
+      testWidgets('lead + text + trail → E N T N E', (tester) async {
+        expect(await _emojiSpans(tester, '$lead chào $trail'), 'ENTNE');
+      });
+
+      testWidgets('emoji inline giữa câu → không newline (T E T)', (tester) async {
+        expect(await _emojiSpans(tester, 'chào $img bạn'), 'TET');
+      });
+    });
   });
 
   group('EmojiFeed', () {
@@ -96,4 +128,32 @@ void main() {
       expect(feed.hasMore, isFalse);
     });
   });
+}
+
+/// Trả về chuỗi mã hoá chuỗi span của [EmojiText]: T=text, E=emoji,
+/// N=newline('\n') — dùng để assert layout "cách dòng".
+Future<String> _emojiSpans(WidgetTester tester, String html) async {
+  await tester.pumpWidget(
+    Directionality(
+      textDirection: TextDirection.ltr,
+      child: Center(
+        child: EmojiText(
+          text: '',
+          contentHtml: html,
+          style: const TextStyle(fontSize: 16),
+        ),
+      ),
+    ),
+  );
+  final rich = tester.widget<Text>(find.byType(Text));
+  final root = rich.textSpan as TextSpan;
+  final out = StringBuffer();
+  for (final s in root.children ?? const <InlineSpan>[]) {
+    if (s is WidgetSpan) {
+      out.write('E');
+    } else if (s is TextSpan) {
+      out.write(s.text == '\n' ? 'N' : 'T');
+    }
+  }
+  return out.toString();
 }

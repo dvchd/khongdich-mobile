@@ -9,10 +9,11 @@ import 'package:flutter/material.dart';
 /// resolve requests. Falls back to plain [text] when `content_html` is
 /// missing (offline rows / legacy payloads).
 ///
-/// Sizing rules (same as the web CSS):
-///   - whole comment = only emojis        → 72px, own line
-///   - emoji leading/trailing the text    → 56px, own line
-///   - emoji inline mid-sentence          → 20px, inline
+/// Sizing + layout rules (same as the web CSS):
+///   - whole comment = only emojis  → 72px, mỗi icon một dòng riêng
+///   - emoji leading the text       → 56px, cách dòng (đứng đầu)
+///   - emoji trailing the text      → 56px, cách dòng (đứng cuối)
+///   - emoji inline mid-sentence    → 20px, inline
 class EmojiText extends StatelessWidget {
   const EmojiText({
     super.key,
@@ -52,23 +53,75 @@ class EmojiText extends StatelessWidget {
     }
 
     final effective = style ?? DefaultTextStyle.of(context).style;
-    final spans = <InlineSpan>[];
+
+    // 1. Tách content_html thành segment (text / emoji kèm class) — cùng
+    //    thứ tự như web render: token → <img>, còn lại là text.
+    final segments = <_Seg>[];
     var last = 0;
     var first = true;
     for (final m in _imgRe.allMatches(html)) {
       final textPart = _unescape(html.substring(last, m.start));
       if (!first || textPart.isNotEmpty) {
-        spans.add(TextSpan(text: textPart));
+        segments.add(_Seg(text: textPart));
       }
       first = false;
-      final cls = m.group(1) ?? 'custom-emoji';
-      final url = m.group(2) ?? '';
-      final name = m.group(3) ?? '';
-      spans.add(_emojiSpan(cls, url, name, effective));
+      segments.add(
+        _Seg(
+          emoji: true,
+          cls: m.group(1) ?? 'custom-emoji',
+          url: m.group(2) ?? '',
+          name: m.group(3) ?? '',
+        ),
+      );
       last = m.end;
     }
     final tail = _unescape(html.substring(last));
-    if (tail.isNotEmpty) spans.add(TextSpan(text: tail));
+    if (tail.isNotEmpty) segments.add(_Seg(text: tail));
+
+    // Bỏ khoảng trắng thuần nằm GIỮA hai emoji — web dùng `display:block`
+    // cho emoji only/lead/trail nên khoảng trắng đó bị collapse (không
+    // đáng kể); giữ lại sẽ chèn TextSpan rỗng giữa các dòng emoji.
+    final cleaned = <_Seg>[];
+    for (var i = 0; i < segments.length; i++) {
+      final seg = segments[i];
+      final isWsOnly = !seg.emoji && seg.text!.trim().isEmpty;
+      final prevIsEmoji = i > 0 && segments[i - 1].emoji;
+      final nextIsEmoji = i < segments.length - 1 && segments[i + 1].emoji;
+      if (isWsOnly && prevIsEmoji && nextIsEmoji) continue;
+      cleaned.add(seg);
+    }
+
+    // 2. Ghép thành spans. Emoji block (only/lead/trail) phải "cách dòng"
+    //    như web (`display:block`) → chèn '\n' quanh nó:
+    //      - only/trail: xuống dòng TRƯỚC (có nội dung phía trước)
+    //      - only/lead:  xuống dòng SAU (có nội dung phía sau)
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < cleaned.length; i++) {
+      final seg = cleaned[i];
+      if (!seg.emoji) {
+        if (seg.text!.isNotEmpty) spans.add(TextSpan(text: seg.text));
+        continue;
+      }
+      final cls = seg.cls!;
+      final isOnly = cls.contains('custom-emoji-only');
+      final isLead = cls.contains('custom-emoji-lead');
+      final isTrail = cls.contains('custom-emoji-trail');
+      final hasContentBefore = spans.isNotEmpty;
+      final hasContentAfter = cleaned.skip(i + 1).any(
+        (s) => !s.emoji ? s.text!.trim().isNotEmpty : true,
+      );
+
+      if ((isOnly || isTrail) && hasContentBefore) {
+        spans.add(const TextSpan(text: '\n'));
+      }
+      spans.add(_emojiSpan(cls, seg.url!, seg.name!, effective));
+      // only/lead KHÔNG thêm newline sau: khoảng cách giữa các emoji
+      // only được tạo bởi newline TRƯỚC của emoji kế (tránh dòng trống).
+      if (isLead && hasContentAfter) {
+        spans.add(const TextSpan(text: '\n'));
+      }
+    }
+
     if (spans.isEmpty) {
       return Text(
         text,
@@ -132,4 +185,16 @@ class EmojiText extends StatelessWidget {
       _ => "'",
     },
   );
+}
+
+/// Một segment trong content_html: text thường hoặc một emoji `<img>`.
+class _Seg {
+  const _Seg({this.text, this.emoji = false, this.cls, this.url, this.name});
+
+  /// Text thường (null khi là emoji).
+  final String? text;
+  final bool emoji;
+  final String? cls;
+  final String? url;
+  final String? name;
 }
