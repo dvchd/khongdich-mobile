@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/network/app_image_cache.dart';
 import '../../../models/chapter_content.dart';
 
 /// Chat chapter view — Messenger-style bubbles with progressive reveal.
@@ -284,6 +285,7 @@ class _LeftBubble extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                       child: CachedNetworkImage(
                         imageUrl: imageUrl!,
+                        cacheManager: AppImageCache.instance,
                         fit: BoxFit.cover,
                         errorWidget: (_, _, _) => const SizedBox.shrink(),
                       ),
@@ -345,6 +347,7 @@ class _RightBubble extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                       child: CachedNetworkImage(
                         imageUrl: imageUrl!,
+                        cacheManager: AppImageCache.instance,
                         fit: BoxFit.cover,
                         errorWidget: (_, _, _) => const SizedBox.shrink(),
                       ),
@@ -387,6 +390,7 @@ class _Avatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: CachedNetworkImage(
           imageUrl: character!.avatarUrl!,
+          cacheManager: AppImageCache.instance,
           width: 36,
           height: 36,
           fit: BoxFit.cover,

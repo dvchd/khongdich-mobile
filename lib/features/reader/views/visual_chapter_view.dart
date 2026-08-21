@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/markdown/markdown.dart';
+import '../../../core/network/app_image_cache.dart';
 import 'text_chapter_view.dart';
 
 /// `content_type=visual` (Bách khoa trực quan) chapter view.
@@ -47,6 +48,7 @@ class VisualChapterView extends StatelessWidget {
                 aspectRatio: 16 / 9,
                 child: CachedNetworkImage(
                   imageUrl: thumbnailUrl!,
+                  cacheManager: AppImageCache.instance,
                   fit: BoxFit.cover,
                   memCacheWidth: 1200,
                   errorWidget: (_, _, _) => const SizedBox.shrink(),

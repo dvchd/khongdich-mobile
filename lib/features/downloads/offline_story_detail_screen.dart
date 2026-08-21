@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
 import '../story/story_detail_screen.dart' show downloadedChaptersForStoryProvider;
@@ -58,6 +59,7 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
                                 )
                               : CachedNetworkImage(
                                   imageUrl: coverUrl,
+                                  cacheManager: AppImageCache.instance,
                                   fit: BoxFit.cover,
                                   errorWidget: (_, _, _) => Container(
                                     color: AppTheme.primary.withValues(alpha: 0.2),

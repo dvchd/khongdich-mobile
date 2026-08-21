@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 
+import '../../../core/network/app_image_cache.dart';
 import '../../../models/chapter_content.dart';
 
 /// Manga chapter view: vertical list of cover-fit images, tap any image
@@ -130,7 +131,7 @@ class _MangaGalleryState extends State<_MangaGallery> {
       return ResizeImage(FileImage(File(localPath)), width: _decodeWidth!);
     }
     return ResizeImage(
-      CachedNetworkImageProvider(url),
+      CachedNetworkImageProvider(url, cacheManager: AppImageCache.instance),
       width: _decodeWidth!,
     );
   }
@@ -231,7 +232,8 @@ class _MangaPageImageState extends State<_MangaPageImage> {
       return ResizeImage(FileImage(file), width: _displayWidth!);
     }
     return ResizeImage(
-      CachedNetworkImageProvider(widget.page.url),
+      CachedNetworkImageProvider(widget.page.url,
+          cacheManager: AppImageCache.instance),
       width: _displayWidth!,
     );
   }
@@ -302,6 +304,7 @@ class _MangaPageImageState extends State<_MangaPageImage> {
     }
     return CachedNetworkImage(
       imageUrl: widget.page.url,
+      cacheManager: AppImageCache.instance,
       fit: BoxFit.fitWidth,
       memCacheWidth: _displayWidth,
       maxWidthDiskCache: _displayWidth,
@@ -322,6 +325,7 @@ class _MangaPageImageState extends State<_MangaPageImage> {
   Widget _buildNetworkFallback() {
     return CachedNetworkImage(
       imageUrl: widget.page.url,
+      cacheManager: AppImageCache.instance,
       fit: BoxFit.fitWidth,
       memCacheWidth: _displayWidth,
       maxWidthDiskCache: _displayWidth,

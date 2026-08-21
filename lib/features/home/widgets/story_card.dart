@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/app_image_cache.dart';
 import '../../../models/story.dart';
 import '../../downloads/offline_library_screen.dart' show downloadedStoryIdsProvider;
 
@@ -66,6 +67,7 @@ class StoryCard extends ConsumerWidget {
                           )
                         : CachedNetworkImage(
                             imageUrl: story.coverUrl!,
+                            cacheManager: AppImageCache.instance,
                             fit: BoxFit.cover,
                             // Cover hiển thị ~120-200px — decode ở độ phân
                             // giải đó thay vì ảnh gốc (giảm RAM + jank).

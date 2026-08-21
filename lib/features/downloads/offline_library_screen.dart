@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/network/app_image_cache.dart';
 
 /// Offline library screen — kept as a separate route for direct access
 /// from Home screen's library icon and Profile screen.
@@ -77,6 +78,7 @@ class OfflineLibraryScreen extends ConsumerWidget {
                         borderRadius: BorderRadius.circular(4),
                         child: CachedNetworkImage(
                           imageUrl: first.coverUrl!,
+                          cacheManager: AppImageCache.instance,
                           width: 40,
                           height: 56,
                           fit: BoxFit.cover,

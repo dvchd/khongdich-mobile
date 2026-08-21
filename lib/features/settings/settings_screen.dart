@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/network/app_image_cache.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/manga_image_downloader.dart';
@@ -136,6 +140,11 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const Divider(),
           _Section('Bộ nhớ'),
+          // Cache ảnh online: ảnh CDN immutable (UUID URL) → cache 10 năm
+          // + 20000 ảnh tối đa (AppImageCache). Nút này xoá toàn bộ cache
+          // disk + memory khi user muốn giải phóng dung lượng ngay.
+          _CacheTile(),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.delete_outline, color: Colors.red),
             title: const Text('Xoá toàn bộ truyện đã tải'),
@@ -239,6 +248,97 @@ class _Section extends StatelessWidget {
               color: AppTheme.primary,
             ),
       ),
+    );
+  }
+}
+
+/// Tile hiển thị dung lượng cache ảnh + nút xoá cache.
+///
+/// Cache ảnh nằm ở `<temp>/khongdichImageCache` (AppImageCache) — ảnh CDN
+/// immutable nên cache gần như vô hạn (10 năm / 20000 ảnh), user tự dọn
+/// khi muốn giải phóng dung lượng. Xoá gồm cả disk cache (emptyCache) và
+/// memory cache (imageCache.clear) — ảnh sẽ tải lại từ CDN khi cần.
+class _CacheTile extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_CacheTile> createState() => _CacheTileState();
+}
+
+class _CacheTileState extends ConsumerState<_CacheTile> {
+  Future<int>? _sizeFuture;
+  static bool _clearing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _sizeFuture = _cacheSizeBytes();
+  }
+
+  /// Tổng dung lượng các file trong thư mục cache ảnh.
+  Future<int> _cacheSizeBytes() async {
+    try {
+      final baseDir = await getTemporaryDirectory();
+      final dir = Directory('${baseDir.path}/khongdichImageCache');
+      if (!await dir.exists()) return 0;
+      var total = 0;
+      await for (final entity in dir.list(recursive: true)) {
+        if (entity is File) {
+          total += await entity.length();
+        }
+      }
+      return total;
+    } catch (e) {
+      AppLogger.warning('Không đọc được dung lượng cache ảnh', e);
+      return -1;
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 0) return 'không xác định';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> _clearCache(BuildContext context) async {
+    if (_clearing) return;
+    _clearing = true;
+    try {
+      await AppImageCache.instance.emptyCache();
+      // Memory cache cũng giữ ảnh đã decode — xoá luôn để giải phóng RAM
+      // và đảm bảo ảnh mới không lẫn ảnh cũ.
+      PaintingBinding.instance.imageCache.clear();
+      if (context.mounted) {
+        setState(() => _sizeFuture = _cacheSizeBytes());
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Đã xoá cache ảnh.')),
+        );
+      }
+    } catch (e, s) {
+      AppLogger.warning('Xoá cache ảnh thất bại', e, s);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Xoá cache thất bại — thử lại sau.')),
+        );
+      }
+    } finally {
+      _clearing = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const Icon(Icons.cleaning_services_outlined),
+      title: const Text('Xoá cache ảnh'),
+      subtitle: FutureBuilder<int>(
+        future: _sizeFuture,
+        builder: (context, snapshot) {
+          final bytes = snapshot.data;
+          if (bytes == null) return const Text('Đang tính dung lượng...');
+          return Text('Cache ảnh: ${_formatBytes(bytes)}');
+        },
+      ),
+      onTap: () => _clearCache(context),
     );
   }
 }

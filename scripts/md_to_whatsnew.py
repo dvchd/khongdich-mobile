@@ -4,10 +4,15 @@
 Usage: md_to_whatsnew.py <input.md> <output>
 - Bỏ cú pháp markdown (heading #, bullet -, **bold**, [link](url), `code`).
 - Giữ cấu trúc dòng, gộp dòng trống thừa, trim cuối.
+- Play Console giới hạn release notes 500 ký tự/ngôn ngữ (upload-google-play
+  báo "notes ... is too long (max: 500)") — cắt về tối đa 500 ký tự tại ranh
+  giới dòng gần nhất, thêm "…" nếu bị cắt.
 """
 
 import re
 import sys
+
+MAX_LEN = 500
 
 
 def to_plain(md: str) -> str:
@@ -23,6 +28,12 @@ def to_plain(md: str) -> str:
         lines.append(line)
     text = "\n".join(lines)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) > MAX_LEN:
+        # Cắt tại ranh giới dòng gần nhất để không vỡ giữa chừng dòng.
+        cut = text.rfind("\n", 0, MAX_LEN)
+        if cut < MAX_LEN * 3 // 4:  # ranh giới quá xa đầu đoạn cắt → cắt cứng
+            cut = MAX_LEN
+        text = text[:cut].rstrip() + "\n…"
     return text + "\n"
 
 

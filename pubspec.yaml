@@ -32,6 +32,10 @@ dependencies:
 
   # UI
   cached_network_image: ^3.4.1
+  # Cache ảnh dùng chung (AppImageCache) — cache lâu dài ảnh CDN immutable,
+  # import trực tiếp nên phải khai báo (không chỉ transitive qua
+  # cached_network_image).
+  flutter_cache_manager: ^3.4.1
   shimmer: ^4.0.0
   google_fonts: ^8.2.1
   photo_view: ^0.15.0

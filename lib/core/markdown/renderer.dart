@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../network/app_image_cache.dart';
 import 'ast.dart';
 
 /// Reader typography + palette. Plan §14.1 design system; runtime
@@ -367,6 +368,7 @@ class _MarkdownRendererState extends State<MarkdownRenderer> {
             borderRadius: BorderRadius.circular(8),
             child: CachedNetworkImage(
               imageUrl: url,
+              cacheManager: AppImageCache.instance,
               fit: BoxFit.fitWidth,
               memCacheWidth: 1200,
               maxWidthDiskCache: 1200,

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/follow_button.dart';
 import '../../models/story.dart';
@@ -90,7 +91,8 @@ class _AuthorContent extends ConsumerWidget {
                   radius: 36,
                   backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
                   backgroundImage: author.avatarUrl != null
-                      ? CachedNetworkImageProvider(author.avatarUrl!)
+                      ? CachedNetworkImageProvider(author.avatarUrl!,
+                          cacheManager: AppImageCache.instance)
                       : null,
                   child: author.avatarUrl == null
                       ? Text(

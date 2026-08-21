@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
 import '../../core/widgets/follow_button.dart';
@@ -193,6 +194,7 @@ class _StoryDetailBody extends ConsumerWidget {
                           )
                         : CachedNetworkImage(
                             imageUrl: story.coverUrl!,
+                            cacheManager: AppImageCache.instance,
                             fit: BoxFit.cover,
                             memCacheWidth: 360,
                             errorWidget: (_, _, _) => Container(

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/download_manager.dart';
 import 'offline_library_screen.dart' show offlineLibraryStreamProvider;
@@ -337,6 +338,7 @@ class _LibraryTab extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(4),
                       child: CachedNetworkImage(
                         imageUrl: first.coverUrl!,
+                        cacheManager: AppImageCache.instance,
                         width: 40,
                         height: 56,
                         fit: BoxFit.cover,
