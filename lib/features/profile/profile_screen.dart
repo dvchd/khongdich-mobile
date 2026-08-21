@@ -288,7 +288,7 @@ final currentUserProvider =
   if (api == null || !await api.isAuthenticated()) return null;
   try {
     final repo = ref.read(storyRepositoryProvider);
-    return repo.fetchMe();
+    return await repo.fetchMe();
   } catch (e, s) {
     AppLogger.warning('currentUserProvider: fetchMe failed', e, s);
     return null;

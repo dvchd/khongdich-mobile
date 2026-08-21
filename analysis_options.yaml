@@ -4,6 +4,13 @@ analyzer:
   exclude:
     - "lib/core/database/*.g.dart"
     - "lib/core/database/*.drift.dart"
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
   language:
     strict-casts: true

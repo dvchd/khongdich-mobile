@@ -63,7 +63,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   drift_dev: ^2.34.5
-  build_runner: ^2.15.1
+  build_runner: ^2.16.0
   flutter_lints: ^6.0.0
 
 # NOTE: apple_sign_in / app_links / firebase_crashlytics / firebase_analytics
