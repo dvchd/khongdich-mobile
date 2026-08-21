@@ -22,10 +22,11 @@ dependencies:
 
   # Local DB
   drift: ^2.34.3
-  sqlite3_flutter_libs: ^0.5.24
+  # sqlite3 3.x tự bundle native libs qua hooks/native assets — không cần
+  # sqlite3_flutter_libs nữa (0.6.0 đánh dấu EOL: "update to sqlite3 3.x")
 
   # Storage
-  flutter_secure_storage: ^10.3.1
+  flutter_secure_storage: ^11.0.0
   shared_preferences: ^2.3.0
   path_provider: ^2.1.4
 
@@ -62,7 +63,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   drift_dev: ^2.34.5
-  build_runner: ^2.15.0
+  build_runner: ^2.15.1
   flutter_lints: ^6.0.0
 
 # NOTE: apple_sign_in / app_links / firebase_crashlytics / firebase_analytics

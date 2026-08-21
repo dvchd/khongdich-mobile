@@ -30,15 +30,15 @@ subprojects {
     pluginManager.withPlugin("com.android.library") {
         val ext = extensions.findByName("android") as? com.android.build.gradle.LibraryExtension
         ext?.apply {
-            compileSdkVersion(36)
-            defaultConfig.targetSdkVersion(36)
+            compileSdkVersion(37)
+            defaultConfig.targetSdkVersion(37)
         }
     }
     pluginManager.withPlugin("com.android.application") {
         val ext = extensions.findByName("android") as? com.android.build.gradle.AppExtension
         ext?.apply {
-            compileSdkVersion(36)
-            defaultConfig.targetSdkVersion(36)
+            compileSdkVersion(37)
+            defaultConfig.targetSdkVersion(37)
         }
     }
 }

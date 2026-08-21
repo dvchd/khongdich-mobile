@@ -21,11 +21,11 @@ fun keystoreFileFromEnv(): File? {
 
 android {
     namespace = "com.khongdich.khongdich_mobile"
-    // Hard-code compileSdk to 36 so all transitive AndroidX deps
-    // (fragment 1.7+, window 1.2+, etc.) are happy. flutter.compileSdkVersion
-    // can lag at 33/34 depending on the Flutter version, which trips
-    // AAR metadata checks.
-    compileSdk = 36
+    // Hard-code compileSdk to 37 so all transitive AndroidX deps
+    // (fragment 1.7+, window 1.2+, etc.) are happy — flutter_secure_storage
+    // 11.x requires compileSdk >= 37. flutter.compileSdkVersion can lag at
+    // 33/34 depending on the Flutter version, which trips AAR metadata checks.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -40,7 +40,7 @@ android {
     defaultConfig {
         applicationId = "com.khongdich.app"
         minSdk = maxOf(flutter.minSdkVersion, 26)  // Android 8.0+ per plan §1
-        targetSdk = 36
+        targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         // Required by flutter_local_notifications for desugar support.
