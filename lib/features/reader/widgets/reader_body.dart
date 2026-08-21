@@ -3,10 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
 import '../../../models/chapter_content.dart';
-import '../../tts/tts_mini_player.dart';
 import '../reader_settings_provider.dart';
 import 'reader_bar.dart';
 import 'reader_helpers.dart';
+import 'tts_switch_banner.dart';
 
 /// Shared chapter-reader body used by BOTH the online reader
 /// (`ChapterReaderScreen`) and the offline reader
@@ -255,6 +255,16 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         color: bgColor,
         child: Column(
           children: [
+            // Banner "Đang nghe Chương X — Nghe chương này" khi TTS đang
+            // đọc một chương khác của cùng truyện (mini player cũ chỉ hiện
+            // cho chương đang đọc → đổi chương không biết đang nghe gì).
+            // Thanh điều khiển chính giờ là TtsNowPlayingBar toàn cục
+            // (đặt ở gốc app), hiển thị trên mọi màn hình.
+            if (widget.onToggleTts != null)
+              TtsSwitchChapterBanner(
+                chapter: widget.chapter,
+                onSwitchToThis: widget.onToggleTts,
+              ),
             Expanded(
               child: Stack(
                 children: [
@@ -276,8 +286,6 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                 ],
               ),
             ),
-            // Mini player nằm NGOÀI Stack tap-zone → không bị nuốt tap.
-            TtsMiniPlayer(chapterId: widget.chapter.id),
           ],
         ),
       ),

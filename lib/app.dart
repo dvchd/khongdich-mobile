@@ -1,11 +1,17 @@
+import 'dart:async';
+
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/network/api_client.dart';
+import 'core/observability/app_logger.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'features/reader/services/reading_progress_service.dart';
+import 'features/tts/tts_audio_handler.dart';
+import 'features/tts/tts_now_playing_bar.dart';
 import 'services/chapter_cache_service.dart';
 import 'services/download_manager.dart';
 
@@ -18,6 +24,8 @@ class KhongdichApp extends ConsumerStatefulWidget {
 
 class _KhongdichAppState extends ConsumerState<KhongdichApp>
     with WidgetsBindingObserver {
+  StreamSubscription<bool>? _notificationClickSub;
+
   @override
   void initState() {
     super.initState();
@@ -29,7 +37,40 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _notificationClickSub?.cancel();
     super.dispose();
+  }
+
+  /// Tap vào media notification (thanh điều khiển khi app ẩn) → điều
+  /// hướng về chương đang nghe. audio_service (MainActivity extends
+  /// AudioServiceActivity) tự set activityClassName từ activity nên tap
+  /// notification emit `AudioService.notificationClicked = true` — đây là
+  /// lúc app chưa có route tương ứng, nên navigate qua router instance.
+  void _setupNotificationDeepLink() {
+    if (_notificationClickSub != null) return;
+    _notificationClickSub = AudioService.notificationClicked
+        .where((clicked) => clicked)
+        .listen((_) {
+      unawaited(_goToPlayingChapter());
+    });
+  }
+
+  Future<void> _goToPlayingChapter() async {
+    try {
+      final handler = await ref.read(ttsHandlerProvider.future);
+      final router = ref.read(appRouterProvider);
+      final chapterId = handler.currentChapterId;
+      if (chapterId == null) return;
+      final storyId = handler.currentStoryId;
+      final number = handler.currentChapterNumber;
+      if (handler.offlineMode) {
+        router.go('/chapter-offline/$chapterId');
+      } else if (storyId != null && number != null) {
+        router.go('/chapter/$storyId:$number');
+      }
+    } catch (e, s) {
+      AppLogger.warning('TTS: notification deep link failed', e, s);
+    }
   }
 
   @override
@@ -63,12 +104,35 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
     // Wait for ApiClient to be ready before rendering the router.
     final apiAsync = ref.watch(apiClientProvider);
 
+    // Màn hình hiện tại có bottom nav không → đặt now-playing bar lên trên
+    // thay vì đè lên nav (cập nhật real-time khi đổi route).
+    final hasBottomNav = locationHasBottomNav(ref.watch(topLocationProvider));
+
     return MaterialApp.router(
       title: 'Không Dịch',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
+      // Global TTS now-playing bar — overlay ở gốc app, trên MỌI màn hình
+      // (reader, story detail, home...) bất kể TTS đang phục vụ chương nào.
+      builder: (context, child) {
+        final bottomSafe = MediaQuery.paddingOf(context).bottom;
+        final barBottom =
+            (hasBottomNav ? kBottomNavHeight + bottomSafe : bottomSafe) + 8;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            if (child != null) child,
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: barBottom,
+              child: const TtsNowPlayingBar(),
+            ),
+          ],
+        );
+      },
       routerConfig: apiAsync.when(
         loading: () => _splashRouter(),
         error: (e, _) => _bootErrorRouter(e),
@@ -86,6 +150,9 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
             // kill giữa batch download) làm nút tải ở story detail bị
             // disable vĩnh viễn cho tới khi user mở đúng màn đó.
             ref.read(downloadManagerProvider).recoverInterrupted();
+            // Lắng nghe tap vào media notification → điều hướng về chương
+            // đang nghe (chỉ khi router đã sẵn sàng).
+            _setupNotificationDeepLink();
           });
           return ref.read(appRouterProvider);
         },

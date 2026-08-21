@@ -5,6 +5,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/auth/auth_screen.dart';
@@ -42,7 +43,7 @@ import '../../services/manga_image_downloader.dart';
 import '../shell/main_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
-  return GoRouter(
+  final router = GoRouter(
     initialLocation: '/home',
     routes: [
       // Bottom-nav shell: 4 tabs giữ STATE khi chuyển tab (trước đây
@@ -248,7 +249,43 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     errorBuilder: (context, state) =>
         Scaffold(body: Center(child: Text('Route not found: ${state.uri}'))),
   );
+  // Theo dõi location đang ở trên cùng navigation stack — cho các overlay
+  // toàn cục (TtsNowPlayingBar) biết màn hình hiện tại có bottom nav để
+  // đặt bar lên trên thay vì đè lên nav.
+  void trackTopLocation() {
+    ref.read(topLocationProvider.notifier).state =
+        router.routerDelegate.currentConfiguration.uri.toString();
+  }
+
+  router.routerDelegate.addListener(trackTopLocation);
+  trackTopLocation();
+  ref.onDispose(() => router.routerDelegate.removeListener(trackTopLocation));
+  return router;
 });
+
+/// Location (string) của route đang ở trên cùng navigation stack — dùng
+/// cho các overlay toàn cục (vd. TtsNowPlayingBar) quyết định vị trí,
+/// ví dụ có cần chừa chỗ cho bottom nav không.
+final topLocationProvider = StateProvider<String>((ref) => '/home');
+
+/// Chiều cao bottom nav (Material 3 NavigationBar) — dùng để đặt
+/// now-playing bar lên trên khi màn hình hiện tại có nav.
+const double kBottomNavHeight = 80.0;
+
+/// Màn hình nào có bottom nav hiển thị: 4 tab của MainShell + story
+/// detail online/offline (chúng tự vẽ AppBottomNav trong Scaffold của
+/// riêng mình). Các route khác (reader, settings, ...) không có nav.
+bool locationHasBottomNav(String location) {
+  const navPrefixes = [
+    '/home',
+    '/search',
+    '/bookshelf',
+    '/profile',
+    '/story/',
+    '/offline-story/',
+  ];
+  return navPrefixes.any(location.startsWith);
+}
 
 /// Branch container for [StatefulShellRoute]: giữ nguyên semantics của
 /// container mặc định (Offstage + TickerMode — branch không active không

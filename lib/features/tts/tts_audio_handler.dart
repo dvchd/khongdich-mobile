@@ -243,6 +243,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   String? get currentStoryId => _currentStoryId;
   int? get currentChapterNumber => _currentChapterNumber;
 
+  /// Nguồn chương hiện đang phục vụ: `true` = offline (Drift
+  /// downloaded_chapters), `false` = online (API). Dùng để chọn route
+  /// đích khi deep-link tới chương đang nghe (online vs offline reader).
+  bool get offlineMode => _offlineMode;
+
   /// Story slug + next chapter number — set bởi reader screen khi load
   /// chapter, để TTS có thể tự chuyển chương khi đọc xong.
   String? get currentStorySlug => _currentStorySlug;
