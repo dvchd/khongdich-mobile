@@ -92,6 +92,16 @@ class AuthService {
       } on AuthError catch (e) {
         if (!e.isTransient || attempt >= _maxTransientRetries) rethrow;
         attempt++;
+        // Lỗi reauth/stale credential: phải signOut() để xoá credential
+        // hỏng trước khi authenticate() lại — nếu không, Google vẫn trả
+        // về credential cũ đã hỏng và fail mãi (comment chính thức của
+        // google_sign_in: "should not call authenticate until after a
+        // call to signOut").
+        if (e.requiresSignOut) {
+          AppLogger.warning('Google Sign-In: signing out stale credential '
+              'before retry $attempt/$_maxTransientRetries');
+          await _signOutGoogleOnly();
+        }
         final delay = _retryBackoff[attempt - 1];
         AppLogger.warning(
           'Google Sign-In transient error, auto-retry $attempt/'
@@ -103,6 +113,11 @@ class AuthService {
         final err = translateSignInError(e);
         if (!err.isTransient || attempt >= _maxTransientRetries) rethrow;
         attempt++;
+        if (err.requiresSignOut) {
+          AppLogger.warning('Google Sign-In: signing out stale credential '
+              'before retry $attempt/$_maxTransientRetries');
+          await _signOutGoogleOnly();
+        }
         final delay = _retryBackoff[attempt - 1];
         AppLogger.warning(
           'Google Sign-In transient error, auto-retry $attempt/'
@@ -115,13 +130,37 @@ class AuthService {
     }
   }
 
+  /// Sign out riêng Google session (không clear JWT/data local) — dùng
+  /// khi cần reset credential hỏng trước khi đăng nhập lại.
+  Future<void> _signOutGoogleOnly() async {
+    try {
+      await GoogleSignIn.instance.signOut();
+    } catch (e) {
+      AppLogger.warning('GoogleSignIn.signOut() (stale reset) failed '
+          '(ignored)', e);
+    }
+  }
+
   /// Một lượt đăng nhập đầy đủ: picker (Credential Manager) → idToken →
   /// đổi lấy server JWT.
   Future<AuthResult> _signInWithGoogleOnce() async {
-    // v7: authenticate() trả về account luôn (không null); user huỷ sẽ
-    // ném GoogleSignInException(code: canceled) — translateSignInError
-    // xử lý thành "Đăng nhập đã bị huỷ" (không retry).
-    final account = await GoogleSignIn.instance.authenticate();
+    // Ưu tiên luồng nhẹ (One Tap auto-select): nếu user từng đăng nhập,
+    // Google tự chọn account + refresh idToken mà KHÔNG hiện picker —
+    // giảm hẳn lỗi reauth "chập chờn" (mở picker với credential stale
+    // là nguyên nhân chính của GoogleSignInException [16] reauth).
+    // attemptLightweightAuthentication() trả null khi chưa có credential
+    // nào authorize app (hoặc platform không hỗ trợ) → fallback picker.
+    GoogleSignInAccount? account;
+    try {
+      account = await GoogleSignIn.instance.attemptLightweightAuthentication();
+    } on GoogleSignInException catch (e) {
+      // One Tap fail (vd. client config) — không phải lỗi fatal, thử
+      // picker bình thường. Không log như lỗi vì đây là đường phụ.
+      AppLogger.warning('Lightweight sign-in skipped, falling back to '
+          'picker: ${e.code}');
+      account = null;
+    }
+    account ??= await GoogleSignIn.instance.authenticate();
     final auth = account.authentication;
     final idToken = auth.idToken;
     if (idToken == null) {
@@ -220,13 +259,18 @@ class AuthResult {
 
 /// Lỗi đăng nhập với user-friendly Vietnamese message + hint.
 class AuthError implements Exception {
-  const AuthError(this.message, this.hint, {this.isTransient = false});
+  const AuthError(this.message, this.hint, {this.isTransient = false, this.requiresSignOut = false});
   final String message;
   final String hint;
 
   /// `true` = lỗi thoáng qua phía Google/mạng (retry có thể cứu),
   /// `false` = lỗi cấu hình/cố định (retry vô ích).
   final bool isTransient;
+
+  /// `true` = credential Google cũ đang stale (cần reauth) — phải
+  /// signOut() trước khi retry, nếu không authenticate() lại vẫn trả
+  /// về credential hỏng cũ và fail mãi.
+  final bool requiresSignOut;
 
   @override
   String toString() => message;
@@ -280,6 +324,7 @@ AuthError translateSignInError(Object e) {
             'Lỗi thoáng qua từ phía Google — hệ thống đã tự thử lại. '
                 'Nếu vẫn lỗi, hãy chờ vài phút rồi thử lại.',
             isTransient: true,
+            requiresSignOut: true,
           );
         }
         return const AuthError('Đăng nhập đã bị huỷ.', '');
