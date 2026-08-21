@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
@@ -24,9 +25,9 @@ class AuthorScreen extends ConsumerWidget {
     final state = ref.watch(authorProfileProvider(username));
     return Scaffold(
       appBar: AppBar(
-        title: state.valueOrNull?.author.name.isNotEmpty == true
+        title: state.value?.author.name.isNotEmpty == true
             ? Text(
-                state.valueOrNull!.author.name,
+                state.value!.author.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               )
@@ -316,7 +317,7 @@ class AuthorProfileNotifier
   }
 
   Future<void> loadMore() async {
-    final current = state.valueOrNull;
+    final current = state.value;
     if (current == null || current.loadingMore) return;
     if (current.page >= current.totalPages) return;
     state = AsyncValue.data(current.copyWith(loadingMore: true));

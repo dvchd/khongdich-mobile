@@ -118,7 +118,7 @@ class _StoryReviewsScreenState extends ConsumerState<StoryReviewsScreen> {
   Future<void> _submit() async {
     final content = _composer.text.trim();
     if (content.isEmpty || _posting) return;
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -351,7 +351,7 @@ class _ReviewForm extends StatelessWidget {
       builder: (context, ref, _) {
         // Đăng nhập mới hiện form (apiClient luôn non-null — phải check
         // qua currentUserProvider, trước đây form hiện cả khi chưa login).
-        final loggedIn = ref.watch(currentUserProvider).valueOrNull != null;
+        final loggedIn = ref.watch(currentUserProvider).value != null;
         final label = myRating == null ? 'Gửi đánh giá' : 'Cập nhật đánh giá';
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

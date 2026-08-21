@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/story.dart';
@@ -49,7 +50,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     // otherwise the offline library is empty and redirecting would
     // just show another empty state.
     final downloads =
-        ref.read(offlineLibraryStreamProvider).valueOrNull ?? [];
+        ref.read(offlineLibraryStreamProvider).value ?? [];
     if (downloads.isEmpty) return;
     _redirected = true;
     ref.read(bookshelfTabIntentProvider.notifier).state =

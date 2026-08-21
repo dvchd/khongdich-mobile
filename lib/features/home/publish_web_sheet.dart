@@ -13,7 +13,7 @@ class PublishWebSheet extends ConsumerWidget {
   const PublishWebSheet({super.key});
 
   Future<void> _open(BuildContext context, WidgetRef ref) async {
-    final base = ref.read(apiClientProvider).valueOrNull?.baseUrl ??
+    final base = ref.read(apiClientProvider).value?.baseUrl ??
         'https://khongdich.com';
     final uri = Uri.parse('$base/dang-truyen');
     try {

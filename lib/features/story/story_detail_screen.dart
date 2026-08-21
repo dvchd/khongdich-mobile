@@ -61,7 +61,7 @@ final vipStatusProvider =
 final storyBookmarkTypeProvider =
     Provider.autoDispose.family<String?, String>((ref, storyId) {
   final state = ref.watch(bookshelfProvider);
-  final list = state.valueOrNull;
+  final list = state.value;
   if (list == null) return null;
   for (final b in list) {
     if (b.storyId == storyId) return b.listType;
@@ -112,15 +112,15 @@ class _StoryDetailBody extends ConsumerWidget {
     final reactiveBookmark =
         ref.watch(storyBookmarkTypeProvider(story.id));
     final effectiveBookmark = reactiveBookmark ?? localBookmark;
-    final currentUser = ref.watch(currentUserProvider).valueOrNull;
+    final currentUser = ref.watch(currentUserProvider).value;
     final chaptersAsync = ref.watch(chapterListProvider(story.id));
     final downloadedAsync = ref.watch(downloadedChaptersForStoryProvider(story.id));
     final queueAsync = ref.watch(downloadQueueForStoryProvider(story.id));
     final vipAsync = ref.watch(vipStatusProvider(story.id));
-    final vip = vipAsync.valueOrNull ?? const VipStatus(isVip: false, lockedChapterIds: [], unlockedChapterIds: [], canDownloadOffline: true);
-    final queueItems = queueAsync.valueOrNull ?? [];
-    final downloadedIds = downloadedAsync.valueOrNull?.map((d) => d.chapterId).toSet() ?? {};
-    final downloadedCount = downloadedAsync.valueOrNull?.length ?? 0;
+    final vip = vipAsync.value ?? const VipStatus(isVip: false, lockedChapterIds: [], unlockedChapterIds: [], canDownloadOffline: true);
+    final queueItems = queueAsync.value ?? [];
+    final downloadedIds = downloadedAsync.value?.map((d) => d.chapterId).toSet() ?? {};
+    final downloadedCount = downloadedAsync.value?.length ?? 0;
     final totalChapters = story.chapterCount ?? 0;
     final activeDownloads = queueItems.where((q) =>
         q.status == 'pending' || q.status == 'downloading' || q.status == 'retry').length;

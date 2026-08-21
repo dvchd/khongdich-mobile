@@ -154,7 +154,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _posting) return;
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

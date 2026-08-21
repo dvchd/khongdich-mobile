@@ -145,7 +145,7 @@ class _TtsMiniPlayerState extends ConsumerState<TtsMiniPlayer> {
   @override
   Widget build(BuildContext context) {
     final handlerAsync = ref.watch(ttsHandlerProvider);
-    final handler = handlerAsync.valueOrNull;
+    final handler = handlerAsync.value;
     // Ẩn bar khi: chưa có handler / TTS đang phục vụ chương khác /
     // user đã bấm X "dừng hẳn và đóng".
     if (handler == null ||

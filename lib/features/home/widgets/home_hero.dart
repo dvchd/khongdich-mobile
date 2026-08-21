@@ -20,7 +20,7 @@ class HomeHero extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final downloaded = ref.watch(downloadedChaptersCountProvider).valueOrNull;
+    final downloaded = ref.watch(downloadedChaptersCountProvider).value;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

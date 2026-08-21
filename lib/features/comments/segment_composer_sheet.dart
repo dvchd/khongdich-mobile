@@ -59,7 +59,7 @@ class _SegmentComposerSheetState extends ConsumerState<SegmentComposerSheet> {
   Future<void> _submit() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _posting) return;
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (!mounted) return;
       // Capture router trước khi pop — dùng context của sheet sau khi

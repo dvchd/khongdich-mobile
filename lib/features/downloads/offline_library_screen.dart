@@ -147,7 +147,7 @@ final offlineLibraryStreamProvider =
 /// của Drift stream tạo 1 Set mới → mọi StoryCard phụ thuộc rebuild dù
 /// danh sách story đã tải không thay đổi (vd. progress bar đổi).
 final downloadedStoryIdsProvider = Provider<Set<String>>((ref) {
-  final chapters = ref.watch(offlineLibraryStreamProvider).valueOrNull ?? [];
+  final chapters = ref.watch(offlineLibraryStreamProvider).value ?? [];
   final ids = chapters.map((c) => c.storyId).toSet();
   final prev = _lastDownloadedStoryIds;
   _lastDownloadedStoryIds = ids;

@@ -34,7 +34,7 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
 
   Future<void> _toggle() async {
     if (_busy) return;
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

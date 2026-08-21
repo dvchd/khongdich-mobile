@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
@@ -98,7 +99,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     final state = ref.watch(bookshelfProvider);
     final downloadsAsync = ref.watch(offlineLibraryStreamProvider);
 
-    final chapters = downloadsAsync.valueOrNull ?? [];
+    final chapters = downloadsAsync.value ?? [];
     // Set of story IDs that have at least one chapter downloaded —
     // used for two things:
     //   1. Auto-routing bookshelf cards to the offline story detail
@@ -128,8 +129,8 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     }
 
     // Snapshot of bookmarks for the "All" tab merge — kept lazy so the
-    // list-type tabs below can re-filter directly from `state.valueOrNull`.
-    final bookmarks = state.valueOrNull ?? [];
+    // list-type tabs below can re-filter directly from `state.value`.
+    final bookmarks = state.value ?? [];
 
     final isAllTab = _tab == 0;
     final isDownloadedTab = _tab == _tabs.length - 1;

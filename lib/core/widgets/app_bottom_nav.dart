@@ -55,7 +55,7 @@ class AppBottomNav extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final queueAsync = ref.watch(downloadQueueStreamProvider);
-    final activeCount = queueAsync.valueOrNull
+    final activeCount = queueAsync.value
             ?.where((q) =>
                 q.status == 'pending' ||
                 q.status == 'downloading' ||

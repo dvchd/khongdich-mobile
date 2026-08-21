@@ -18,7 +18,11 @@ Future<void> main() async {
   // + firebase_messaging, populate google-services.json, xây backend
   // push_devices table + FCM sender. Xem README mục "Tính năng thông báo".
   runApp(
-    const ProviderScope(
+    ProviderScope(
+      // Riverpod 3.0 mặc định tự retry provider fail vô hạn — app v2 giữ
+      // error cho tới khi invalidate thủ công (nút "Thử lại" trong UI).
+      // Tắt retry tự động để giữ hành vi cũ, tránh spam API khi server lỗi.
+      retry: (retryCount, error) => null,
       child: KhongdichApp(),
     ),
   );

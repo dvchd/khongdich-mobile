@@ -244,7 +244,7 @@ class _UserHeader extends ConsumerWidget {
                     onPressed: () async {
                       final baseUrl = ref
                               .read(apiClientProvider)
-                              .valueOrNull
+                              .value
                               ?.baseUrl ??
                           'https://khongdich.com';
                       await Clipboard.setData(

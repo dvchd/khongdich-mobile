@@ -561,7 +561,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     // Capture UI handles before any await (lint + safety).
     final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (!mounted) return;
       messenger.showSnackBar(

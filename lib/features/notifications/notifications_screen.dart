@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/network/api_client.dart';
@@ -345,7 +346,7 @@ class NotificationsNotifier
 
   /// Nạp thêm trang cũ hơn — append vào list hiện tại (dedupe theo id).
   Future<void> loadMore() async {
-    final current = state.valueOrNull;
+    final current = state.value;
     if (current == null || _loadingMore) return;
     if (current.page >= current.totalPages) return;
     _loadingMore = true;
@@ -393,7 +394,7 @@ class NotificationsNotifier
 
   /// Xoá 1 thông báo + cập nhật list local ngay (không chờ refresh).
   Future<void> delete(String id) async {
-    final current = state.valueOrNull;
+    final current = state.value;
     if (current != null) {
       final deleted =
           current.notifications.where((n) => n.id == id).firstOrNull;

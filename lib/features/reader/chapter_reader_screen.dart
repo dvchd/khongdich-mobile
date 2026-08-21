@@ -78,7 +78,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       }
       // Set locked chapter IDs từ VipStatus → ChapterCacheService skip
       // prefetch các chương VIP-locked (tránh spam API vô nghĩa).
-      final vip = ref.read(vipStatusProvider(widget.storyId)).valueOrNull;
+      final vip = ref.read(vipStatusProvider(widget.storyId)).value;
       if (vip != null) {
         ref
             .read(chapterCacheServiceProvider)
@@ -138,7 +138,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     // vì chạy side-effect trong nhánh `data` của build (build phải pure).
     // Idempotent — chỉ chạy MỘT lần per chapter id.
     ref.listen(chapterProvider(_ref), (prev, next) {
-      final c = next.valueOrNull;
+      final c = next.value;
       if (c == null || _prefetchedChapterId == c.id) return;
       _prefetchedChapterId = c.id;
       unawaited(ref.read(chapterCacheServiceProvider).prefetchNext(c));
@@ -224,7 +224,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     // Capture UI handles before any await (lint + safety).
     final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (!mounted) return;
       messenger.showSnackBar(

@@ -17,7 +17,7 @@ Future<void> showStoryShareSheet(
 }) async {
   final baseUrl = ProviderScope.containerOf(
     context,
-  ).read(apiClientProvider).valueOrNull?.baseUrl ?? 'https://khongdich.com';
+  ).read(apiClientProvider).value?.baseUrl ?? 'https://khongdich.com';
   final url = '$baseUrl/truyen/$storySlug';
 
   await showModalBottomSheet<void>(

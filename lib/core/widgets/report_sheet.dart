@@ -70,7 +70,7 @@ class _ReportSheetState extends ConsumerState<_ReportSheet> {
   Future<void> _submit() async {
     final reason = _reason;
     if (reason == null || _submitting) return;
-    final api = ref.read(apiClientProvider).valueOrNull;
+    final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (mounted) {
         Navigator.of(context).pop();

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/story.dart';
@@ -58,7 +59,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // Chỉ redirect khi có ít nhất 1 chương đã tải — như search screen.
     //
     // PHẢI await .future của stream provider — trước đây dùng
-    // ref.read().valueOrNull: lúc home vừa lỗi, stream chưa từng được
+    // ref.read().value: lúc home vừa lỗi, stream chưa từng được
     // watch → valueOrNull == null → tưởng "chưa có truyện tải" → không
     // redirect dù DB có hàng trăm chương đã tải.
     try {
@@ -98,7 +99,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Consumer(
             builder: (context, ref, _) {
               final unread = ref.watch(unreadNotificationsProvider)
-                  .valueOrNull;
+                  .value;
               return IconButton(
                 icon: Badge(
                   isLabelVisible: (unread ?? 0) > 0,
@@ -339,7 +340,7 @@ class _OfflineOrErrorState extends ConsumerWidget {
     // Fallback button trong trường hợp auto-redirect không chạy được
     // (vd. stream chưa kịp emit) — nút hiện NGAY khi có truyện đã tải.
     final hasDownloads =
-        (ref.watch(offlineLibraryStreamProvider).valueOrNull ?? [])
+        (ref.watch(offlineLibraryStreamProvider).value ?? [])
             .isNotEmpty;
     return ListView(
       children: [
