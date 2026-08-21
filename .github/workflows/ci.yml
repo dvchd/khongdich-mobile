@@ -92,7 +92,7 @@ jobs:
 
       # Cache Gradle wrapper + dependency/artifact caches — bước tối ưu lớn
       # nhất so với CI cũ (trước đây mỗi release tải lại toàn bộ Gradle).
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6.3.0
         with:
           dependency-graph: 'disabled'
 
@@ -185,13 +185,13 @@ jobs:
 
       - name: Upload release to Play Console (Closed Testing)
         if: env.HAS_PLAY_KEY == 'true'
-        uses: r0adkll/upload-google-play@v1
+        uses: r0adkll/upload-google-play@v1.1.5
         with:
           serviceAccountJson: play-sa.json
           packageName: com.khongdich.app
-          releaseFile: artifacts/khongdich-prod-${{ env.SHA7 }}.aab
+          releaseFiles: artifacts/khongdich-prod-${{ env.SHA7 }}.aab
           releaseName: ${{ env.RELEASE_NAME }}
-          track: '${{ vars.PLAY_TRACK_NAME }}'
+          tracks: '${{ vars.PLAY_TRACK_NAME }}'
           status: completed
           inAppUpdatePriority: '0'
           whatsNewDirectory: play/whatsnew
