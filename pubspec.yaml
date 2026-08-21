@@ -15,7 +15,7 @@ dependencies:
   flutter_riverpod: ^2.5.1
 
   # Routing
-  go_router: ^14.2.0
+  go_router: ^17.5.0
 
   # Network (no cookies — Bearer JWT only)
   dio: ^5.5.0
