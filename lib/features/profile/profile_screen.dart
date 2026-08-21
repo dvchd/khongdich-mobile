@@ -148,6 +148,78 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 }
 
+/// Badge "🎯 Uy tín" — mirror web profile.html: label + thanh tiến trình
+/// + số X/100 + nút ? giải thích (tap mở tooltip). Màu theo ngưỡng web:
+/// >=70 xanh (trust-high), >=40 vàng (trust-mid), <40 đỏ (trust-low).
+class TrustScoreBadge extends StatelessWidget {
+  const TrustScoreBadge({super.key, required this.score});
+
+  final int score;
+
+  Color _color(BuildContext context) {
+    if (score >= 70) return const Color(0xFF22C55E); // trust-high
+    if (score >= 40) return const Color(0xFFEAB308); // trust-mid
+    return const Color(0xFFEF4444); // trust-low
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('🎯 Uy tín', style: TextStyle(fontSize: 12)),
+        const SizedBox(width: 6),
+        // Thanh tiến trình 0-100 — mirror .trust-track/.trust-fill.
+        ClipRRect(
+          borderRadius: BorderRadius.circular(99),
+          child: SizedBox(
+            width: 48,
+            height: 6,
+            child: Stack(
+              children: [
+                Container(color: Colors.black12),
+                FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: (score / 100).clamp(0.0, 1.0),
+                  child: Container(color: color),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '$score/100',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+        const SizedBox(width: 2),
+        // Nút ? giải thích — mirror .trust-info-btn (web dùng Alpine
+        // toggle; mobile dùng Tooltip).
+        Tooltip(
+          message: 'Điểm uy tín phản ánh lịch sử đăng truyện và chấp hành '
+              'quy định của bạn trên Không Dịch. Tài khoản mới bắt đầu ở '
+              '50/100 — đăng truyện/chương chất lượng giúp điểm tăng dần, '
+              'vi phạm quy định sẽ bị trừ.',
+          child: Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.grey.shade400),
+            ),
+            child: const Icon(Icons.help_outline, size: 12),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Shown when the user is not logged in — a single "Đăng nhập bằng Google"
 /// button card. No intermediate navigation; the Google Sign-In flow starts
 /// directly from here.
@@ -229,6 +301,13 @@ class _UserHeader extends ConsumerWidget {
                   user.email,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                // Điểm uy tín — mirror web profile.html: 🎯 Uy tín + thanh
+                // tiến trình + X/100. Màu theo ngưỡng web: >=70 xanh,
+                // >=40 vàng, <40 đỏ (style.css .trust-high/mid/low).
+                if (user.trustScore > 0) ...[
+                  const SizedBox(height: 6),
+                  TrustScoreBadge(score: user.trustScore),
+                ],
                 if (user.readingStreak > 0) ...[
                   const SizedBox(height: 2),
                   Text(

@@ -1229,6 +1229,7 @@ class CurrentUser {
     this.avatarUrl,
     this.readingStreak = 0,
     this.unreadNotificationCount = 0,
+    this.trustScore = 0,
   });
   final String id;
   final String username;
@@ -1238,6 +1239,10 @@ class CurrentUser {
   final String? avatarUrl;
   final int readingStreak;
   final int unreadNotificationCount;
+
+  /// Điểm uy tín (0-100) — backend `users.trust_score`. Tài khoản mới
+  /// bắt đầu 50; đăng truyện chất lượng tăng, vi phạm quy định bị trừ.
+  final int trustScore;
 
   factory CurrentUser.fromJson(Map<String, dynamic> json) => CurrentUser(
     id: json['id'] as String,
@@ -1249,6 +1254,7 @@ class CurrentUser {
     readingStreak: (json['reading_streak'] as num?)?.toInt() ?? 0,
     unreadNotificationCount:
         (json['unread_notification_count'] as num?)?.toInt() ?? 0,
+    trustScore: (json['trust_score'] as num?)?.toInt() ?? 0,
   );
 }
 
