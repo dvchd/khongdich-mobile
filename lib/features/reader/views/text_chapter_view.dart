@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
-import '../../../core/observability/app_logger.dart';
 import '../../../models/chapter_content.dart';
 import '../../tts/tts_audio_handler.dart';
 
