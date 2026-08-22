@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
+import '../../../core/observability/app_logger.dart';
 import '../../../models/chapter_content.dart';
 import '../../tts/tts_audio_handler.dart';
 
@@ -494,22 +495,20 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     _pageHasOversized = oversizedFlags;
   }
 
-  /// Chẻ [Paragraph] (chỉ paragraph mà mọi inline là [TextRun]/[LineBreak]
-  /// — plain prose) tại độ cao [height] bằng line metrics CHÍNH XÁC: lấy
+  /// Chẻ [Paragraph] tại độ cao [height] bằng line metrics CHÍNH XÁC: lấy
   /// đúng các dòng nguyên vẹn vừa khít budget (không cắt giữa từ — dòng
-  /// đã wrap tại ranh giới từ sẵn). Trước đây cắt theo vị trí ký tự rồi
-  /// quay lui tới khoảng trắng gần nhất → mỗi chỗ chẻ mất tới 1–2 dòng
-  /// (trang "trống hơi nhiều" ở đoạn bị chẻ). Trả về (phần đầu vừa
-  /// khít, phần còn lại); null khi không chẻ được hoặc không đáng chẻ.
+  /// đã wrap tại ranh giới từ sẵn). Inline được chẻ đệ quy nên GIỮ
+  /// NGUYÊN định dạng (in nghiêng/đậm/link/code) ở cả 2 phần — trước đây
+  /// paragraph có inline phức tạp bị coi là "không chẻ được" → đẩy
+  /// nguyên đoạn sang trang sau, trang cũ chừa cả khoảng trống lớn.
+  /// Trả về (phần đầu vừa khít, phần còn lại); null khi không chẻ được
+  /// hoặc không đáng chẻ.
   (Paragraph, Paragraph)? _splitParagraphToHeight(
     Block block,
     double textWidth,
     double height,
   ) {
     if (block is! Paragraph) return null;
-    if (!block.children.every((c) => c is TextRun || c is LineBreak)) {
-      return null;
-    }
     final style = widget.theme.bodyStyle;
     final full = block.children.map((c) => c.plainText).join();
     if (full.isEmpty) return null;
@@ -557,10 +556,98 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     var cut = range.end;
     if (cut <= 0 || cut >= full.length) return null;
 
-    final first = full.substring(0, cut);
-    final rest = full.substring(cut);
-    if (first.trim().isEmpty || rest.trim().isEmpty) return null;
-    return (Paragraph([TextRun(first)]), Paragraph([TextRun(rest)]));
+    final split = _splitInlineList(block.children, cut);
+    if (split == null) return null;
+    final (firstInlines, restInlines) = split;
+    if (firstInlines == null || restInlines == null) return null;
+    return (Paragraph(firstInlines), Paragraph(restInlines));
+  }
+
+  /// Chẻ danh sách inline tại [offset] (theo plainText) — trả (first,
+  /// rest) gồm các inline NGUYÊN VẸN; inline bị cắt được chẻ đệ quy nên
+  /// cả 2 phía giữ nguyên kiểu (emphasis/strong/strike/link/code).
+  /// Null khi offset nằm ở biên (không có gì để cắt).
+  (List<Inline>?, List<Inline>?)? _splitInlineList(
+    List<Inline> children,
+    int offset,
+  ) {
+    var used = 0;
+    for (var i = 0; i < children.length; i++) {
+      final len = children[i].plainText.length;
+      if (used + len < offset) {
+        used += len;
+        continue;
+      }
+      if (used + len == offset) {
+        // Cắt đúng biên giữa 2 inline.
+        return (
+          offset == 0 ? null : children.sublist(0, i + 1),
+          i + 1 >= children.length ? null : children.sublist(i + 1),
+        );
+      }
+      // Cắt giữa inline i → chẻ sâu.
+      final s = _splitInlineAt(children[i], offset - used);
+      if (s == null) return null;
+      return (
+        [
+          ...children.sublist(0, i),
+          if (s.$1 != null) s.$1!,
+        ],
+        [
+          if (s.$2 != null) s.$2!,
+          ...children.sublist(i + 1),
+        ],
+      );
+    }
+    return null; // offset > tổng độ dài — không xảy ra.
+  }
+
+  /// Chẻ 1 inline tại [offset] (0 < offset < plainText.length) — trả
+  /// (phần đầu, phần còn lại); null khi offset nằm ở biên.
+  (Inline?, Inline?)? _splitInlineAt(Inline inline, int offset) {
+    return switch (inline) {
+      TextRun(:final text) => offset <= 0 || offset >= text.length
+          ? null
+          : (
+              TextRun(text.substring(0, offset)),
+              TextRun(text.substring(offset)),
+            ),
+      EmphasisRun(:final children) => _splitWrapped(
+          children,
+          offset,
+          (first, rest) => (EmphasisRun(first), EmphasisRun(rest))),
+      StrongRun(:final children) => _splitWrapped(
+          children,
+          offset,
+          (first, rest) => (StrongRun(first), StrongRun(rest))),
+      StrikethroughRun(:final children) => _splitWrapped(
+          children,
+          offset,
+          (first, rest) => (StrikethroughRun(first), StrikethroughRun(rest))),
+      LinkRun(:final url, :final children) => _splitWrapped(
+          children,
+          offset,
+          (first, rest) => (LinkRun(url, first), LinkRun(url, rest))),
+      CodeRun(:final code) => offset <= 0 || offset >= code.length
+          ? null
+          : (
+              CodeRun(code.substring(0, offset)),
+              CodeRun(code.substring(offset)),
+            ),
+      LineBreak() => null, // length 1 — mọi offset hợp lệ đều ở biên.
+    };
+  }
+
+  /// Chẻ danh sách con của inline wrapper (emphasis/strong/…) rồi bọc lại
+  /// đúng kiểu ở cả 2 phía.
+  (Inline, Inline)? _splitWrapped(
+    List<Inline> children,
+    int offset,
+    (Inline, Inline) Function(List<Inline>, List<Inline>) wrap,
+  ) {
+    final s = _splitInlineList(children, offset);
+    if (s == null || s.$1 == null || s.$2 == null) return null;
+    return wrap(s.$1!, s.$2!);
   }
 
   @override
