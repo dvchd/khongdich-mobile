@@ -272,13 +272,12 @@ class StoryRepository implements ChapterFetcher {
   }
 
   /// Search stories + posts.
-  /// Hits the existing `GET /api/v1/search?q=&limit=` endpoint (still
-  /// works for unauthenticated clients; CSRF doesn't apply to GET).
   /// Tìm kiếm truyện — mirror web /tim-kiem: từ khoá + bộ lọc
   /// (thể loại, tag, sắp xếp views|rating|newest|chapters, trạng thái,
   /// kiểu truyện) + phân trang.
   ///
-  /// Hits `GET /api/v1/mobile/search`.
+  /// Hits `GET /api/v1/search` — endpoint web dùng chung (anonymous OK,
+  /// không cần CSRF cho GET).
   Future<SearchResult> search(
     String q, {
     int limit = 20,
@@ -290,7 +289,7 @@ class StoryRepository implements ChapterFetcher {
     String? contentType,
   }) async {
     final r = await _dio.get(
-      '/api/v1/mobile/search',
+      '/api/v1/search',
       queryParameters: {
         'q': q,
         'limit': limit,
