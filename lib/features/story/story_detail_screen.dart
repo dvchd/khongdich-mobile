@@ -226,55 +226,59 @@ class _StoryDetailBody extends ConsumerWidget {
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 4),
-                // Tên tác giả — chạm để mở trang tác giả (danh sách
-                // truyện của họ). Không có username (dữ liệu cũ) →
-                // không bấm được.
-                Builder(
-                  builder: (context) {
-                    final username = detail.authorUsername;
-                    final authorText = Text(
-                      story.author,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: username.isNotEmpty
-                            ? AppTheme.primary
-                            : null,
-                        decoration: username.isNotEmpty
-                            ? TextDecoration.underline
-                            : TextDecoration.none,
-                        decorationColor: AppTheme.primary.withValues(
-                          alpha: 0.5,
-                        ),
-                      ),
-                    );
-                    if (username.isEmpty) {
-                      return Center(child: authorText);
-                    }
-                    return Center(
-                      child: InkWell(
-                        onTap: () => context.push('/author/$username'),
-                        borderRadius: BorderRadius.circular(4),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: authorText,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                if (detail.authorId.isNotEmpty &&
-                    currentUser?.id != detail.authorId) ...[
-                  const SizedBox(height: 8),
-                  Center(
-                    child: FollowButton(
-                      authorId: detail.authorId,
-                      initialFollowing: detail.isFollowing,
-                      initialFollowerCount: 0,
-                      compact: true,
+                // Tên tác giả + nút Theo dõi trên CÙNG một dòng — Wrap
+                // căn giữa, chỉ tràn màn hình mới xuống dòng (trước đây
+                // nút luôn nằm riêng một dòng dưới tên tác giả). Tên tác
+                // giả chạm để mở trang tác giả; không có username (dữ
+                // liệu cũ) → không bấm được.
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 10,
+                  runSpacing: 4,
+                  children: [
+                    Builder(
+                      builder: (context) {
+                        final username = detail.authorUsername;
+                        final authorText = Text(
+                          story.author,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: username.isNotEmpty
+                                ? AppTheme.primary
+                                : null,
+                            decoration: username.isNotEmpty
+                                ? TextDecoration.underline
+                                : TextDecoration.none,
+                            decorationColor: AppTheme.primary.withValues(
+                              alpha: 0.5,
+                            ),
+                          ),
+                        );
+                        if (username.isEmpty) {
+                          return authorText;
+                        }
+                        return InkWell(
+                          onTap: () => context.push('/author/$username'),
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: authorText,
+                          ),
+                        );
+                      },
                     ),
-                  ),
-                ],
+                    if (detail.authorId.isNotEmpty &&
+                        currentUser?.id != detail.authorId)
+                      FollowButton(
+                        authorId: detail.authorId,
+                        initialFollowing: detail.isFollowing,
+                        initialFollowerCount: 0,
+                        compact: true,
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 Wrap(
                   alignment: WrapAlignment.center,
@@ -611,10 +615,7 @@ class _StoryDetailBody extends ConsumerWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        subtitle: Text(_contentTypeLabel(
-                            story.contentTypes.isNotEmpty
-                                ? story.contentTypes.first
-                                : 'text')),
+                        subtitle: Text(_chapterSubtitle(story, c)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -685,6 +686,21 @@ class _StoryDetailBody extends ConsumerWidget {
         'video' => 'Video YouTube',
         _ => type,
       };
+
+  /// Subtitle mỗi dòng chương: loại truyện + số từ (+ lượt đọc nếu có).
+  /// Backend đã trả sẵn `word_count` / `view_count` trong ChapterMeta —
+  /// không cần đẩy gì thêm, UI chỉ hiển thị.
+  String _chapterSubtitle(StorySummary story, ChapterSummary c) {
+    final typeLabel = _contentTypeLabel(story.contentTypes.isNotEmpty
+        ? story.contentTypes.first
+        : 'text');
+    final parts = <String>[typeLabel];
+    if (c.wordCount > 0) parts.add('${_StoryStats._fmtCount(c.wordCount)} từ');
+    if (c.viewCount > 0) {
+      parts.add('${_StoryStats._fmtCount(c.viewCount)} đọc');
+    }
+    return parts.join(' · ');
+  }
 
   /// Tải một chương đơn lẻ (nút ⬇ ở mỗi dòng danh sách chương).
   Future<void> _downloadChapter(

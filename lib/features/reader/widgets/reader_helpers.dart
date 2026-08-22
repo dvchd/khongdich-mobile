@@ -115,6 +115,9 @@ Widget buildChapterContent(
   void Function(String plainText)? onParagraphLongPress,
   VoidCallback? onAllRevealed,
   Map<String, String> mangaLocalImagePaths = const {},
+  /// Widget đặt CUỐI nội dung cuộn dọc (block "Hết chương — Chương kế
+  /// tiếp") — chỉ áp dụng cho text/visual, không áp dụng page mode.
+  Widget? footer,
 }) {
   return switch (chapter) {
     TextChapterContent(
@@ -136,6 +139,7 @@ Widget buildChapterContent(
         pageController: isPageMode ? pageController : null,
         isPageMode: isPageMode,
         onParagraphLongPress: onParagraphLongPress,
+        footer: footer,
       ),
     VisualChapterContent(
       :final id,
@@ -154,6 +158,7 @@ Widget buildChapterContent(
         pageController: isPageMode ? pageController : null,
         isPageMode: isPageMode,
         onParagraphLongPress: onParagraphLongPress,
+        footer: footer,
       ),
     MangaChapterContent(:final images) => MangaChapterView(
       pages: images,

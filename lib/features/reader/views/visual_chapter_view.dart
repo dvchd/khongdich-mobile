@@ -23,6 +23,7 @@ class VisualChapterView extends StatelessWidget {
     this.pageController,
     this.isPageMode = false,
     this.onParagraphLongPress,
+    this.footer,
   });
 
   final String markdown;
@@ -33,6 +34,10 @@ class VisualChapterView extends StatelessWidget {
   final PageController? pageController;
   final bool isPageMode;
   final void Function(String plainText)? onParagraphLongPress;
+
+  /// Block cuối nội dung (chỉ dùng cho chế độ cuộn dọc) — truyền thẳng
+  /// xuống TextChapterView bên trong.
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -65,6 +70,7 @@ class VisualChapterView extends StatelessWidget {
             pageController: pageController,
             isPageMode: isPageMode,
             onParagraphLongPress: onParagraphLongPress,
+            footer: footer,
           ),
         ),
       ],

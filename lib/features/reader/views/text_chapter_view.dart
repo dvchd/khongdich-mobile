@@ -31,6 +31,7 @@ class TextChapterView extends ConsumerStatefulWidget {
     this.onChapterStart,
     this.isPageMode = false,
     this.onParagraphLongPress,
+    this.footer,
   });
 
   final String markdown;
@@ -45,6 +46,10 @@ class TextChapterView extends ConsumerStatefulWidget {
   /// Long-press on a paragraph block — normalized plain text payload
   /// (used by bình luận đoạn).
   final void Function(String plainText)? onParagraphLongPress;
+
+  /// Widget đặt cuối nội dung CHẾ ĐỘ CUỘN DỌC (block "Hết chương —
+  /// Chương kế tiếp") — nằm trong luồng scroll nên không che chữ cuối.
+  final Widget? footer;
 
   @override
   ConsumerState<TextChapterView> createState() => _TextChapterViewState();
@@ -349,12 +354,21 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         _scrollModeWidth = constraints.maxWidth;
         return SingleChildScrollView(
           controller: widget.scrollController,
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 48),
-          child: MarkdownRenderer(
-            blocks: _blocks,
-            theme: widget.theme,
-            activeBlock: _activeBlock,
-            onParagraphLongPress: widget.onParagraphLongPress,
+          // Footer tự có padding dưới (40) — nếu không có footer thì giữ
+          // padding đáy 48 như cũ cho chữ cuối không dính mép.
+          padding: EdgeInsets.fromLTRB(
+              16, 0, 16, widget.footer == null ? 48 : 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              MarkdownRenderer(
+                blocks: _blocks,
+                theme: widget.theme,
+                activeBlock: _activeBlock,
+                onParagraphLongPress: widget.onParagraphLongPress,
+              ),
+              if (widget.footer != null) widget.footer!,
+            ],
           ),
         );
       },

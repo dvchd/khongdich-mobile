@@ -15,19 +15,17 @@ import '../home/widgets/story_card.dart';
 /// Index of the "Downloaded" tab. The home screen sets this as the
 /// bookshelf intent when the device is offline so the user lands on
 /// their offline library directly.
-const kBookshelfDownloadedTabIndex = 5;
+const kBookshelfDownloadedTabIndex = 3;
 
 /// Which tab to show by default (used for offline auto-redirect).
 /// Defaults to 0 (the "All" tab) when online.
 final bookshelfTabIntentProvider = StateProvider<int>((ref) => 0);
 
-/// Bookshelf — 6 tabs:
+/// Bookshelf — 4 tabs:
 ///   0. Tất cả      (merged bookshelf + downloaded, deduped by story id)
-///   1. Đang đọc
-///   2. Đã đọc xong
-///   3. Sẽ đọc
-///   4. Yêu thích
-///   5. Đã tải      (offline library)
+///   1. Đang đọc    (bookmarks với list_type = reading)
+///   2. Đã lưu      (toàn bộ bookmarks, mọi list_type)
+///   3. Đã tải      (offline library)
 ///
 /// Default tab is 0 (All) when online. When the home screen detects
 /// no network, it sets [bookshelfTabIntentProvider] to
@@ -54,9 +52,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   static const _tabs = [
     ('all', 'Tất cả'),
     ('reading', 'Đang đọc'),
-    ('completed', 'Đã đọc xong'),
-    ('plan_to_read', 'Muốn đọc'),
-    ('favorite', 'Yêu thích'),
+    ('saved', 'Đã lưu'),
     ('downloaded', 'Đã tải'),
   ];
 
@@ -162,11 +158,12 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     } else if (isDownloadedTab) {
       items = downloadedStories;
     } else {
-      // Filter bookshelf by list_type (reading / completed /
-      // plan_to_read / favorite).
-      final listType = _tabs[_tab].$1;
+      // Tab "Đang đọc" (1) chỉ hiện bookmark list_type = reading;
+      // tab "Đã lưu" (2) hiện TOÀN BỘ bookmark (mọi list_type) —
+      // user chỉ cần 2 mức: đang đọc / đã lưu lại.
+      final tab = _tabs[_tab].$1;
       items = bookmarks
-          .where((b) => b.listType == listType)
+          .where((b) => tab == 'saved' || b.listType == 'reading')
           .map((b) => StorySummary(
                 id: b.storyId,
                 title: b.title,
@@ -190,7 +187,7 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
             // SingleChildScrollView + Row thay vì ListView: ListView build
             // LAZY → chip "Đã tải" (cuối, ngoài tầm nhìn) chưa được build
             // → GlobalKey.currentContext == null → _ensureChipVisible
-            // không scroll được trên màn hình hẹp. Row build EAGER cả 6
+            // không scroll được trên màn hình hẹp. Row build EAGER cả 4
             // chip nên ensureVisible luôn hoạt động.
             child: SingleChildScrollView(
               controller: _chipsController,
