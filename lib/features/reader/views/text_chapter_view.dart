@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
+import '../../../models/chapter_content.dart';
 import '../../tts/tts_audio_handler.dart';
 
 /// Text chapter view with two modes:
@@ -33,6 +34,9 @@ class TextChapterView extends ConsumerStatefulWidget {
     this.onParagraphLongPress,
     this.footer,
     this.header,
+    this.nextChapter,
+    this.onContinue,
+    this.continueHint,
   });
 
   final String markdown;
@@ -55,6 +59,21 @@ class TextChapterView extends ConsumerStatefulWidget {
   /// Widget đặt đầu nội dung CHẾ ĐỘ CUỘN DỌC (header "Ch. N: Title" +
   /// meta chia sẻ/báo cáo) — cuộn xuống là trôi đi như web mobile.
   final Widget? header;
+
+  /// Chương kế tiếp (ghost): sau block "Hết chương", nội dung chương sau
+  /// được render NGAY TIẾP trong luồng scroll — cuộn tới là thấy dần
+  /// (giống web đọc truyện cuộn liên tục). Khi ghost trượt lên qua ~45%
+  /// viewport → [onContinue] để parent route-replace sang chương sau
+  /// (đã prefetch nên không flash). Chỉ áp dụng CHẾ ĐỘ CUỘN DỌC.
+  final ChapterContent? nextChapter;
+
+  /// Fired MỘT LẦN khi ghost chương kế trượt qua ngưỡng chuyển chương.
+  final VoidCallback? onContinue;
+
+  /// Gợi ý nhỏ hiển thị dưới footer khi ghost chưa sẵn sàng ("Đang tải
+  /// chương kế tiếp…" / "Chương kế tiếp không tải được") — không ngưỡng,
+  /// không key, nút chương kế vẫn dùng được.
+  final String? continueHint;
 
   @override
   ConsumerState<TextChapterView> createState() => _TextChapterViewState();
@@ -103,11 +122,21 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   /// layout mỗi chunk (chương dài + TTS đang đọc = jank kép với rebuild).
   final Map<String, double> _heightCache = {};
 
+  // Ghost "cuộn hết chương → hiện chương sau": key đo vị trí ghost trong
+  // scroll + cờ chống fire nhiều lần cho cùng một chương.
+  final GlobalKey _ghostKey = GlobalKey();
+  bool _continueFired = false;
+
+  /// Ngưỡng chuyển: khi top của ghost trượt lên qua ~45% viewport nghĩa
+  /// là user đã chủ động tiếp tục đọc sang chương sau → route-replace.
+  static const double _continueThreshold = 0.45;
+
   @override
   void initState() {
     super.initState();
     _blocks = MarkdownParser().parse(widget.markdown);
     _pageController = widget.pageController ?? PageController();
+    widget.scrollController?.addListener(_maybeContinueToNext);
     // Subscribe to TTS chunk progress. We'll filter by chapterId in the
     // listener so a different chapter's TTS doesn't trigger a highlight
     // here. The subscription is set up after the first frame so that
@@ -160,6 +189,8 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       // Đổi chương → header đổi tiêu đề → đo lại chiều cao trang 1.
       _pageHeaderMeasured = false;
       _pageHeaderHeight = 0;
+      // Chương mới → ghost mới → cho phép gọi onContinue lại.
+      _continueFired = false;
       // Clear highlight when chapter changes — the new chunk event for
       // the new chapter will set a fresh highlight starting from block 0.
       _activeBlock.value = null;
@@ -193,6 +224,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
   @override
   void dispose() {
+    widget.scrollController?.removeListener(_maybeContinueToNext);
     _ttsSub?.cancel();
     _playbackSub?.cancel();
     _activeBlock.dispose();
@@ -501,6 +533,30 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     });
   }
 
+  /// Scroll qua ghost → ghost trượt lên trên ~45% viewport nghĩa là user
+  /// chủ động đọc tiếp chương sau → route-replace (một lần mỗi chương;
+  /// guard [_continueFired] chống fire lại trong lúc animation route).
+  void _maybeContinueToNext() {
+    final onContinue = widget.onContinue;
+    if (widget.nextChapter == null ||
+        onContinue == null ||
+        _continueFired) {
+      return;
+    }
+    final controller = widget.scrollController;
+    if (controller == null || !controller.hasClients) return;
+    final ctx = _ghostKey.currentContext;
+    if (ctx == null) return;
+    final box = ctx.findRenderObject();
+    if (box is! RenderBox || !box.attached) return;
+    final ghostTop = box.localToGlobal(Offset.zero).dy;
+    if (ghostTop <=
+        controller.position.viewportDimension * _continueThreshold) {
+      _continueFired = true;
+      onContinue();
+    }
+  }
+
   Widget _buildScrollMode() {
     // Wrap in LayoutBuilder to capture the content width so
     // _scrollOrFlipToActive can measure block heights accurately.
@@ -527,6 +583,18 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
                 onParagraphLongPress: widget.onParagraphLongPress,
               ),
               if (widget.footer != null) widget.footer!,
+              // Ghost chương kế: hiện dần khi cuộn hết chương (xem
+              // doc nextChapter) + gợi ý trạng thái khi chưa sẵn sàng.
+              if (widget.continueHint != null)
+                _ContinueHintRow(text: widget.continueHint!),
+              if (widget.nextChapter != null)
+                KeyedSubtree(
+                  key: _ghostKey,
+                  child: _NextChapterGhost(
+                    chapter: widget.nextChapter!,
+                    theme: widget.theme,
+                  ),
+                ),
             ],
           ),
         );
@@ -793,5 +861,81 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         curve: Curves.easeInOut,
       );
     }
+  }
+}
+
+/// Gợi ý trạng thái dưới footer "Hết chương" khi ghost chưa sẵn sàng
+/// (đang tải / không tải được) — không có key nên KHÔNG kích hoạt
+/// onContinue; user vẫn chuyển chương bằng 2 nút phía trên.
+class _ContinueHintRow extends StatelessWidget {
+  const _ContinueHintRow({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.5),
+              ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Ghost chương kế tiếp: render nội dung chương sau NGAY dưới
+/// "Hết chương" trong luồng scroll — cuộn tiếp là đọc luôn chương sau
+/// (giống web truyện chữ cuộn liên tục). Long-press bình luận đoạn
+/// bị TẮT ở đây: đoạn vẫn thuộc chương sau, bình luận khi đang ở
+/// phần nhìn trước sẽ gửi quote lệch chapterId.
+class _NextChapterGhost extends StatelessWidget {
+  const _NextChapterGhost({required this.chapter, required this.theme});
+  final ChapterContent chapter;
+  final ReaderTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final markdown = switch (chapter) {
+      TextChapterContent(:final contentMarkdown) => contentMarkdown,
+      VisualChapterContent(:final contentMarkdown) => contentMarkdown,
+      _ => '',
+    };
+    final label = chapter.label ?? 'Ch. ${chapter.chapterNumber}';
+    final title =
+        chapter.title.isEmpty ? label : '$label: ${chapter.title}';
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 48),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Divider(color: theme.bodyStyle.color?.withValues(alpha: 0.2)),
+          const SizedBox(height: 16),
+          Center(
+            child: Text(
+              '— Chương sau: $title —',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: theme.bodyStyle.color?.withValues(alpha: 0.7),
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          MarkdownRenderer(
+            blocks: MarkdownParser().parse(markdown),
+            theme: theme,
+            onParagraphLongPress: null,
+          ),
+        ],
+      ),
+    );
   }
 }

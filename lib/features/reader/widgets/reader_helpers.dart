@@ -122,6 +122,12 @@ Widget buildChapterContent(
   /// chia sẻ/báo cáo) — chỉ áp dụng cho text/visual, không áp dụng page
   /// mode.
   Widget? header,
+  /// Chương kế tiếp cho ghost cuộn-dọc (hiện dần chương sau khi cuộn
+  /// hết chương, trượt qua ngưỡng → [onContinue]).
+  ChapterContent? nextChapter,
+  VoidCallback? onContinue,
+  /// Gợi ý trạng thái ghost ("Đang tải chương kế tiếp…").
+  String? continueHint,
 }) {
   return switch (chapter) {
     TextChapterContent(
@@ -145,6 +151,9 @@ Widget buildChapterContent(
         onParagraphLongPress: onParagraphLongPress,
         footer: footer,
         header: header,
+        nextChapter: nextChapter,
+        onContinue: onContinue,
+        continueHint: continueHint,
       ),
     VisualChapterContent(
       :final id,
@@ -165,6 +174,9 @@ Widget buildChapterContent(
         onParagraphLongPress: onParagraphLongPress,
         footer: footer,
         header: header,
+        nextChapter: nextChapter,
+        onContinue: onContinue,
+        continueHint: continueHint,
       ),
     MangaChapterContent(:final images) => MangaChapterView(
       pages: images,

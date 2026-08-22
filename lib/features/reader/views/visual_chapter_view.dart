@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/markdown/markdown.dart';
 import '../../../core/network/app_image_cache.dart';
+import '../../../models/chapter_content.dart';
 import 'text_chapter_view.dart';
 
 /// `content_type=visual` (Bách khoa trực quan) chapter view.
@@ -25,6 +26,9 @@ class VisualChapterView extends StatelessWidget {
     this.onParagraphLongPress,
     this.footer,
     this.header,
+    this.nextChapter,
+    this.onContinue,
+    this.continueHint,
   });
 
   final String markdown;
@@ -43,6 +47,11 @@ class VisualChapterView extends StatelessWidget {
   /// Block đầu nội dung (header chương) — truyền thẳng xuống
   /// TextChapterView bên trong.
   final Widget? header;
+
+  /// Ghost chương kế tiếp (cuộn dọc) — truyền xuống TextChapterView.
+  final ChapterContent? nextChapter;
+  final VoidCallback? onContinue;
+  final String? continueHint;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +86,9 @@ class VisualChapterView extends StatelessWidget {
             onParagraphLongPress: onParagraphLongPress,
             footer: footer,
             header: header,
+            nextChapter: nextChapter,
+            onContinue: onContinue,
+            continueHint: continueHint,
           ),
         ),
       ],

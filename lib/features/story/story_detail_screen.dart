@@ -10,6 +10,7 @@ import '../../core/markdown/markdown.dart';
 import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
+import '../../core/widgets/app_retry_view.dart';
 import '../../core/widgets/app_snack_bar.dart';
 import '../../core/widgets/follow_button.dart';
 import '../../core/widgets/report_sheet.dart';
@@ -90,8 +91,9 @@ class StoryDetailScreen extends ConsumerWidget {
     return Scaffold(
       body: detailAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorBody(
-          message: '$e',
+        error: (e, _) => AppRetryView(
+          message: 'Không tải được truyện.',
+          detail: '$e',
           onRetry: () => ref.invalidate(_storyDetailProvider(storySlug)),
         ),
         data: (result) => _StoryDetailBody(detail: result.detail, localBookmark: result.localBookmark),
@@ -553,6 +555,10 @@ class _StoryDetailBody extends ConsumerWidget {
                     ),
                   ],
                 ),
+                // Khoảng nghỉ giữa hàng "Bắt đầu đọc + bookmark + tải" và
+                // khối bình luận/tuỷ sách bên dưới — trước đây dính sát
+                // nhau (padding 16 của container là chưa đủ).
+                const SizedBox(height: 12),
               ],
             ),
           ),
@@ -593,8 +599,14 @@ class _StoryDetailBody extends ConsumerWidget {
           loading: () => const SliverFillRemaining(
             child: Center(child: CircularProgressIndicator()),
           ),
-          error: (e, _) => SlFillRemaining(
-            child: Center(child: Text('Không tải được chương: $e')),
+          error: (e, _) => SliverFillRemaining(
+            hasScrollBody: false,
+            child: AppRetryView(
+              message: 'Không tải được danh sách chương.',
+              detail: '$e',
+              onRetry: () =>
+                  ref.invalidate(chapterListProvider(story.id)),
+            ),
           ),
           data: (chapters) => chapters.isEmpty
               ? const SliverFillRemaining(
@@ -1126,40 +1138,6 @@ class _BookmarkChip extends StatelessWidget {
   }
 }
 
-class _ErrorBody extends StatelessWidget {
-  const _ErrorBody({required this.message, required this.onRetry});
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off, size: 48),
-            const SizedBox(height: 12),
-            const Text('Không tải được truyện'),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Thử lại')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Short alias for the SliverFillRemaining type — keeps the call sites
-// readable without losing the sliver contract.
-typedef SlFillRemaining = SliverFillRemaining;
 
 /// Merged detail payload with local bookmark state.
 /// Falls back to local Drift bookmarks when the server returns null

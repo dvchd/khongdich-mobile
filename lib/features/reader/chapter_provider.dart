@@ -23,7 +23,27 @@ final chapterProvider =
   );
 });
 
-/// Reference passed to [chapterProvider].
+/// Lấy chương kế cho ghost "cuộn hết chương → hiện chương sau" ở reader
+/// cuộn dọc. Chương này thường đã được prefetch (xem ChapterCacheService
+/// .prefetchNext) → resolve instant, không thêm spinner. Chặn chương VIP
+/// (user không có quyền không được tải ngầm vào cache).
+final nextChapterGhostProvider =
+    FutureProvider.autoDispose.family<ChapterContent, ChapterRef>(
+        (ref, ref_) async {
+  final cache = ref.watch(chapterCacheServiceProvider);
+  if (await cache.isChapterLocked(
+    storyId: ref_.storyId,
+    chapterNumber: ref_.chapterNumber,
+  )) {
+    throw StateError('Chương VIP — ghost không tải.');
+  }
+  return cache.getChapter(
+    storyId: ref_.storyId,
+    chapterNumber: ref_.chapterNumber,
+  );
+});
+
+/// Reference used by [chapterProvider] / [nextChapterGhostProvider].
 class ChapterRef {
   const ChapterRef({
     required this.storyId,

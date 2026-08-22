@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/widgets/app_retry_view.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../bookshelf/bookshelf_screen.dart'
@@ -123,9 +124,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
       SearchLoading() =>
         const Center(child: CircularProgressIndicator()),
-      SearchError(:final message) => _EmptyState(
-          icon: Icons.cloud_off,
-          message: 'Tìm kiếm thất bại: $message',
+      SearchError(:final message) => AppRetryView(
+          icon: Icons.search_off,
+          message: 'Tìm kiếm thất bại.',
+          detail: message,
+          onRetry: () =>
+              ref.read(searchProvider.notifier).run(_controller.text),
         ),
       SearchSuccess(:final result) => result.stories.isEmpty
           ? const _EmptyState(
@@ -154,9 +158,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Widget _buildRandom(AsyncValue<List<StorySummary>> state) {
     return state.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => _EmptyState(
-        icon: Icons.cloud_off,
-        message: 'Không tải được truyện: $e',
+      error: (e, _) => AppRetryView(
+        message: 'Không tải được truyện.',
+        detail: '$e',
+        onRetry: () => ref.read(randomStoriesProvider.notifier).load(),
       ),
       data: (stories) => RefreshIndicator(
         // Kéo xuống khi chưa tìm kiếm → load lại 12 truyện ngẫu nhiên

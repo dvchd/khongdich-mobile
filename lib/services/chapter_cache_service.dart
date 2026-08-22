@@ -101,6 +101,22 @@ class ChapterCacheService {
     _lockedChapterIds = ids;
   }
 
+  /// Chương [chapterNumber] của [storyId] có bị VIP-locked không —
+  /// dùng để chặn ghost "cuộn tiếp sang chương sau" tải chương VIP
+  /// vào cache khi user không có quyền (trước đây setLockedChapterIds
+  /// chỉ chặn prefetch, ghost là đường tải ngầm thứ hai).
+  Future<bool> isChapterLocked({
+    required String storyId,
+    required int chapterNumber,
+  }) async {
+    if (_lockedChapterIds.isEmpty) return false;
+    final chapters = await _getChapterList(storyId);
+    final meta =
+        chapters.where((c) => c.chapterNumber == chapterNumber).firstOrNull;
+    if (meta == null) return false;
+    return _lockedChapterIds.contains(meta.id);
+  }
+
   /// Lấy chapter content. Check memory → DB → API.
   /// Nếu cache hit → return ngay (instant, không loading).
   Future<ChapterContent> getChapter({

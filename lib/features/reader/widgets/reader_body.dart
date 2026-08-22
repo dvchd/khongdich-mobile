@@ -9,6 +9,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/widgets/report_sheet.dart';
 import '../../../models/chapter_content.dart';
+import '../chapter_provider.dart';
 import '../reader_settings_provider.dart';
 import 'reader_bar.dart';
 import 'reader_helpers.dart';
@@ -274,6 +275,18 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     });
   }
 
+  /// Ghost chương kế trượt qua ngưỡng (TextChapterView fire) → người đọc
+  /// đã chủ động tiếp tục vào chương sau: mark tiến trình chương hiện tại
+  /// rồi route-replace sang chương kế. Mark thủ công vì _onScroll chỉ
+  /// mark ở 95% maxScrollExtent — extent bao gồm ghost nên dễ bỏ sót.
+  void _onContinueToNext() {
+    if (!_progressSaved) {
+      _progressSaved = true;
+      widget.onChapterNearEnd?.call();
+    }
+    widget.onNext?.call();
+  }
+
   void _onTapZone(ReaderTapZone zone) {
     final isPageMode =
         widget.settings.scrollMode == ReaderScrollMode.horizontal;
@@ -321,6 +334,37 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     final readerTheme = resolveReaderTheme(s, brightness);
     final isPageMode = s.scrollMode == ReaderScrollMode.horizontal;
     final bgColor = readerBgColor(s.theme, brightness);
+
+    // Ghost chương kế tiếp (cuộn dọc, text/visual, có chương sau): hiện
+    // dần nội dung chương sau ngay dưới "Hết chương" — cuộn tới ngưỡng
+    // TextChapterView gọi onContinueNext → mark tiến trình + route-replace
+    // (chương đã prefetch → chuyển instant, không spinner).
+    final nextNumber = widget.chapter.nextChapter;
+    final wantsGhost = s.scrollMode == ReaderScrollMode.vertical &&
+        nextNumber != null &&
+        widget.onNext != null &&
+        (widget.chapter is TextChapterContent ||
+            widget.chapter is VisualChapterContent);
+    ChapterContent? nextChapter;
+    String? continueHint;
+    if (wantsGhost) {
+      final nextAsync = ref.watch(
+        nextChapterGhostProvider(
+          ChapterRef(
+            storyId: widget.chapter.storyId,
+            chapterNumber: nextNumber,
+          ),
+        ),
+      );
+      nextAsync.when(
+        data: (next) => nextChapter = next,
+        loading: () =>
+            continueHint = 'Đang tải chương kế tiếp — cuộn tiếp để đọc…',
+        error: (e, _) => continueHint = e.toString().contains('VIP')
+            ? 'Chương kế tiếp là chương VIP — chấp hành quy định nhé.'
+            : 'Chương kế tiếp không tải được (hết mạng?) — dùng nút chuyển chương.',
+      );
+    }
 
     final content = _scrollWrapper(
       buildChapterContent(
@@ -372,6 +416,9 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
           textColor:
               readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
         ),
+        nextChapter: nextChapter,
+        onContinue: nextChapter == null ? null : _onContinueToNext,
+        continueHint: continueHint,
       ),
     );
 
