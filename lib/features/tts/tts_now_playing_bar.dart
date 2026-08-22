@@ -168,14 +168,20 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
     // X "dừng hẳn và đóng" (dismiss) / có modal sheet đang mở (bar nằm
     // TRÊN Navigator nên không nên đè lên sheet — do TtsBarRouteObserver
     // cập nhật sheetOpen).
-    final sheetOpen = ref.watch(ttsBarStateProvider).sheetOpen;
-    final visible = handler != null &&
+    //
+    // sheetOpen phải được đọc qua ListenableBuilder ở cuối build:
+    // ttsBarStateProvider là Provider chứa ChangeNotifier — đọc
+    // `.sheetOpen` ngay trong build KHÔNG subscribe notifyListeners.
+    // Trước đây bar chỉ ẩn đúng lúc nếu trùng lúc có rebuild khác
+    // (chunkProgress TTS đang chạy); TTS đang PAUSE thì bar đè lên
+    // sheet vĩnh viễn.
+    final barState = ref.watch(ttsBarStateProvider);
+    final hasChapter = handler != null &&
         handler.currentChapterId != null &&
-        handler.dismissedChapterId != handler.currentChapterId &&
-        !sheetOpen;
+        handler.dismissedChapterId != handler.currentChapterId;
 
     final Widget child;
-    if (!visible) {
+    if (!hasChapter) {
       child = const SizedBox.shrink(key: ValueKey('tts-now-playing-hidden'));
     } else {
       final scheme = Theme.of(context).colorScheme;
@@ -344,23 +350,37 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
     // + fade vào/ra mượt thay vì xuất hiện đột ngột. Padding đáy
     // (safe-area) chỉ tồn tại khi bar HIỂN THỊ — ẩn thì bar là SizedBox
     // 0px nên layout thu về, modal sheet / snackbar chạm đáy thật.
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 108),
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 220),
-        reverseDuration: const Duration(milliseconds: 180),
-        transitionBuilder: (child, anim) => FadeTransition(
-          opacity: anim,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.5),
-              end: Offset.zero,
-            ).animate(anim),
-            child: child,
+    //
+    // ListenableBuilder để bar ẩn NGAY khi sheet/dialog mở và hiện lại
+    // NGAY khi đóng (xem giải thích ở trên — ChangeNotifier không được
+    // subscribe qua ref.watch provider thường).
+    return ListenableBuilder(
+      listenable: barState,
+      builder: (context, _) {
+        final hidden = !hasChapter || barState.sheetOpen;
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 108),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            reverseDuration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.5),
+                  end: Offset.zero,
+                ).animate(anim),
+                child: child,
+              ),
+            ),
+            child: hidden
+                ? const SizedBox.shrink(
+                    key: ValueKey('tts-now-playing-hidden'),
+                  )
+                : child,
           ),
-        ),
-        child: child,
-      ),
+        );
+      },
     );
   }
 }

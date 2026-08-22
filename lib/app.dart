@@ -79,8 +79,16 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
     if (state == AppLifecycleState.resumed) {
       // App resume → flush pending reading progress (synced=0) lên
       // server. Đọc offline để lại row synced=0, retry khi online lại.
+      // try/catch: sự kiện "resumed" có thể fire NGAY LÚC COLD START,
+      // khi apiClientProvider chưa sẵn sàng — readingProgressServiceProvider
+      // ném "ApiClient not ready" → ProviderException unhandled. Lúc đó
+      // bỏ qua; flush sẽ chạy lại khi router ready (xem build bên dưới).
       Future.microtask(() {
-        ref.read(readingProgressServiceProvider).flushPending();
+        try {
+          ref.read(readingProgressServiceProvider).flushPending();
+        } catch (e) {
+          AppLogger.debug('ReadingProgress: flush on resume skipped ($e)');
+        }
       });
     }
   }

@@ -266,14 +266,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     // → now-playing bar tưởng màn hình có bottom nav mà đặt cao sai chỗ.
     final matches = router.routerDelegate.currentConfiguration.matches;
     final location = matches.isEmpty ? '/' : matches.last.matchedLocation;
-    ref.read(topLocationProvider.notifier).state = location;
+    // KHÔNG set state NGAY trong listener: listener của router delegate có
+    // thể fire NGAY TRONG LÚC widget tree đang build (vd. restoreState /
+    // setInitialRoutePath của Router khi push route đầu tiên sau boot) —
+    // set StateProvider lúc đó làm Riverpod ném "Tried to modify a provider
+    // while the widget tree was building" → push reader CHẾT với lỗi
+    // "Không tải được chương". Defer sang microtask (chạy sau khi build
+    // xong) — luôn an toàn.
+    Future.microtask(() {
+      ref.read(topLocationProvider.notifier).state = location;
+    });
   }
 
   router.routerDelegate.addListener(trackTopLocation);
-  // Defer lần track đầu — không được modify StateProvider khác NGAY trong
-  // lúc appRouterProvider đang build (Riverpod assertion "modified ... while
-  // building"). Listener của các lần đổi route sau vẫn chạy bình thường.
-  Future.microtask(trackTopLocation);
   ref.onDispose(() => router.routerDelegate.removeListener(trackTopLocation));
   return router;
 });
