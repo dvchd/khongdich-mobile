@@ -495,10 +495,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   }
 
   /// Chẻ [Paragraph] (chỉ paragraph mà mọi inline là [TextRun]/[LineBreak]
-  /// — plain prose) tại độ cao [height] bằng TextPainter: đo vị trí ký
-  /// tự tại (textWidth, height) rồi lùi về ranh giới TỪ (khoảng trắng)
-  /// gần nhất để không cắt giữa chữ. Trả về (phần đầu vừa khít, phần
-  /// còn lại); null khi không chẻ được hoặc không đáng chẻ.
+  /// — plain prose) tại độ cao [height] bằng line metrics CHÍNH XÁC: lấy
+  /// đúng các dòng nguyên vẹn vừa khít budget (không cắt giữa từ — dòng
+  /// đã wrap tại ranh giới từ sẵn). Trước đây cắt theo vị trí ký tự rồi
+  /// quay lui tới khoảng trắng gần nhất → mỗi chỗ chẻ mất tới 1–2 dòng
+  /// (trang "trống hơi nhiều" ở đoạn bị chẻ). Trả về (phần đầu vừa
+  /// khít, phần còn lại); null khi không chẻ được hoặc không đáng chẻ.
   (Paragraph, Paragraph)? _splitParagraphToHeight(
     Block block,
     double textWidth,
@@ -524,22 +526,35 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       maxLines: null,
     );
     tp.layout(maxWidth: textWidth);
-    // Trừ spacing đoạn + slack 6px (sai số đo) để phần đầu CHẮC CHẮN
-    // không tràn quá ranh giới; lỡ thiếu vài px thì vòng lặp packing
-    // chẻ tiếp ở trang sau — an toàn hai chiều.
-    final target = height - widget.theme.paragraphSpacing - 6;
-    if (target <= 0) {
+
+    // Budget = phần còn lại của trang trừ spacing đoạn (packing sẽ cộng
+    // spacing vào chiều cao phần đầu) và slack 4px (sai số đo).
+    final budget = height - widget.theme.paragraphSpacing - 4;
+    final metrics = tp.computeLineMetrics();
+    if (budget <= 0 || metrics.isEmpty) {
       tp.dispose();
       return null;
     }
-    final pos = tp.getPositionForOffset(Offset(textWidth, target));
+    double cum = 0;
+    var take = 0;
+    for (final m in metrics) {
+      if (cum + m.height > budget) break;
+      cum += m.height;
+      take++;
+    }
+    if (take == 0 || take >= metrics.length) {
+      // Không lấy được dòng nào (budget < 1 dòng) hoặc cả đoạn vừa khít.
+      tp.dispose();
+      return null;
+    }
+
+    // Vị trí kết thúc của dòng thứ `take` (take-1 index) — lùi 1px vào
+    // trong dòng để chắc chắn getPositionForOffset rơi đúng dòng đó.
+    final pos = tp.getPositionForOffset(Offset(textWidth, cum - 1));
+    final range = tp.getLineBoundary(pos);
     tp.dispose();
 
-    var cut = pos.offset;
-    if (cut <= 0 || cut >= full.length) return null;
-    // Lùi về ranh giới từ gần nhất (tối đa 60 ký tự) để không cắt giữa chữ.
-    final space = full.lastIndexOf(' ', cut - 1);
-    if (space > 0 && cut - space <= 60) cut = space + 1;
+    var cut = range.end;
     if (cut <= 0 || cut >= full.length) return null;
 
     final first = full.substring(0, cut);
