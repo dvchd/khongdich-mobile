@@ -10,7 +10,10 @@ import '../../core/observability/app_logger.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../downloads/offline_library_screen.dart'
-    show offlineLibraryStreamProvider, offlineStoriesMapProvider;
+    show
+        offlineLibraryStreamProvider,
+        offlineStoriesMapProvider,
+        offlineStoryBackfillProvider;
 import '../home/widgets/story_card.dart';
 
 /// Index of the "Downloaded" tab. The home screen sets this as the
@@ -98,6 +101,8 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     // Bìa lưu local (tải kèm khi download chương) — tab Đã tải hiển thị
     // bìa y hệt online khi không có mạng.
     final offlineStories = ref.watch(offlineStoriesMapProvider).value ?? {};
+    // Backfill snapshot + bìa cho download cũ (trước khi có offline_stories).
+    ref.watch(offlineStoryBackfillProvider);
 
     final chapters = downloadsAsync.value ?? [];
     // Set of story IDs that have at least one chapter downloaded —
@@ -110,19 +115,22 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     final downloadedStoryIds = chapters.map((d) => d.storyId).toSet();
 
     // Build StorySummary list for downloaded stories (one entry per story).
+    // Metadata ưu tiên snapshot offline_stories (mới + đủ cover) nếu có —
+    // download cũ có thể thiếu coverUrl trong bảng chương.
     final downloadedStories = <StorySummary>[];
     final seen = <String>{};
     for (final d in chapters) {
       if (seen.add(d.storyId)) {
+        final snap = offlineStories[d.storyId];
         downloadedStories.add(StorySummary(
           id: d.storyId,
-          title: d.storyTitle,
-          slug: d.storySlug,
-          coverUrl: d.coverUrl,
-          author: d.storyAuthor ?? '',
+          title: snap?.title ?? d.storyTitle,
+          slug: snap?.slug ?? d.storySlug,
+          coverUrl: snap?.coverUrl ?? d.coverUrl,
+          author: snap?.author ?? d.storyAuthor ?? '',
           categories: const [],
           tags: const [],
-          contentTypes: [d.contentType],
+          contentTypes: [snap?.contentType ?? d.contentType],
           chapterCount: chapters.where((x) => x.storyId == d.storyId).length,
         ));
       }

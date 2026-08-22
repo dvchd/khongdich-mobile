@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -8,6 +9,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/network/app_image_cache.dart';
+import '../../services/download_manager.dart'
+    show DownloadManager, downloadManagerProvider;
 
 /// Offline library screen — kept as a separate route for direct access
 /// from Home screen's library icon and Profile screen.
@@ -25,6 +28,8 @@ class OfflineLibraryScreen extends ConsumerWidget {
     final chaptersAsync = ref.watch(offlineLibraryStreamProvider);
     // Bìa lưu local (snapshot khi download) — offline vẫn hiện bìa.
     final offlineStories = ref.watch(offlineStoriesMapProvider).value ?? {};
+    // Backfill snapshot + bìa cho download cũ (chưa có offline_stories).
+    ref.watch(offlineStoryBackfillProvider);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Truyện đã tải'),
@@ -76,7 +81,9 @@ class OfflineLibraryScreen extends ConsumerWidget {
               storyChapters.sort(
                   (a, b) => a.chapterNumber.compareTo(b.chapterNumber));
               final first = storyChapters.first;
-              final localCover = offlineStories[storyId]?.coverLocalPath;
+              final snap = offlineStories[storyId];
+              final localCover = snap?.coverLocalPath;
+              final remoteCover = snap?.coverUrl ?? first.coverUrl;
               return ExpansionTile(
                 leading: localCover != null && File(localCover).existsSync()
                     ? ClipRRect(
@@ -90,11 +97,11 @@ class OfflineLibraryScreen extends ConsumerWidget {
                               const Icon(Icons.book, size: 40),
                         ),
                       )
-                    : first.coverUrl != null && first.coverUrl!.isNotEmpty
+                    : remoteCover != null && remoteCover.isNotEmpty
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(4),
                             child: CachedNetworkImage(
-                              imageUrl: first.coverUrl!,
+                              imageUrl: remoteCover,
                               cacheManager: AppImageCache.instance,
                               width: 40,
                               height: 56,
@@ -109,7 +116,7 @@ class OfflineLibraryScreen extends ConsumerWidget {
                           )
                         : const Icon(Icons.book, size: 40),
                 title: Text(
-                  first.storyTitle.isEmpty ? first.storyId : first.storyTitle,
+                  snap?.title ?? (first.storyTitle.isEmpty ? first.storyId : first.storyTitle),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -190,6 +197,39 @@ final offlineStoriesMapProvider =
   final db = ref.watch(appDatabaseProvider);
   await for (final rows in db.select(db.offlineStories).watch()) {
     yield {for (final r in rows) r.storyId: r};
+  }
+});
+
+/// Backfill ngầm khi mở Tủ truyện / Offline Library: các truyện download
+/// từ TRƯỚC khi có tính năng offline_stories (chưa có snapshot + bìa
+/// local, có khi coverUrl trong bảng chương cũng NULL) sẽ được tải
+/// snapshot + bìa best-effort → bìa "Đã tải" hiện y hệt online.
+///
+/// Watch 2 stream → mỗi khi chương tải xong hay snapshot ghi xong đều
+/// chạy lại; guard trong `ensureStoryInfoSaved` (in-flight set + kiểm
+/// tra DB) chặn fetch lặp — chỉ fetch đúng truyện còn thiếu 1 lần.
+final offlineStoryBackfillProvider = Provider<void>((ref) {
+  final chapters = ref.watch(offlineLibraryStreamProvider).value ?? [];
+  final snaps = ref.watch(offlineStoriesMapProvider).value ?? {};
+  final missing = <String, String>{};
+  for (final c in chapters) {
+    if (!snaps.containsKey(c.storyId)) {
+      missing[c.storyId] = c.storySlug;
+    }
+  }
+  if (missing.isEmpty) return;
+  DownloadManager manager;
+  try {
+    manager = ref.read(downloadManagerProvider);
+  } catch (_) {
+    // ApiClient chưa sẵn sàng (test / app đang khởi động) — bỏ qua
+    // backfill, lần emit stream sau sẽ thử lại.
+    return;
+  }
+  for (final e in missing.entries) {
+    unawaited(
+      manager.ensureStoryInfoSaved(storyId: e.key, storySlug: e.value),
+    );
   }
 });
 
