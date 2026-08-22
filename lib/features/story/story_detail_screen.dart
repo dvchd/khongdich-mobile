@@ -9,6 +9,7 @@ import '../../core/database/app_database.dart';
 import '../../core/markdown/markdown.dart';
 import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/format.dart';
 import '../../core/widgets/app_bottom_nav.dart';
 import '../../core/widgets/app_retry_view.dart';
 import '../../core/widgets/app_snack_bar.dart';
@@ -331,22 +332,21 @@ class _StoryDetailBody extends ConsumerWidget {
                     if (effectiveBookmark != null)
                       _BookmarkChip(listType: effectiveBookmark),
                     if (downloadedCount > 0)
-                      Chip(
-                        avatar: const Icon(Icons.download_done, size: 16, color: Colors.green),
-                        label: Text('$downloadedCount${totalChapters > 0 ? '/$totalChapters' : ''} đã tải'),
-                        visualDensity: VisualDensity.compact,
-                        backgroundColor: Colors.green.withValues(alpha: 0.1),
+                      // Cùng dáng pill như các badge còn lại — trước đây
+                      // dùng Material Chip (cao hơn, bo góc khác) trông
+                      // lạc quẻ trong hàng badge.
+                      _InfoPill(
+                        icon: Icons.download_done,
+                        iconColor: const Color(0xFF16A34A),
+                        background: const Color(0xFF16A34A).withValues(alpha: 0.12),
+                        label: '$downloadedCount${totalChapters > 0 ? '/$totalChapters' : ''} đã tải',
                       ),
                     if (activeDownloads > 0)
-                      Chip(
-                        avatar: const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        label: Text('Đang tải $activeDownloads…'),
-                        visualDensity: VisualDensity.compact,
-                        backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                      _InfoPill(
+                        spinner: true,
+                        iconColor: const Color(0xFF2563EB),
+                        background: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                        label: 'Đang tải $activeDownloads…',
                       ),
                   ],
                 ),
@@ -716,9 +716,9 @@ class _StoryDetailBody extends ConsumerWidget {
   /// ChapterMeta — không cần đẩy gì thêm, UI chỉ hiển thị.
   String _chapterSubtitle(StorySummary story, ChapterSummary c) {
     final parts = <String>[];
-    if (c.wordCount > 0) parts.add('${_StoryStats._fmtCount(c.wordCount)} từ');
+    if (c.wordCount > 0) parts.add('${formatCount(c.wordCount)} từ');
     if (c.viewCount > 0) {
-      parts.add('${_StoryStats._fmtCount(c.viewCount)} đọc');
+      parts.add('${formatCount(c.viewCount)} đọc');
     }
     return parts.join(' · ');
   }
@@ -1023,17 +1023,6 @@ class _StoryStats extends StatelessWidget {
     return frac.isEmpty ? parts[0] : '${parts[0]}.$frac';
   }
 
-  /// Nhóm hàng nghìn kiểu Việt Nam (12345 → 12.345).
-  static String _fmtCount(int n) {
-    final s = n.toString();
-    final buf = StringBuffer();
-    for (var i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
-      buf.write(s[i]);
-    }
-    return buf.toString();
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -1044,11 +1033,11 @@ class _StoryStats extends StatelessWidget {
       if (rating != null && rating! > 0)
         (Icons.star_rounded, '${_fmtRating(rating!)}'),
       if (viewCount != null && viewCount! > 0)
-        (Icons.visibility_outlined, '${_fmtCount(viewCount!)} đọc'),
+        (Icons.visibility_outlined, '${formatCount(viewCount!)} đọc'),
       if (chapterCount != null && chapterCount! > 0)
-        (Icons.menu_book_outlined, '${_fmtCount(chapterCount!)} chương'),
+        (Icons.menu_book_outlined, '${formatCount(chapterCount!)} chương'),
       if (wordCount != null && wordCount! > 0)
-        (Icons.edit_outlined, '${_fmtCount(wordCount!)} từ'),
+        (Icons.edit_outlined, '${formatCount(wordCount!)} từ'),
     ];
     if (items.isEmpty) return const SizedBox.shrink();
 
@@ -1078,7 +1067,9 @@ class _StoryStats extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.status});  final String status;
+  const _StatusChip({required this.status});
+
+  final String status;
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
@@ -1102,6 +1093,62 @@ class _StatusChip extends StatelessWidget {
             fontSize: 12,
             fontWeight: FontWeight.w600,
             height: 1.2),
+      ),
+    );
+  }
+}
+
+/// Pill thông tin (đã tải / đang tải) — cùng dáng với các badge khác
+/// trong hàng badge story detail (cao đều, bo tròn 999, chữ 12) thay
+/// Material Chip nặng (viền, chiều cao lệch).
+class _InfoPill extends StatelessWidget {
+  const _InfoPill({
+    required this.label,
+    required this.iconColor,
+    required this.background,
+    this.icon,
+    this.spinner = false,
+  });
+
+  final String label;
+  final IconData? icon;
+  final Color iconColor;
+  final Color background;
+  final bool spinner;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (spinner)
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: iconColor,
+              ),
+            )
+          else if (icon != null)
+            Icon(icon, size: 12, color: iconColor),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: iconColor,
+              height: 1.2,
+            ),
+          ),
+        ],
       ),
     );
   }

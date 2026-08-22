@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
@@ -45,14 +46,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     super.dispose();
   }
 
-  void _maybeRedirectOffline() {
+  Future<void> _maybeRedirectOffline(Object error) async {
     if (_redirected) return;
+    // Chỉ redirect khi lỗi là lỗi MẠNG (offline/timeout) — lỗi server
+    // (5xx) phải giữ lại màn hình lỗi + nút "Thử lại". Cùng rule với
+    // home screen (DioException KHÔNG có response = không nhận được
+    // HTTP response nào → chắc chắn lỗi mạng).
+    final isNetworkError =
+        error is DioException && error.response == null;
+    if (!isNetworkError) return;
     // Only redirect if there's at least one downloaded chapter —
     // otherwise the offline library is empty and redirecting would
     // just show another empty state.
-    final downloads =
-        ref.read(offlineLibraryStreamProvider).value ?? [];
-    if (downloads.isEmpty) return;
+    //
+    // PHẢI await .future của stream provider — trước đây dùng
+    // ref.read().value: lúc random load fail, stream chưa từng được
+    // watch → valueOrNull == null → tưởng "chưa có truyện tải" → không
+    // redirect dù DB có chương đã tải (home đã sửa, search còn sót).
+    try {
+      final downloads =
+          await ref.read(offlineLibraryStreamProvider.future);
+      if (downloads.isEmpty || !mounted) return;
+    } catch (_) {
+      return; // DB lỗi — không redirect được, giữ màn hình lỗi.
+    }
     _redirected = true;
     ref.read(bookshelfTabIntentProvider.notifier).state =
         kBookshelfDownloadedTabIndex;
@@ -74,11 +91,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Widget build(BuildContext context) {
     final searchState = ref.watch(searchProvider);
     final randomState = ref.watch(randomStoriesProvider);
-    // When the random-stories fetch fails (offline), auto-redirect
-    // to the bookshelf "Đã tải" tab.
-    randomState.whenOrNull(
-      error: (_, __) => Future.microtask(_maybeRedirectOffline),
-    );
+    // Khi fetch truyện ngẫu nhiên fail (offline) → auto-redirect sang tab
+    // "Đã tải" của tủ truyện. ref.listen thay vì side-effect trong build —
+    // trước đây khiOrNull + Future.microtask chạy lại mỗi lần rebuild
+    // (đổi theme, gõ text...) như home screen từng bị.
+    ref.listen(randomStoriesProvider, (prev, next) {
+      next.whenOrNull(error: (e, _) => _maybeRedirectOffline(e));
+    });
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Padding(

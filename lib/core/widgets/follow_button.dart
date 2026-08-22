@@ -60,8 +60,11 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _busy = false);
       showAppSnackBar(context, 'Thao tác thất bại: $e');
+    } finally {
+      // Trước đây _busy chỉ được reset trong catch — toggle THÀNH CÔNG
+      // để nút kẹt ở "Đang xử lý…" + disabled vĩnh viễn.
+      if (mounted) setState(() => _busy = false);
     }
   }
 
