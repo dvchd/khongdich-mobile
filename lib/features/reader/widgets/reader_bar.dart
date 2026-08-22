@@ -75,23 +75,24 @@ class ReaderBar extends StatelessWidget {
             IconButton(
               tooltip: 'Bình luận',
               onPressed: onOpenComments,
-              icon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(chapter.commentCount != null
-                      ? Icons.chat_bubble
-                      : Icons.chat_bubble_outline),
-                  if (chapter.commentCount != null) ...[
-                    const SizedBox(width: 3),
-                    Text(
-                      '${chapter.commentCount}',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                  ],
-                ],
-              ),
+              // Số bình luận đưa vào Badge gắn trên icon (gọn, không còn
+              // "số nằm cạnh icon" trông lệch hàng như trước). Số 0/ẩn →
+              // không hiện badge (commentCount null = không có dữ liệu).
+              icon: chapter.commentCount != null &&
+                      chapter.commentCount! > 0
+                  ? Badge(
+                      label: Text(
+                        chapter.commentCount! > 99
+                            ? '99+'
+                            : '${chapter.commentCount}',
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      child: const Icon(Icons.chat_bubble_outline),
+                    )
+                  : const Icon(Icons.chat_bubble_outline),
             ),
           IconButton(
             icon: const Icon(Icons.list),

@@ -274,10 +274,34 @@ class StoryRepository implements ChapterFetcher {
   /// Search stories + posts.
   /// Hits the existing `GET /api/v1/search?q=&limit=` endpoint (still
   /// works for unauthenticated clients; CSRF doesn't apply to GET).
-  Future<SearchResult> search(String q, {int limit = 20}) async {
+  /// Tìm kiếm truyện — mirror web /tim-kiem: từ khoá + bộ lọc
+  /// (thể loại, tag, sắp xếp views|rating|newest|chapters, trạng thái,
+  /// kiểu truyện) + phân trang.
+  ///
+  /// Hits `GET /api/v1/mobile/search`.
+  Future<SearchResult> search(
+    String q, {
+    int limit = 20,
+    int page = 1,
+    String? category,
+    String? tag,
+    String? sort,
+    String? status,
+    String? contentType,
+  }) async {
     final r = await _dio.get(
-      '/api/v1/search',
-      queryParameters: {'q': q, 'limit': limit},
+      '/api/v1/mobile/search',
+      queryParameters: {
+        'q': q,
+        'limit': limit,
+        'page': page,
+        if (category != null && category.isNotEmpty) 'category': category,
+        if (tag != null && tag.isNotEmpty) 'tag': tag,
+        if (sort != null && sort.isNotEmpty) 'sort': sort,
+        if (status != null && status.isNotEmpty) 'status': status,
+        if (contentType != null && contentType.isNotEmpty)
+          'content_type': contentType,
+      },
     );
     final data = r.data as Map<String, dynamic>;
     return SearchResult(
@@ -289,6 +313,10 @@ class StoryRepository implements ChapterFetcher {
         for (final p in (data['posts'] as List? ?? const []))
           PostCard.fromJson(p as Map<String, dynamic>),
       ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? page,
+      perPage: (data['per_page'] as num?)?.toInt() ?? limit,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -982,9 +1010,23 @@ class StoryDetailPayload {
 }
 
 class SearchResult {
-  const SearchResult({required this.stories, required this.posts});
+  const SearchResult({
+    required this.stories,
+    required this.posts,
+    this.total = 0,
+    this.page = 1,
+    this.perPage = 20,
+    this.totalPages = 0,
+  });
   final List<StorySummary> stories;
   final List<PostCard> posts;
+
+  /// Tổng truyện khớp + phân trang (backend trả khi có bộ lọc) — cho
+  /// nút "Xem thêm" ở màn tìm kiếm.
+  final int total;
+  final int page;
+  final int perPage;
+  final int totalPages;
 }
 
 /// Một thể loại truyện (backend models::category::Category).

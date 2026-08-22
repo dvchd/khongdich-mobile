@@ -140,7 +140,8 @@ class _HomeContent extends ConsumerWidget {
         home.fresh.isNotEmpty ||
         home.completed.isNotEmpty ||
         home.picks.isNotEmpty ||
-        home.random.isNotEmpty;
+        home.random.isNotEmpty ||
+        home.flop.isNotEmpty;
     return ListView(
       children: [
         const HomeHero(),
@@ -196,6 +197,20 @@ class _HomeContent extends ConsumerWidget {
                 ref.read(homeProvider.notifier).refreshSection('completed'),
             items: [
               for (final s in home.completed)
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
+            ],
+          ),
+        if (home.flop.isNotEmpty)
+          StorySection(
+            // "📉 Top flop" — ít lượt đọc nhất (mirror web home
+            // least_viewed): cơ hội khám phá truyện bị lãng quên.
+            title: 'Top flop',
+            icon: Icons.trending_down,
+            trailing: '${home.flop.length} truyện',
+            onReload: () =>
+                ref.read(homeProvider.notifier).refreshSection('flop'),
+            items: [
+              for (final s in home.flop)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
@@ -463,6 +478,7 @@ class HomeFeed {
     required this.completed,
     required this.picks,
     required this.random,
+    required this.flop,
     required this.continueReading,
   });
   final List<StorySummary> hot;
@@ -473,6 +489,9 @@ class HomeFeed {
   /// Truyện ngẫu nhiên — khám phá tình cờ, giống web (`sort=random`
   /// với seed mới mỗi lần refresh).
   final List<StorySummary> random;
+
+  /// "📉 Top flop" — ít lượt đọc nhất (mirror web home least_viewed).
+  final List<StorySummary> flop;
   final List<ContinueReadingItem> continueReading;
 
   /// Trả bản copy với riêng section [sort] được thay bằng [stories] —
@@ -486,6 +505,7 @@ class HomeFeed {
           completed: completed,
           picks: picks,
           random: random,
+          flop: flop,
           continueReading: continueReading,
         ),
       'fresh' => HomeFeed(
@@ -494,6 +514,7 @@ class HomeFeed {
           completed: completed,
           picks: picks,
           random: random,
+          flop: flop,
           continueReading: continueReading,
         ),
       'completed' => HomeFeed(
@@ -502,6 +523,7 @@ class HomeFeed {
           completed: stories,
           picks: picks,
           random: random,
+          flop: flop,
           continueReading: continueReading,
         ),
       'picks' => HomeFeed(
@@ -510,6 +532,7 @@ class HomeFeed {
           completed: completed,
           picks: stories,
           random: random,
+          flop: flop,
           continueReading: continueReading,
         ),
       'random' => HomeFeed(
@@ -518,6 +541,16 @@ class HomeFeed {
           completed: completed,
           picks: picks,
           random: stories,
+          flop: flop,
+          continueReading: continueReading,
+        ),
+      'flop' => HomeFeed(
+          hot: hot,
+          fresh: fresh,
+          completed: completed,
+          picks: picks,
+          random: random,
+          flop: stories,
           continueReading: continueReading,
         ),
       _ => this,
@@ -553,6 +586,8 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
           perPage: 15,
           seed: DateTime.now().millisecondsSinceEpoch.toString(),
         ),
+        // "📉 Top flop" — ít lượt đọc nhất, mirror web home.
+        repo.listStories(sort: 'flop', perPage: 15),
         repo.fetchContinueReading().catchError((_) => <ContinueReadingItem>[]),
       ]);
       state = AsyncValue.data(HomeFeed(
@@ -561,7 +596,8 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
         completed: (results[2] as PaginatedStories).stories,
         picks: (results[3] as PaginatedStories).stories,
         random: (results[4] as PaginatedStories).stories,
-        continueReading: results[5] as List<ContinueReadingItem>,
+        flop: (results[5] as PaginatedStories).stories,
+        continueReading: results[6] as List<ContinueReadingItem>,
       ));
     } catch (e, s) {
       state = AsyncValue.error(e, s);
