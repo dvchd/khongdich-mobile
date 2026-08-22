@@ -290,15 +290,31 @@ class _StoryDetailBody extends ConsumerWidget {
                     if (story.status != null)
                       _StatusChip(status: story.status!),
                     if (vip.isVip)
-                      Chip(
-                        avatar: const Icon(Icons.workspace_premium,
-                            size: 16, color: Color(0xFFD97706)),
-                        label: const Text('VIP',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFFD97706))),
-                        visualDensity: VisualDensity.compact,
-                        backgroundColor: const Color(0xFFFEF3C7),
+                      // Cùng dáng pill + cỡ chữ 12 như _ContentTypeBadge /
+                      // _StatusChip — trước đây dùng Material Chip (label
+                      // ~14px, bo góc vuông hơn) trông lạc quẻ cạnh các
+                      // badge còn lại.
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.workspace_premium,
+                                size: 12, color: Color(0xFFD97706)),
+                            SizedBox(width: 4),
+                            Text('VIP',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFFD97706),
+                                    height: 1.2)),
+                          ],
+                        ),
                       ),
                     if (effectiveBookmark != null)
                       _BookmarkChip(listType: effectiveBookmark),
@@ -1074,7 +1090,9 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
+        // Pill tròn đầy đủ như _ContentTypeBadge (trước đây bo góc 6px
+        // nên đứng cạnh badge khác trông lệch).
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,

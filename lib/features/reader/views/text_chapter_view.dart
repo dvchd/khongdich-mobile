@@ -32,6 +32,7 @@ class TextChapterView extends ConsumerStatefulWidget {
     this.isPageMode = false,
     this.onParagraphLongPress,
     this.footer,
+    this.header,
   });
 
   final String markdown;
@@ -50,6 +51,10 @@ class TextChapterView extends ConsumerStatefulWidget {
   /// Widget đặt cuối nội dung CHẾ ĐỘ CUỘN DỌC (block "Hết chương —
   /// Chương kế tiếp") — nằm trong luồng scroll nên không che chữ cuối.
   final Widget? footer;
+
+  /// Widget đặt đầu nội dung CHẾ ĐỘ CUỘN DỌC (header "Ch. N: Title" +
+  /// meta chia sẻ/báo cáo) — cuộn xuống là trôi đi như web mobile.
+  final Widget? header;
 
   @override
   ConsumerState<TextChapterView> createState() => _TextChapterViewState();
@@ -361,6 +366,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (widget.header != null) widget.header!,
               MarkdownRenderer(
                 blocks: _blocks,
                 theme: widget.theme,

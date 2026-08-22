@@ -53,9 +53,11 @@ class ReaderBar extends StatelessWidget {
           onPressed: () => _onBack(context),
         ),
         title: Text(
-          chapter.title.isEmpty
+          // Toolbar giống web mobile: back = tên truyện (chương hiện đã
+          // có header riêng "Ch. N: Title" ngay đầu nội dung).
+          chapter.storyTitle.isEmpty
               ? '${chapter.chapterNumber}'
-              : '${chapter.chapterNumber}: ${chapter.title}',
+              : chapter.storyTitle,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.titleMedium,

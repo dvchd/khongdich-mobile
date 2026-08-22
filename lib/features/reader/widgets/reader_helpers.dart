@@ -118,6 +118,10 @@ Widget buildChapterContent(
   /// Widget đặt CUỐI nội dung cuộn dọc (block "Hết chương — Chương kế
   /// tiếp") — chỉ áp dụng cho text/visual, không áp dụng page mode.
   Widget? footer,
+  /// Widget đặt ĐẦU nội dung cuộn dọc (header "Ch. N: Title" + meta
+  /// chia sẻ/báo cáo) — chỉ áp dụng cho text/visual, không áp dụng page
+  /// mode.
+  Widget? header,
 }) {
   return switch (chapter) {
     TextChapterContent(
@@ -140,6 +144,7 @@ Widget buildChapterContent(
         isPageMode: isPageMode,
         onParagraphLongPress: onParagraphLongPress,
         footer: footer,
+        header: header,
       ),
     VisualChapterContent(
       :final id,
@@ -159,6 +164,7 @@ Widget buildChapterContent(
         isPageMode: isPageMode,
         onParagraphLongPress: onParagraphLongPress,
         footer: footer,
+        header: header,
       ),
     MangaChapterContent(:final images) => MangaChapterView(
       pages: images,
@@ -298,6 +304,7 @@ class ReaderTapZones extends StatelessWidget {
     this.edgeFlex = 3,
     this.centerFlex = 4,
     this.bottomInset = 0,
+    this.topInset = 0,
   });
   final void Function(ReaderTapZone) onTap;
 
@@ -315,10 +322,14 @@ class ReaderTapZones extends StatelessWidget {
   /// chừa, overlay (nằm trên nội dung trong Stack) nuốt hết chạm vào nút.
   final double bottomInset;
 
+  /// Chừa [topInset] px ở đỉnh (không bắt chạm) — dùng khi đầu chương có
+  /// header (Chia sẻ / Báo cáo) trong nội dung scroll.
+  final double topInset;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
+      padding: EdgeInsets.only(bottom: bottomInset, top: topInset),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

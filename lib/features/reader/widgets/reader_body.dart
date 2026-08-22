@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/widgets/report_sheet.dart';
 import '../../../models/chapter_content.dart';
 import '../reader_settings_provider.dart';
 import 'reader_bar.dart';
@@ -94,9 +97,13 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   /// TRÊN nội dung scroll trong Stack nên nếu không chừa, mọi chạm vào
   /// nút đều bị vùng tap giữa bắt → mở settings thay vì chuyển chương).
   bool _atBottom = false;
+  /// Đang ở đầu chương → chừa vùng trên cho header (Chia sẻ / Báo cáo).
+  bool _atTop = false;
   /// Chiều cao vùng footer cuối chương chừa cho tap-zones (~Hết chương +
   /// nút + padding). Lớn hơn một chút để chừa thừa cũng vô hại.
   static const _footerBottomInset = 190.0;
+  /// Chiều cao header đầu chương (tiêu đề + meta + chia sẻ/báo cáo).
+  static const _headerTopInset = 110.0;
 
   @override
   void initState() {
@@ -116,6 +123,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     if (oldWidget.chapter.id != widget.chapter.id) {
       _progressSaved = false;
       _atBottom = false;
+      _atTop = false;
     }
   }
 
@@ -151,6 +159,12 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         pos.pixels >= pos.maxScrollExtent - 8;
     if (atBottom != _atBottom) {
       setState(() => _atBottom = atBottom);
+    }
+    // Header chương (Chia sẻ / Báo cáo) chỉ ở đầu nội dung → chừa vùng
+    // trên cho tap-zones khi user đang ở sát đỉnh.
+    final atTop = hasFooter && pos.pixels <= 8;
+    if (atTop != _atTop) {
+      setState(() => _atTop = atTop);
     }
   }
 
@@ -259,6 +273,16 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                     readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
               )
             : null,
+        // Header chương đầu nội dung — mirror web mobile (ch-head +
+        // ch-meta): "Ch. N: Title" + thời gian đọc · số từ · Chia sẻ ·
+        // Báo cáo. Nằm trong luồng scroll nên cuộn xuống là trôi đi.
+        header: widget.settings.scrollMode == ReaderScrollMode.vertical
+            ? _ChapterHeader(
+                chapter: widget.chapter,
+                textColor:
+                    readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
+              )
+            : null,
       ),
     );
 
@@ -328,6 +352,12 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                       bottomInset: _atBottom && !isPageMode
                           ? _footerBottomInset
                           : 0,
+                      // Ở đầu chương: chừa vùng trên cho header (Chia sẻ /
+                      // Báo cáo) — không chừa thì chạm vào header bị vùng
+                      // tap trái/giữa bắt → nhảy chương/settings.
+                      topInset: _atTop && !isPageMode
+                          ? _headerTopInset
+                          : 0,
                       onTap: _onTapZone,
                     )),
                 ],
@@ -358,6 +388,128 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
 
 // Re-export ReaderTheme for callers that need it.
 typedef ReaderThemeAlias = ReaderTheme;
+
+/// Header đầu chương — mirror web mobile (`templates/story/chapter.html`
+/// `.ch-head` + `.ch-meta`): dòng tiêu đề "Ch. N: Title" rồi meta
+/// "~X phút đọc · Y từ · 📋 Chia sẻ · ⚠️ Báo cáo". Nằm TRONG nội dung
+/// scroll (cuộn xuống là trôi đi như web). Chia sẻ = copy link chương
+/// (đúng URL web), Báo cáo = report sheet target chapter.
+class _ChapterHeader extends StatelessWidget {
+  const _ChapterHeader({required this.chapter, required this.textColor});
+  final ChapterContent chapter;
+  final Color textColor;
+
+  /// Ước lượng thời gian đọc ~200 từ/phút (web dùng reading_time_str).
+  static String _readingTime(int wordCount) {
+    if (wordCount <= 0) return 'Chưa rõ';
+    final minutes = (wordCount / 200).ceil().clamp(1, 9999);
+    return '~$minutes phút đọc';
+  }
+
+  static String _fmtCount(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
+      buf.write(s[i]);
+    }
+    return buf.toString();
+  }
+
+  Future<void> _copyChapterLink(BuildContext context) async {
+    final baseUrl = ProviderScope.containerOf(
+      context,
+    ).read(apiClientProvider).value?.baseUrl ?? 'https://khongdich.com';
+    final url =
+        '$baseUrl/truyen/${chapter.storySlug}/chuong/${chapter.chapterNumber}';
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Đã sao chép link chương'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final muted = textColor.withValues(alpha: 0.55);
+    final title = chapter.title.isEmpty
+        ? 'Ch. ${chapter.chapterNumber}'
+        : 'Ch. ${chapter.chapterNumber}: ${chapter.title}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: textColor,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (chapter.wordCount > 0)
+                Text(
+                  '${_readingTime(chapter.wordCount)} · ${_fmtCount(chapter.wordCount)} từ',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: muted),
+                ),
+              InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: () => _copyChapterLink(context),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    '📋 Chia sẻ',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+              ),
+              InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: () => showReportSheet(
+                  context,
+                  targetType: 'chapter',
+                  targetId: chapter.id,
+                  targetLabel: 'chương ${chapter.chapterNumber}',
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    '⚠️ Báo cáo',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: muted,
+                        ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Divider(color: textColor.withValues(alpha: 0.15), height: 1),
+        ],
+      ),
+    );
+  }
+}
 
 /// Block "Hết chương — Chương kế tiếp" nằm TRONG nội dung scroll (thay
 /// pill float đếm ngược từng che mất chữ cuối). Cuộn tới cuối là thấy
