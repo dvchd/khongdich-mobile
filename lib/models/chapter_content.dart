@@ -76,6 +76,10 @@ sealed class ChapterContent {
         'prev_chapter': prevChapter,
         'next_chapter': nextChapter,
         'updated_at': updatedAt.toIso8601String(),
+        // Thiếu dòng này trước đây → chương bị cache DB (contentRaw) MẤT
+        // comment_count → badge số bình luận trên reader bar không bao
+        // giờ hiện ở các lần mở sau (DB HIT thay vì fetch API).
+        if (commentCount != null) 'comment_count': commentCount,
         if (label != null) 'label': label,
         if (nextLabel != null) 'next_label': nextLabel,
         if (prevLabel != null) 'prev_label': prevLabel,

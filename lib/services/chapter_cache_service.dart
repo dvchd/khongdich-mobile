@@ -154,10 +154,16 @@ class ChapterCacheService {
         final chapter = ChapterContent.fromJson(
           jsonDecode(dbCached.contentRaw) as Map<String, dynamic>,
         );
-        if (isStale(chapter.updatedAt, chapterMeta.updatedAt)) {
+        // commentCount == null ⇒ cache ghi từ bản app CŨ (trước khi
+        // toJson serialize comment_count) → coi như stale để refetch 1
+        // lần và lưu lại bản có comment_count.
+        final missingCommentCount = chapter.commentCount == null;
+        if (isStale(chapter.updatedAt, chapterMeta.updatedAt) ||
+            missingCommentCount) {
           AppLogger.info('ChapterCache: DB STALE for N$chapterNumber '
               '(cache ${chapter.updatedAt.toIso8601String()} vs server '
-              '${chapterMeta.updatedAt?.toIso8601String()}) — refetch');
+              '${chapterMeta.updatedAt?.toIso8601String()}, '
+              'missingCommentCount=$missingCommentCount) — refetch');
         } else {
           _cacheChapter(chapterId, chapter);
           AppLogger.info('ChapterCache: DB HIT for N$chapterNumber '

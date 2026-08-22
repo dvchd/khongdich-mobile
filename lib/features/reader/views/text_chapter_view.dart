@@ -277,10 +277,36 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         tp.dispose();
         return h;
       }(),
-      HorizontalRule() => 48.0,
-      CodeBlock(:final code) => () {
-        final lines = '\n'.allMatches(code).length + 1;
-        return (lines * 20.0) + 24;
+      HorizontalRule() => () {
+        // Render: Padding(vertical 24) + Text('* * *', letterSpacing 8).
+        // Trước đây ước lượng 48 cứng → thiếu chiều cao dòng chữ (~29px)
+        // → trang bị TRÀN. Đo đúng bằng TextPainter.
+        final tp = TextPainter(
+          text: TextSpan(
+            text: '* * *',
+            style: style.copyWith(letterSpacing: 8),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        tp.layout(maxWidth: maxWidth);
+        final h = tp.height + 48;
+        tp.dispose();
+        return h;
+      }(),
+      CodeBlock(:final code, :final language) => () {
+        // Render: margin vertical 12×2 + padding 12×2 + (nhãn ngôn ngữ
+        // nếu có: padding bottom 6 + dòng fontSize 12) + SelectableText
+        // theo codeStyle. Trước đây ước lượng lines*20+24 → sai với code
+        // block ngắn (thiếu chrome 24px) → trang bị TRÀN.
+        final tp = TextPainter(
+          text: TextSpan(text: code, style: widget.theme.codeStyle),
+          textDirection: TextDirection.ltr,
+          maxLines: null,
+        );
+        tp.layout(maxWidth: maxWidth - 24);
+        final h = tp.height + 24 + 24 + (language != null ? 20 : 0);
+        tp.dispose();
+        return h;
       }(),
       BulletList(:final items) => () {
         double total = 0;
@@ -303,11 +329,14 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         return total + 16;
       }(),
       BlockQuote(:final children) => () {
+        // Render: Container margin vertical 12×2 + padding (left 16, top
+        // 4, bottom 4) + border left 4 → cột chữ con rộng maxWidth-20
+        // (trước đây đo -32 → quote bị đo CAO hơn thật → trang trống).
         double total = 0;
         for (final b in children) {
-          total += _measureBlockHeight(b, maxWidth - 32);
+          total += _measureBlockHeight(b, maxWidth - 20);
         }
-        return total + 24;
+        return total + 24 + 8;
       }(),
       ImageBlock() => 200.0,
     };
@@ -369,7 +398,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
     // Chiều rộng cột chữ THẬT: page mode padding ngang 24 mỗi bên.
     final textWidth = size.width - 48;
-    final maxHeight = size.height - 80; // -80 for page indicator + padding
+    // Chrome mỗi trang: padding dọc 8×2 + SizedBox 32 + dòng chỉ trang
+    // (fontSize 12 ≈ 14px) ≈ 62px — trừ 68 chừa ~6px sai số. Trước đây
+    // trừ 80 → mỗi trang trống thêm ~18px ("trống hơi nhiều").
+    final maxHeight = size.height - 68;
 
     // Trang 1 chứa header chương → capacity trang đầu bị trừ đúng phần
     // header đã đo; các trang sau dùng trọn viewport.
@@ -440,6 +472,11 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
         }
         currentHasOversized = true;
       }
+
+      // Ảnh có chiều cao thật không đo được (fitWidth theo tỷ lệ ảnh
+      // gốc) → đánh dấu trang scroll dọc để ảnh to không bao giờ bị
+      // cắt/tràn khi trang không scroll.
+      if (unit.block is ImageBlock) currentHasOversized = true;
 
       current.add(unit);
       currentHeight += h;
