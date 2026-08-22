@@ -134,6 +134,13 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
         }
+        debug {
+            // KHÔNG dùng debug keystore (~/.android/debug.keystore) — SHA-1
+            // của debug key không đăng ký trong OAuth client → đăng nhập
+            // Google fail ngay cả trên build debug. Debug cũng ký bằng key
+            // thật để SHA-1 đồng nhất mọi bản build local.
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 }
 
