@@ -16,6 +16,8 @@ class AppRetryView extends StatelessWidget {
     required this.onRetry,
     this.icon = Icons.cloud_off,
     this.retryLabel = 'Thử lại',
+    this.secondaryLabel,
+    this.onSecondary,
   });
 
   final String message;
@@ -23,6 +25,11 @@ class AppRetryView extends StatelessWidget {
   final VoidCallback onRetry;
   final IconData icon;
   final String retryLabel;
+
+  /// Hành động phụ (vd. "Về trang truyện") hiện dưới nút Thử lại — dùng
+  /// khi màn lỗi cần lối thoát ngoài retry (access gate fail, ...).
+  final String? secondaryLabel;
+  final VoidCallback? onSecondary;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +65,13 @@ class AppRetryView extends StatelessWidget {
               icon: const Icon(Icons.refresh),
               label: Text(retryLabel),
             ),
+            if (onSecondary != null) ...[
+              const SizedBox(height: 4),
+              TextButton(
+                onPressed: onSecondary,
+                child: Text(secondaryLabel ?? 'Quay lại'),
+              ),
+            ],
           ],
         ),
       ),
