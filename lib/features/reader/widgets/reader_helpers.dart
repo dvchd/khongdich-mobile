@@ -297,6 +297,7 @@ class ReaderTapZones extends StatelessWidget {
     required this.onTap,
     this.edgeFlex = 3,
     this.centerFlex = 4,
+    this.bottomInset = 0,
   });
   final void Function(ReaderTapZone) onTap;
 
@@ -309,33 +310,41 @@ class ReaderTapZones extends StatelessWidget {
   /// Độ rộng vùng giữa (mở settings).
   final int centerFlex;
 
+  /// Chừa [bottomInset] px ở đáy (không bắt chạm) — dùng khi cuối chương
+  /// có footer "Chương kế tiếp" nằm trong nội dung scroll; nếu không
+  /// chừa, overlay (nằm trên nội dung trong Stack) nuốt hết chạm vào nút.
+  final double bottomInset;
+
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: edgeFlex,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () => onTap(ReaderTapZone.left),
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: edgeFlex,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => onTap(ReaderTapZone.left),
+            ),
           ),
-        ),
-        Expanded(
-          flex: centerFlex,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () => onTap(ReaderTapZone.center),
+          Expanded(
+            flex: centerFlex,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => onTap(ReaderTapZone.center),
+            ),
           ),
-        ),
-        Expanded(
-          flex: edgeFlex,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () => onTap(ReaderTapZone.right),
+          Expanded(
+            flex: edgeFlex,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => onTap(ReaderTapZone.right),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

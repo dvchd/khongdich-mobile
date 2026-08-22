@@ -89,6 +89,14 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   late final ScrollController _scrollController;
   final PageController _pageController = PageController();
   bool _progressSaved = false;
+  /// Đang ở cuối chương (cuộn dọc + có footer "Chương kế tiếp") → thu hẹp
+  /// overlay tap-zones ở đáy để chạm được nút trong footer (overlay nằm
+  /// TRÊN nội dung scroll trong Stack nên nếu không chừa, mọi chạm vào
+  /// nút đều bị vùng tap giữa bắt → mở settings thay vì chuyển chương).
+  bool _atBottom = false;
+  /// Chiều cao vùng footer cuối chương chừa cho tap-zones (~Hết chương +
+  /// nút + padding). Lớn hơn một chút để chừa thừa cũng vô hại.
+  static const _footerBottomInset = 190.0;
 
   @override
   void initState() {
@@ -107,6 +115,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     // new chapter's reading progress is never marked.
     if (oldWidget.chapter.id != widget.chapter.id) {
       _progressSaved = false;
+      _atBottom = false;
     }
   }
 
@@ -131,6 +140,17 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     if (ratio > 0.95 && !_progressSaved) {
       _progressSaved = true;
       widget.onChapterNearEnd?.call();
+    }
+    // Footer chỉ được render ở chế độ cuộn dọc cho text/visual → chỉ
+    // chừa vùng tap khi footer tồn tại và user đang ở sát cuối.
+    final hasFooter = widget.settings.scrollMode == ReaderScrollMode.vertical &&
+        (widget.chapter is TextChapterContent ||
+            widget.chapter is VisualChapterContent);
+    final atBottom = hasFooter &&
+        pos.maxScrollExtent > 0 &&
+        pos.pixels >= pos.maxScrollExtent - 8;
+    if (atBottom != _atBottom) {
+      setState(() => _atBottom = atBottom);
     }
   }
 
@@ -302,6 +322,12 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                       // Lật trang ngang giữ 30% như cũ.
                       edgeFlex: isPageMode ? 3 : 2,
                       centerFlex: isPageMode ? 4 : 6,
+                      // Ở cuối chương: chừa vùng đáy cho nút "Chương kế
+                      // tiếp" trong footer (overlay nằm trên nội dung nên
+                      // không chừa thì bấm nút bị vùng tap giữa nuốt).
+                      bottomInset: _atBottom && !isPageMode
+                          ? _footerBottomInset
+                          : 0,
                       onTap: _onTapZone,
                     )),
                 ],
