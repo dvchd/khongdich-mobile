@@ -158,35 +158,41 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         icon: Icons.cloud_off,
         message: 'Không tải được truyện: $e',
       ),
-      data: (stories) => CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(
-                'Khám phá truyện',
-                style: Theme.of(context).textTheme.titleMedium,
+      data: (stories) => RefreshIndicator(
+        // Kéo xuống khi chưa tìm kiếm → load lại 12 truyện ngẫu nhiên
+        // KHÁC (seed mới mỗi lần, xem RandomStoriesNotifier.load).
+        onRefresh: () => ref.read(randomStoriesProvider.notifier).load(),
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Khám phá truyện',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
             ),
-          ),
-          SliverGrid(
-            gridDelegate:
-                const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              // Cover AspectRatio 2:3 + title 2 dòng + author 1 dòng.
-              childAspectRatio: 0.52,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, i) => StoryCard(
-                story: stories[i],
-                onTap: () => context.push('/story/${stories[i].slug}'),
+            SliverGrid(
+              gridDelegate:
+                  const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                // Cover AspectRatio 2:3 + title 2 dòng + author 1 dòng.
+                childAspectRatio: 0.52,
               ),
-              childCount: stories.length,
+              delegate: SliverChildBuilderDelegate(
+                (context, i) => StoryCard(
+                  story: stories[i],
+                  onTap: () => context.push('/story/${stories[i].slug}'),
+                ),
+                childCount: stories.length,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -284,7 +290,12 @@ class RandomStoriesNotifier
   Future<void> load() async {
     try {
       final repo = _ref.read(storyRepositoryProvider);
-      final page = await repo.listStories(sort: 'random', perPage: 12);
+      // Seed NGẪU NHIÊN mỗi lần load: backend sort=random dùng
+      // ORDER BY md5(id || seed) — deterministic theo seed. Seed cố
+      // định → kéo refresh trả y hệt bộ truyện cũ.
+      final seed = DateTime.now().microsecondsSinceEpoch.toString();
+      final page =
+          await repo.listStories(sort: 'random', perPage: 12, seed: seed);
       state = AsyncValue.data(page.stories);
     } catch (e, s) {
       state = AsyncValue.error(e, s);

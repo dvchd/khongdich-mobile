@@ -345,7 +345,10 @@ class _OnlineChapterListSheet extends ConsumerWidget {
       data: (chapters) => ChapterListSheet(
         entries: [
           for (final c in chapters)
-            ChapterListEntry(number: c.chapterNumber, title: c.title),
+            ChapterListEntry(
+                number: c.chapterNumber,
+                title: c.title,
+                viewCount: c.viewCount),
         ],
         currentChapter: currentChapter,
         storyId: storyId,

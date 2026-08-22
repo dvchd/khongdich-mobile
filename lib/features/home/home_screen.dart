@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/story.dart';
+import '../../core/observability/app_logger.dart';
 import '../../repositories/story_repository.dart';
 import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
@@ -191,6 +192,8 @@ class _HomeContent extends ConsumerWidget {
             title: 'Hoàn thành',
             icon: Icons.task_alt,
             trailing: '${home.completed.length} truyện',
+            onReload: () =>
+                ref.read(homeProvider.notifier).refreshSection('completed'),
             items: [
               for (final s in home.completed)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
@@ -201,6 +204,11 @@ class _HomeContent extends ConsumerWidget {
             title: 'Truyện ngẫu nhiên',
             icon: Icons.casino,
             trailing: '${home.random.length} truyện',
+            onReload: () =>
+                ref.read(homeProvider.notifier).refreshSection('random'),
+            // Giống nút "Gieo xúc xắc" trên web — mỗi lần bấm là seed mới.
+            reloadIcon: Icons.casino,
+            reloadTooltip: 'Gieo xúc xắc — đổi truyện ngẫu nhiên',
             items: [
               for (final s in home.random)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
@@ -466,6 +474,55 @@ class HomeFeed {
   /// với seed mới mỗi lần refresh).
   final List<StorySummary> random;
   final List<ContinueReadingItem> continueReading;
+
+  /// Trả bản copy với riêng section [sort] được thay bằng [stories] —
+  /// dùng cho nút "làm mới / gieo xúc xắc" ở từng section (không refetch
+  /// lại toàn bộ home, giữ nguyên các section khác + scroll position).
+  HomeFeed copyWithSection(String sort, List<StorySummary> stories) {
+    return switch (sort) {
+      'hot' => HomeFeed(
+          hot: stories,
+          fresh: fresh,
+          completed: completed,
+          picks: picks,
+          random: random,
+          continueReading: continueReading,
+        ),
+      'fresh' => HomeFeed(
+          hot: hot,
+          fresh: stories,
+          completed: completed,
+          picks: picks,
+          random: random,
+          continueReading: continueReading,
+        ),
+      'completed' => HomeFeed(
+          hot: hot,
+          fresh: fresh,
+          completed: stories,
+          picks: picks,
+          random: random,
+          continueReading: continueReading,
+        ),
+      'picks' => HomeFeed(
+          hot: hot,
+          fresh: fresh,
+          completed: completed,
+          picks: stories,
+          random: random,
+          continueReading: continueReading,
+        ),
+      'random' => HomeFeed(
+          hot: hot,
+          fresh: fresh,
+          completed: completed,
+          picks: picks,
+          random: stories,
+          continueReading: continueReading,
+        ),
+      _ => this,
+    };
+  }
 }
 
 final homeProvider =
@@ -508,6 +565,31 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
       ));
     } catch (e, s) {
       state = AsyncValue.error(e, s);
+    }
+  }
+
+  /// Refetch RIÊNG một section (nút reload/gieo xúc xắc cạnh tiêu đề) —
+  /// chỉ thay đổi dữ liệu của section đó, giữ nguyên các section khác.
+  /// Với `random` dùng seed mới mỗi lần → mỗi lần bấm là một danh sách
+  /// truyện khác (giống nút "Gieo xúc xắc" trên web).
+  Future<void> refreshSection(String sort) async {
+    final current = state.value;
+    if (current == null) return;
+    try {
+      final repo = _ref.read(storyRepositoryProvider);
+      final seed = sort == 'random'
+          ? DateTime.now().millisecondsSinceEpoch.toString()
+          : null;
+      final page = await repo.listStories(
+        sort: sort,
+        perPage: 15,
+        seed: seed,
+      );
+      state = AsyncValue.data(current.copyWithSection(sort, page.stories));
+    } catch (e, s) {
+      // Giữ dữ liệu cũ của section — không làm chết màn hình khi lỗi
+      // mạng; user vẫn còn danh sách cũ để duyệt.
+      AppLogger.warning('Home: refresh section $sort failed', e, s);
     }
   }
 }

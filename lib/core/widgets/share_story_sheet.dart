@@ -189,14 +189,19 @@ class _QrShareDialogState extends State<_QrShareDialog> {
               ),
             ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: RepaintBoundary(
-                key: _qrKey,
+            // RepaintBoundary phải bọc CẢ Container nền trắng: QrImageView
+            // mặc định nền TRONG SUỐT + padding 0 (mất quiet zone). Trước
+            // đây chỉ chụp mỗi QrImageView → PNG nền trong suốt, gửi qua
+            // Zalo/messenger hiện thành mã màu lạ trên nền tối của app
+            // nhận, và máy quét thiếu vùng im lặng dễ đọc hỏng.
+            RepaintBoundary(
+              key: _qrKey,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
                 child: QrImageView(
                   data: widget.url,
                   version: QrVersions.auto,

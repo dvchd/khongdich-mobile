@@ -34,63 +34,10 @@ class TtsNowPlayingBar extends ConsumerStatefulWidget {
 class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
   StreamSubscription<TtsChunkProgress>? _progressSub;
   StreamSubscription<PlaybackState>? _playbackSub;
+  TtsAudioHandler? _handler;
   TtsChunkProgress? _progress;
   PlaybackState? _playbackState;
-
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(() async {
-      try {
-        final handler = await ref.read(ttsHandlerProvider.future);
-        if (!mounted) return;
-        _progressSub = handler.chunkProgress.listen((p) {
-          if (!mounted) return;
-          // Chỉ nhận event của chương handler đang phục vụ — event của
-          // chương cũ/chương khác (auto-advance) không hiện sai "Đoạn x/y".
-          if (p.chapterId != handler.currentChapterId) {
-            if (_progress != null) setState(() => _progress = null);
-            return;
-          }
-          // Bỏ qua event chỉ advance blockIndex trung gian trong cùng
-          // chunk — không đổi gì trên bar, đỡ rebuild không cần thiết.
-          final prev = _progress;
-          if (prev != null &&
-              prev.chunkIndex == p.chunkIndex &&
-              prev.totalChunks == p.totalChunks) {
-            return;
-          }
-          setState(() => _progress = p);
-        });
-        _playbackSub = handler.playbackState.listen((s) {
-          if (!mounted) return;
-          final prev = _playbackState;
-          // Stop/idle/error/buffering → không còn "đang đọc" đoạn nào
-          // hợp lệ, xoá progress cũ để hiển thị fallback từ handler
-          // (sau stop chunk index đã reset về 0).
-          final shouldResetProgress =
-              s.processingState == AudioProcessingState.idle ||
-              s.processingState == AudioProcessingState.error ||
-              s.processingState == AudioProcessingState.buffering;
-          // buffering→ready lặp lại MỖI chunk — nếu không có gì thay đổi
-          // (playing/processingState giữ nguyên, progress đã reset) thì
-          // bỏ qua, tránh rebuild bar vài lần mỗi chunk.
-          if (prev != null &&
-              prev.playing == s.playing &&
-              prev.processingState == s.processingState &&
-              !(shouldResetProgress && _progress != null)) {
-            return;
-          }
-          setState(() {
-            _playbackState = s;
-            if (shouldResetProgress) _progress = null;
-          });
-        });
-      } catch (_) {
-        // TTS init fail — bar không hiện, app vẫn hoạt động bình thường.
-      }
-    });
-  }
+  String? _lastDismissedSeen;
 
   @override
   void dispose() {
@@ -99,9 +46,79 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
     super.dispose();
   }
 
+  /// (Re)subscribe stream của handler khi nó khả dụng — gọi IDEMPOTENT từ
+  /// build. Trước đây subscribe 1 lần trong initState microtask:
+  /// `ttsHandlerProvider` bị watch lần đầu ngay lúc boot (bar ở gốc app) —
+  /// nếu dependency của provider (vd. appDatabaseProvider) chưa sẵn sàng
+  /// và lỗi transient, subscription thất bại vĩnh viễn → bar không bao
+  /// giờ hiện dù TTS đang chạy (TTS vẫn phát vì handler retry thành công
+  /// về sau, nhưng bar không nhận event nào để rebuild).
+  void _ensureSubscriptions(TtsAudioHandler handler) {
+    if (identical(_handler, handler)) return;
+    _progressSub?.cancel();
+    _playbackSub?.cancel();
+    _handler = handler;
+    _progressSub = handler.chunkProgress.listen((p) {
+      if (!mounted) return;
+      // Chỉ nhận event của chương handler đang phục vụ — event của
+      // chương cũ/chương khác (auto-advance) không hiện sai "Đoạn x/y".
+      if (p.chapterId != handler.currentChapterId) {
+        if (_progress != null) setState(() => _progress = null);
+        return;
+      }
+      // Bỏ qua event chỉ advance blockIndex trung gian trong cùng
+      // chunk — không đổi gì trên bar, đỡ rebuild không cần thiết.
+      final prev = _progress;
+      if (prev != null &&
+          prev.chunkIndex == p.chunkIndex &&
+          prev.totalChunks == p.totalChunks) {
+        return;
+      }
+      setState(() => _progress = p);
+    });
+    _playbackSub = handler.playbackState.listen((s) {
+      if (!mounted) return;
+      final prev = _playbackState;
+      // Stop/idle/error/buffering → không còn "đang đọc" đoạn nào
+      // hợp lệ, xoá progress cũ để hiển thị fallback từ handler
+      // (sau stop chunk index đã reset về 0).
+      final shouldResetProgress =
+          s.processingState == AudioProcessingState.idle ||
+          s.processingState == AudioProcessingState.error ||
+          s.processingState == AudioProcessingState.buffering;
+      // dismissedChapterId đổi mà KHÔNG kèm thay đổi playing/state (vd.
+      // bấm X ngay sau Stop: dismiss() → stop() phát lại idle/not-playing
+      // y hệt event trước) → vẫn phải rebuild để bar ẩn, nếu không X sẽ
+      // vô hiệu và bar kẹt trên màn hình cho tới khi có event khác.
+      final dismissed = handler.dismissedChapterId;
+      final dismissedChanged = dismissed != _lastDismissedSeen;
+      _lastDismissedSeen = dismissed;
+      // buffering→ready lặp lại MỖI chunk — nếu không có gì thay đổi
+      // (playing/processingState giữ nguyên, progress đã reset) thì
+      // bỏ qua, tránh rebuild bar vài lần mỗi chunk.
+      if (prev != null &&
+          !dismissedChanged &&
+          prev.playing == s.playing &&
+          prev.processingState == s.processingState &&
+          !(shouldResetProgress && _progress != null)) {
+        return;
+      }
+      setState(() {
+        _playbackState = s;
+        if (shouldResetProgress) _progress = null;
+      });
+    });
+  }
+
   void _openPanel(TtsAudioHandler handler) {
+    // Bar nằm TRÊN Navigator (MaterialApp.builder overlay) → context của nó
+    // KHÔNG có Overlay/Navigator — showModalBottomSheet với context này sẽ
+    // throw "No Overlay widget found". Dùng context của ROOT navigator.
+    final navigatorContext =
+        ref.read(appRouterProvider).routerDelegate.navigatorKey.currentContext;
+    if (navigatorContext == null) return;
     showModalBottomSheet(
-      context: context,
+      context: navigatorContext,
       isScrollControlled: true,
       isDismissible: true,
       enableDrag: true,
@@ -137,6 +154,10 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
   Widget build(BuildContext context) {
     final handlerAsync = ref.watch(ttsHandlerProvider);
     final handler = handlerAsync.value;
+    // Subscribe idempotent khi handler khả dụng (xem _ensureSubscriptions) —
+    // chịu được provider lỗi transient lúc boot (retry sau này vẫn bắt
+    // được stream khi handler mới xuất hiện).
+    if (handler != null) _ensureSubscriptions(handler);
     // Ẩn bar khi: chưa có handler / chưa load chương nào / user đã bấm
     // X "dừng hẳn và đóng" (dismiss).
     final visible = handler != null &&
@@ -180,7 +201,6 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
                   size: 32,
                   color: scheme.primary,
                 ),
-                tooltip: playing ? 'Tạm dừng' : 'Nghe tiếp',
                 onPressed: () {
                   if (playing) {
                     handler.pause();
@@ -278,17 +298,14 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
               ),
               IconButton(
                 icon: const Icon(Icons.menu_book_outlined, size: 22),
-                tooltip: 'Mở chương đang nghe',
                 onPressed: () => _goToChapter(handler),
               ),
               IconButton(
                 icon: const Icon(Icons.stop_circle_outlined, size: 24),
-                tooltip: 'Dừng (tắt tự chuyển chương)',
                 onPressed: () => handler.stopAutoAdvance(),
               ),
               IconButton(
                 icon: const Icon(Icons.close, size: 22),
-                tooltip: 'Dừng hẳn và đóng',
                 onPressed: () => handler.dismiss(),
               ),
             ],
@@ -299,20 +316,29 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
 
     // AnimatedSwitcher nằm ngoài cả hai nhánh (hidden/shown) để bar trượt
     // + fade vào/ra mượt thay vì xuất hiện đột ngột.
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      reverseDuration: const Duration(milliseconds: 180),
-      transitionBuilder: (child, anim) => FadeTransition(
-        opacity: anim,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.5),
-            end: Offset.zero,
-          ).animate(anim),
-          child: child,
+    //
+    // ConstrainedBox maxHeight bắt buộc: bar đặt trong Positioned chỉ có
+    // left/right/bottom (không top/height) → height nhận UNBOUNDED. IconButton
+    // M3 với constraints unbounded tự phóng to 100000x100000 (hằng số nội bộ
+    // _kUnboundedSize) → bar cao 100008px, đẩy toàn bộ ra khỏi màn hình.
+    // Giới hạn maxHeight để Row tính chiều cao tự nhiên (~56dp).
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 72),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        reverseDuration: const Duration(milliseconds: 180),
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.5),
+              end: Offset.zero,
+            ).animate(anim),
+            child: child,
+          ),
         ),
+        child: child,
       ),
-      child: child,
     );
   }
 }

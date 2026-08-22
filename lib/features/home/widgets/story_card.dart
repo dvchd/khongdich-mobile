@@ -69,9 +69,11 @@ class StoryCard extends ConsumerWidget {
                             imageUrl: story.coverUrl!,
                             cacheManager: AppImageCache.instance,
                             fit: BoxFit.cover,
-                            // Cover hiển thị ~120-200px — decode ở độ phân
-                            // giải đó thay vì ảnh gốc (giảm RAM + jank).
-                            memCacheWidth: 360,
+                            // Cover hiển thị tới ~170-200px logical (bìa tủ
+                            // truyện grid 2 cột) → decode ở 720px để nét
+                            // trên cả màn 3x. Trước đây 360px bị upscale lên
+                            // ~500px physical → bìa tủ truyện nhìn mờ.
+                            memCacheWidth: 720,
                             placeholder: (_, _) => Container(
                               color: Theme.of(context)
                                   .colorScheme

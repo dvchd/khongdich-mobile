@@ -10,6 +10,7 @@ import '../../core/widgets/follow_button.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
 import '../home/widgets/story_card.dart';
+import '../profile/profile_screen.dart' show TrustScoreBadge;
 
 /// Trang tác giả — hồ sơ + danh sách truyện của tác giả (phân trang).
 ///
@@ -134,6 +135,13 @@ class _AuthorContent extends ConsumerWidget {
                             ),
                         ],
                       ),
+                      // Điểm uy tín — mirror web /u/{username} (badge 🎯
+                      // Uy tín công khai). Ẩn khi endpoint cũ chưa trả
+                      // trust_score (giá trị 0).
+                      if (author.trustScore > 0) ...[
+                        const SizedBox(height: 6),
+                        TrustScoreBadge(score: author.trustScore),
+                      ],
                       const SizedBox(height: 6),
                       FollowButton(
                         authorId: author.id,

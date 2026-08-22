@@ -19,9 +19,13 @@ class ChapterListEntry {
   const ChapterListEntry({
     required this.number,
     required this.title,
+    this.viewCount = 0,
   });
   final int number;
   final String title;
+
+  /// Lượt đọc của chương (0 = không có dữ liệu → không hiển thị).
+  final int viewCount;
 }
 
 /// Bottom sheet listing chapters in the current story.
@@ -219,10 +223,42 @@ class _ChapterListSheetState extends ConsumerState<ChapterListSheet> {
                                     )
                                   : null,
                             ),
+                            // Lượt đọc chương — mirror web `.chapter-views`
+                            // (muted, nhỏ). Chỉ hiện khi có dữ liệu; chương
+                            // đang mở vẫn ưu tiên icon check.
                             trailing: isCurrent
                                 ? const Icon(Icons.check_circle,
                                     color: AppTheme.primary, size: 20)
-                                : null,
+                                : (e.viewCount > 0
+                                    ? Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 4),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.visibility_outlined,
+                                              size: 14,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant
+                                                  .withValues(alpha: 0.6),
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Text(
+                                              _formatCount(e.viewCount),
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant
+                                                    .withValues(alpha: 0.8),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    : null),
                             onTap: () {
                               Navigator.of(context).pop();
                               widget.onSelect(e.number);
@@ -237,4 +273,15 @@ class _ChapterListSheetState extends ConsumerState<ChapterListSheet> {
       },
     );
   }
+}
+
+/// Nhóm hàng nghìn kiểu Việt Nam (12345 → 12.345).
+String _formatCount(int n) {
+  final s = n.toString();
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
+    buf.write(s[i]);
+  }
+  return buf.toString();
 }

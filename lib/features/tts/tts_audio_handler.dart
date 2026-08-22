@@ -1454,8 +1454,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     AppLogger.info('TTS: chapter complete');
     _isSpeaking = false;
     _cancelBlockAdvanceTimer();
-    // Release audio focus — chapter đã xong, không cần giữ nữa.
-    unawaited(_deactivateAudioSession());
     // markChapterRead ghi DB local — bọc try/catch để lỗi không thoát
     // ra ngoài (trước đây một lỗi DB ở đây làm hỏng loop future → TTS
     // brick). Progress sync server có chain riêng bên trong service.
@@ -1499,8 +1497,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
       // chương". Chạy qua chain (không await) để không đua với pause/
       // stop user bấm đúng lúc; op sẽ kiểm tra lại chương hiện tại vẫn
       // là chương vừa xong + autoAdvanceEnabled vẫn bật trước khi load.
+      // KHÔNG nhả audio focus ở đây: đang tiếp tục chuỗi nghe nền, nhả
+      // giữa các chương làm một số thiết bị/OEM dọn media session hoặc
+      // để app khác cướp focus → "nghe nền tự văng" sau vài chương.
       unawaited(_serialized(() => _advanceAfterComplete(completed)));
     } else {
+      // Dừng hẳn (không auto-advance) → nhả audio focus cho app khác.
+      unawaited(_deactivateAudioSession());
       playbackState.add(
         playbackState.value.copyWith(
           controls: buildTtsControls(playing: false),
@@ -1519,6 +1522,41 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     }
   }
 
+  /// Resolve chương kế của auto-advance kèm retry lỗi MẠNG với backoff.
+  /// Lỗi mạng (network) là transient — retry 3 lần (2s/5s/10s) trước khi
+  /// bỏ cuộc vào error state. Lỗi vĩnh viễn (vipLocked / notFound /
+  /// notDownloaded) bỏ qua retry ngay. Mỗi lần thử guard lại: user có
+  /// thể đã stop/đổi chương trong lúc chờ backoff.
+  Future<TtsResolveResult> _resolveChapterWithRetry(
+    TtsChapterCompleteEvent completed,
+    int target,
+  ) async {
+    const delays = [
+      Duration(seconds: 2),
+      Duration(seconds: 5),
+      Duration(seconds: 10),
+    ];
+    var result = await _resolveChapter(target);
+    var attempt = 0;
+    while (result.failure == TtsResolveFailure.network &&
+        attempt < delays.length) {
+      if (_currentChapterId != completed.chapterId || !autoAdvanceEnabled) {
+        break;
+      }
+      AppLogger.info(
+        'TTS: auto-advance retry ${attempt + 1}/${delays.length} '
+        'cho chương $target sau ${delays[attempt].inSeconds}s',
+      );
+      await Future<void>.delayed(delays[attempt]);
+      if (_currentChapterId != completed.chapterId || !autoAdvanceEnabled) {
+        break;
+      }
+      attempt++;
+      result = await _resolveChapter(target);
+    }
+    return result;
+  }
+
   /// Auto-advance sau khi hết chương tự nhiên — chạy TRONG operation
   /// chain (queue bởi `_onChapterComplete`). Guard lại mọi điều kiện
   /// tại THỜI ĐIỂM THỰC THI: user có thể đã stop (tắt auto-advance)
@@ -1534,7 +1572,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         processingState: AudioProcessingState.buffering,
       ),
     );
-    final result = await _resolveChapter(target);
+    // Retry lỗi MẠNG có backoff: màn tắt/đi xa WiFi thỉnh thoảng fetch
+    // chương fail 1-2 lần — trước đây FAIL MỘT LẦN là chuỗi auto-advance
+    // chết im lặng (user nghe nền thấy "tự văng", tưởng app giới hạn).
+    // Lỗi vĩnh viễn (VIP khoá / chưa publish / chưa tải offline) không
+    // retry — vào error state như cũ.
+    final result = await _resolveChapterWithRetry(completed, target);
     final chapter = result.chapter;
     if (chapter == null) {
       AppLogger.warning(

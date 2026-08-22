@@ -253,12 +253,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   // toàn cục (TtsNowPlayingBar) biết màn hình hiện tại có bottom nav để
   // đặt bar lên trên thay vì đè lên nav.
   void trackTopLocation() {
-    ref.read(topLocationProvider.notifier).state =
-        router.routerDelegate.currentConfiguration.uri.toString();
+    // Dùng matches.last.matchedLocation thay vì currentConfiguration.uri:
+    // `.uri` chỉ phản ánh RouteMatch KHÔNG phải ImperativeRouteMatch — các
+    // route mở bằng context.push() (reader, story detail...) bị bỏ qua →
+    // topLocation dính ở location cũ (vd. /story/... khi đang đọc /chapter)
+    // → now-playing bar tưởng màn hình có bottom nav mà đặt cao sai chỗ.
+    final matches = router.routerDelegate.currentConfiguration.matches;
+    final location = matches.isEmpty ? '/' : matches.last.matchedLocation;
+    ref.read(topLocationProvider.notifier).state = location;
   }
 
   router.routerDelegate.addListener(trackTopLocation);
-  trackTopLocation();
+  // Defer lần track đầu — không được modify StateProvider khác NGAY trong
+  // lúc appRouterProvider đang build (Riverpod assertion "modified ... while
+  // building"). Listener của các lần đổi route sau vẫn chạy bình thường.
+  Future.microtask(trackTopLocation);
   ref.onDispose(() => router.routerDelegate.removeListener(trackTopLocation));
   return router;
 });
@@ -567,7 +576,10 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
       builder: (_) => ChapterListSheet(
         entries: [
           for (final s in _siblings)
-            ChapterListEntry(number: s.chapterNumber, title: s.chapterTitle),
+            ChapterListEntry(
+              number: s.chapterNumber,
+              title: s.chapterTitle,
+            ),
         ],
         currentChapter: ch.chapterNumber,
         storyId: ch.storyId,

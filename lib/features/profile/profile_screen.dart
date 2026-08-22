@@ -95,18 +95,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
           ),
           const Divider(),
-          ListTile(
-            leading: const Icon(Icons.bookmark_outline),
-            title: const Text('Tủ truyện'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.go('/bookshelf'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.notifications_outlined),
-            title: const Text('Thông báo'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/notifications'),
-          ),
+          // "Tủ truyện" đã có tab riêng trên bottom nav → không lặp lại
+          // ở đây (trước đây 2 đường vào cùng /bookshelf gây thừa).
+          // "Thông báo" là dữ liệu theo tài khoản → chỉ hiện khi đã đăng
+          // nhập; chưa đăng nhập bấm vào cũng chỉ ra màn rỗng/vô nghĩa.
+          if (userAsync.value != null) ...[
+            ListTile(
+              leading: const Icon(Icons.notifications_outlined),
+              title: const Text('Thông báo'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/notifications'),
+            ),
+          ],
           ListTile(
             leading: const Icon(Icons.settings_outlined),
             title: const Text('Cài đặt'),

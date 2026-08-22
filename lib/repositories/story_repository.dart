@@ -1300,6 +1300,7 @@ class AuthorInfo {
     this.bio = '',
     this.followerCount = 0,
     this.isFollowing = false,
+    this.trustScore = 0,
   });
 
   final String id;
@@ -1308,6 +1309,10 @@ class AuthorInfo {
   final String? avatarUrl;
   final String bio;
   final int followerCount;
+
+  /// Điểm uy tín 0-100 (`trust_score`) — công khai như web /u/{username}.
+  /// Endpoint cũ không trả field này → mặc định 0 (badge sẽ bị ẩn).
+  final int trustScore;
 
   /// True when the current user follows this author (màn hình tác giả).
   final bool isFollowing;
@@ -1325,6 +1330,7 @@ class AuthorInfo {
         bio: json['bio'] as String? ?? '',
         followerCount: (json['follower_count'] as num?)?.toInt() ?? 0,
         isFollowing: json['is_following'] as bool? ?? false,
+        trustScore: (json['trust_score'] as num?)?.toInt() ?? 0,
       );
 }
 

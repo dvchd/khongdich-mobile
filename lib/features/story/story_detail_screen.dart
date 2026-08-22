@@ -1,10 +1,12 @@
-import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/markdown/markdown.dart';
 import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
@@ -173,135 +175,148 @@ class _StoryDetailBody extends ConsumerWidget {
             ),
           ],
         ),
-        // Cover + info row: 3:4 cover on the left, title/author/status
-        // on the right. This matches the web story detail layout.
+        // Cover + info — căn giữa, bìa to 3:4 (giống web mobile-first:
+        // `.cover-lg` centered, up to 300px; desktop mới chuyển sang 2 cột
+        // cover trái + info phải).
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 3:4 cover image
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SizedBox(
-                    width: 120,
-                    height: 160,
-                    child: story.coverUrl == null
-                        ? Container(
-                            color: AppTheme.primary.withValues(alpha: 0.2),
-                            child: const Icon(Icons.book, size: 48),
-                          )
-                        : CachedNetworkImage(
-                            imageUrl: story.coverUrl!,
-                            cacheManager: AppImageCache.instance,
-                            fit: BoxFit.cover,
-                            memCacheWidth: 360,
-                            errorWidget: (_, _, _) => Container(
-                              color: AppTheme.primary.withValues(alpha: 0.2),
-                              child: const Icon(Icons.book, size: 48),
-                            ),
-                          ),
+                // Bìa to căn giữa — 3:4 như web.
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: AspectRatio(
+                      aspectRatio: 3 / 4,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: story.coverUrl == null ||
+                                story.coverUrl!.isEmpty
+                            ? Container(
+                                color: AppTheme.primary.withValues(
+                                  alpha: 0.2,
+                                ),
+                                child: const Icon(Icons.book, size: 48),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: story.coverUrl!,
+                                cacheManager: AppImageCache.instance,
+                                fit: BoxFit.cover,
+                                // Bìa hiển thị ~200-280px logical → decode
+                                // 720px cho nét trên màn 3x (trước đây 360px
+                                // bị upscale → bìa mờ).
+                                memCacheWidth: 720,
+                                errorWidget: (_, _, _) => Container(
+                                  color: AppTheme.primary.withValues(
+                                    alpha: 0.2,
+                                  ),
+                                  child: const Icon(Icons.book, size: 48),
+                                ),
+                              ),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        story.title,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      const SizedBox(height: 4),
-                      // Tên tác giả — chạm để mở trang tác giả (danh sách
-                      // truyện của họ). Không có username (dữ liệu cũ) →
-                      // không bấm được.
-                      Builder(
-                        builder: (context) {
-                          final username = detail.authorUsername;
-                          final authorText = Text(
-                            story.author,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: username.isNotEmpty
-                                  ? AppTheme.primary
-                                  : null,
-                              decoration: username.isNotEmpty
-                                  ? TextDecoration.underline
-                                  : TextDecoration.none,
-                              decorationColor: AppTheme.primary
-                                  .withValues(alpha: 0.5),
-                            ),
-                          );
-                          if (username.isEmpty) return authorText;
-                          return InkWell(
-                            onTap: () =>
-                                context.push('/author/$username'),
-                            borderRadius: BorderRadius.circular(4),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 2),
-                              child: authorText,
-                            ),
-                          );
-                        },
-                      ),
-                      if (detail.authorId.isNotEmpty &&
-                          currentUser?.id != detail.authorId)
-                        FollowButton(
-                          authorId: detail.authorId,
-                          initialFollowing: detail.isFollowing,
-                          initialFollowerCount: 0,
-                          compact: true,
+                const SizedBox(height: 16),
+                Text(
+                  story.title,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 4),
+                // Tên tác giả — chạm để mở trang tác giả (danh sách
+                // truyện của họ). Không có username (dữ liệu cũ) →
+                // không bấm được.
+                Builder(
+                  builder: (context) {
+                    final username = detail.authorUsername;
+                    final authorText = Text(
+                      story.author,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: username.isNotEmpty
+                            ? AppTheme.primary
+                            : null,
+                        decoration: username.isNotEmpty
+                            ? TextDecoration.underline
+                            : TextDecoration.none,
+                        decorationColor: AppTheme.primary.withValues(
+                          alpha: 0.5,
                         ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        children: [
-                          if (story.status != null)
-                            _StatusChip(status: story.status!),
-                          if (vip.isVip)
-                            Chip(
-                              avatar: const Icon(Icons.workspace_premium,
-                                  size: 16, color: Color(0xFFD97706)),
-                              label: const Text('VIP',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFFD97706))),
-                              visualDensity: VisualDensity.compact,
-                              backgroundColor: const Color(0xFFFEF3C7),
-                            ),
-                          if (effectiveBookmark != null)
-                            _BookmarkChip(listType: effectiveBookmark),
-                          if (story.chapterCount != null)
-                            Chip(
-                              label: Text('${story.chapterCount} chương'),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          if (downloadedCount > 0)
-                            Chip(
-                              avatar: const Icon(Icons.download_done, size: 16, color: Colors.green),
-                              label: Text('$downloadedCount${totalChapters > 0 ? '/$totalChapters' : ''} đã tải'),
-                              visualDensity: VisualDensity.compact,
-                              backgroundColor: Colors.green.withValues(alpha: 0.1),
-                            ),
-                          if (activeDownloads > 0)
-                            Chip(
-                              avatar: const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              label: Text('Đang tải $activeDownloads…'),
-                              visualDensity: VisualDensity.compact,
-                              backgroundColor: Colors.blue.withValues(alpha: 0.1),
-                            ),
-                        ],
                       ),
-                    ],
+                    );
+                    if (username.isEmpty) {
+                      return Center(child: authorText);
+                    }
+                    return Center(
+                      child: InkWell(
+                        onTap: () => context.push('/author/$username'),
+                        borderRadius: BorderRadius.circular(4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: authorText,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                if (detail.authorId.isNotEmpty &&
+                    currentUser?.id != detail.authorId) ...[
+                  const SizedBox(height: 8),
+                  Center(
+                    child: FollowButton(
+                      authorId: detail.authorId,
+                      initialFollowing: detail.isFollowing,
+                      initialFollowerCount: 0,
+                      compact: true,
+                    ),
                   ),
+                ],
+                const SizedBox(height: 12),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (story.contentTypes.isNotEmpty)
+                      _ContentTypeBadge(contentType: story.contentTypes.first),
+                    if (story.status != null)
+                      _StatusChip(status: story.status!),
+                    if (vip.isVip)
+                      Chip(
+                        avatar: const Icon(Icons.workspace_premium,
+                            size: 16, color: Color(0xFFD97706)),
+                        label: const Text('VIP',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFD97706))),
+                        visualDensity: VisualDensity.compact,
+                        backgroundColor: const Color(0xFFFEF3C7),
+                      ),
+                    if (effectiveBookmark != null)
+                      _BookmarkChip(listType: effectiveBookmark),
+                    if (downloadedCount > 0)
+                      Chip(
+                        avatar: const Icon(Icons.download_done, size: 16, color: Colors.green),
+                        label: Text('$downloadedCount${totalChapters > 0 ? '/$totalChapters' : ''} đã tải'),
+                        visualDensity: VisualDensity.compact,
+                        backgroundColor: Colors.green.withValues(alpha: 0.1),
+                      ),
+                    if (activeDownloads > 0)
+                      Chip(
+                        avatar: const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        label: Text('Đang tải $activeDownloads…'),
+                        visualDensity: VisualDensity.compact,
+                        backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                      ),
+                  ],
                 ),
               ],
             ),
@@ -313,16 +328,18 @@ class _StoryDetailBody extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (story.categories.isNotEmpty) ...[
+                if (story.categories.isNotEmpty || story.tags.isNotEmpty) ...[
+                  // Một hàng badge liền mạch như web (.badges): thể loại nền
+                  // trung tính, tag nền accent nhạt — thay ActionChip nặng
+                  // (viền + ripple) bằng pill nhẹ dễ quét mắt.
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
                     children: [
                       for (var i = 0; i < story.categories.length; i++)
-                        ActionChip(
-                          label: Text(story.categories[i]),
-                          visualDensity: VisualDensity.compact,
-                          onPressed: () {
+                        _GenreBadge(
+                          label: story.categories[i],
+                          onTap: () {
                             final slug = i < story.categorySlugs.length
                                 ? story.categorySlugs[i]
                                 : story.categories[i];
@@ -332,21 +349,11 @@ class _StoryDetailBody extends ConsumerWidget {
                             );
                           },
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (story.tags.isNotEmpty) ...[
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
                       for (var i = 0; i < story.tags.length; i++)
-                        ActionChip(
-                          label: Text('#${story.tags[i]}'),
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          onPressed: () {
+                        _GenreBadge(
+                          label: story.tags[i],
+                          isTag: true,
+                          onTap: () {
                             final slug = i < story.tagSlugs.length
                                 ? story.tagSlugs[i]
                                 : story.tags[i];
@@ -360,10 +367,19 @@ class _StoryDetailBody extends ConsumerWidget {
                   ),
                   const SizedBox(height: 12),
                 ],
-                Text(
-                  story.synopsis ?? '(Chưa có giới thiệu)',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                // Hàng thống kê — mirror web .stats (⭐ / 👁 / 📖 / ✏️).
+                _StoryStats(
+                  rating: story.rating,
+                  viewCount: story.viewCount,
+                  chapterCount: story.chapterCount,
+                  wordCount: story.wordCount,
                 ),
+                const SizedBox(height: 12),
+                // Giới thiệu — render markdown giống web (web dùng
+                // render_vietnamese_text cho synopsis_html). Trước đây hiện
+                // plain text nên **đậm**, danh sách, link... hiện nguyên
+                // cú pháp thô.
+                _StorySynopsis(text: story.synopsis),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -814,10 +830,222 @@ class _StoryDetailBody extends ConsumerWidget {
   }
 }
 
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.status});
-  final String status;
+class _StorySynopsis extends StatelessWidget {
+  const _StorySynopsis({required this.text});
 
+  final String? text;
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = text?.trim() ?? '';
+    if (raw.isEmpty) {
+      return Text(
+        '(Chưa có giới thiệu)',
+        style: Theme.of(context).textTheme.bodyMedium,
+      );
+    }
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final onSurface = scheme.onSurface;
+    final body = theme.textTheme.bodyMedium?.copyWith(height: 1.6) ??
+        const TextStyle(fontSize: 14, height: 1.6, color: Colors.black);
+    final headingBase = theme.textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w700,
+      color: onSurface,
+    ) ??
+        const TextStyle(fontWeight: FontWeight.w700);
+    final readerTheme = ReaderTheme(
+      bodyStyle: body,
+      headingStyles: {
+        1: headingBase.copyWith(fontSize: 20, height: 1.3),
+        2: headingBase.copyWith(fontSize: 18, height: 1.3),
+        3: headingBase.copyWith(fontSize: 16, height: 1.3),
+        4: headingBase.copyWith(fontSize: 15, height: 1.4),
+        5: headingBase.copyWith(fontSize: 14, height: 1.4),
+        6: headingBase.copyWith(fontSize: 13, height: 1.4),
+      },
+      accentColor: scheme.primary,
+      paragraphSpacing: 6,
+      codeStyle: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 13,
+        color: onSurface,
+        backgroundColor: scheme.surfaceContainerHighest,
+      ),
+      quoteColor: scheme.error,
+      blockBackground: scheme.surfaceContainerHighest,
+    );
+    final blocks = MarkdownParser().parse(raw);
+    return MarkdownRenderer(
+      blocks: blocks,
+      theme: readerTheme,
+      onLinkTap: (uri) => launchUrl(uri, mode: LaunchMode.externalApplication),
+    );
+  }
+}
+
+/// Badge thể loại/tag dạng pill nhẹ như web (style.css `.badge` /
+/// `.badge-cat` / `.badge-tag`): nền đặc không viền, bo tròn hoàn toàn.
+/// THỂ LOẠI nổi bật hơn tag (accent + đậm chữ) — thể loại là trục điều
+/// hướng chính (trang /the-loai, BXH theo loại), còn tag là nhãn mô tả
+/// phụ thường xuất hiện nhiều hơn nên để trầm giúp hàng badge đỡ rối.
+class _GenreBadge extends StatelessWidget {
+  const _GenreBadge({
+    required this.label,
+    required this.onTap,
+    this.isTag = false,
+  });
+  final String label;
+  final VoidCallback onTap;
+  final bool isTag;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: isTag
+          ? scheme.surfaceContainerHigh
+          : scheme.primary.withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: isTag ? FontWeight.w500 : FontWeight.w600,
+              color: isTag ? scheme.onSurfaceVariant : scheme.primary,
+              height: 1.2,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Badge loại truyện (chữ/tranh/bách khoa/video/chat) — mirror web
+/// `.ct-badge-inline`: nền màu đặc theo loại + chữ trắng. Màu lấy từ
+/// web nhưng làm tối nhẹ ở các màu tương phản thấp với nền trắng
+/// (amber/orange/green của web ~3.0:1 → dùng shade 700 đạt ≥4.5:1).
+class _ContentTypeBadge extends StatelessWidget {
+  const _ContentTypeBadge({required this.contentType});
+  final String contentType;
+
+  static const _map = <String, (String, Color)>{
+    'text': ('📖 Truyện chữ', Color(0xFF2563EB)),
+    'visual': ('📚 Bách khoa', Color(0xFFB45309)),
+    'manga': ('🖼️ Truyện tranh', Color(0xFF9333EA)),
+    'video': ('🎬 Truyện video', Color(0xFFC2410C)),
+    'chat': ('💬 Truyện chat', Color(0xFF15803D)),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = _map[contentType];
+    if (entry == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: entry.$2,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        entry.$1,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+          height: 1.2,
+        ),
+      ),
+    );
+  }
+}
+
+/// Hàng thống kê truyện — mirror web `.stats`: ⭐ điểm / 👁 lượt đọc /
+/// 📖 chương / ✏️ từ. Chỉ hiện giá trị có dữ liệu, màu trầm đủ tương
+/// phản trên nền trắng (không dùng text quá nhạt).
+class _StoryStats extends StatelessWidget {
+  const _StoryStats({
+    required this.rating,
+    required this.viewCount,
+    required this.chapterCount,
+    required this.wordCount,
+  });
+  final double? rating;
+  final int? viewCount;
+  final int? chapterCount;
+  final int? wordCount;
+
+  /// Format điểm giống web `avg_rating_display()`: bỏ số 0 thừa ở
+  /// phần thập phân (4.50 → 4.5, 5.00 → 5).
+  static String _fmtRating(double r) {
+    final s = r.toStringAsFixed(2);
+    final parts = s.split('.');
+    final frac = parts[1].replaceFirst(RegExp(r'0+$'), '');
+    return frac.isEmpty ? parts[0] : '${parts[0]}.$frac';
+  }
+
+  /// Nhóm hàng nghìn kiểu Việt Nam (12345 → 12.345).
+  static String _fmtCount(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
+      buf.write(s[i]);
+    }
+    return buf.toString();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final muted = scheme.onSurfaceVariant.withValues(alpha: 0.75);
+    final iconColor = scheme.primary.withValues(alpha: 0.7);
+
+    final items = <(IconData, String)>[
+      if (rating != null && rating! > 0)
+        (Icons.star_rounded, '${_fmtRating(rating!)}'),
+      if (viewCount != null && viewCount! > 0)
+        (Icons.visibility_outlined, '${_fmtCount(viewCount!)} đọc'),
+      if (chapterCount != null && chapterCount! > 0)
+        (Icons.menu_book_outlined, '${_fmtCount(chapterCount!)} chương'),
+      if (wordCount != null && wordCount! > 0)
+        (Icons.edit_outlined, '${_fmtCount(wordCount!)} từ'),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 14,
+      runSpacing: 4,
+      children: [
+        for (final (icon, label) in items)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: iconColor),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: muted,
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.status});  final String status;
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {

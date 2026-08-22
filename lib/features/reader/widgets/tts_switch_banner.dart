@@ -42,30 +42,26 @@ class _TtsSwitchChapterBannerState
   int? _playingChapter;
   bool _dismissed = false;
 
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(() async {
-      try {
-        final handler = await ref.read(ttsHandlerProvider.future);
-        if (!mounted) return;
-        _handler = handler;
-        // loadChapter/play/stop đều emit playbackState; chunkProgress fire
-        // mỗi chunk → banner cập nhật NGAY khi handler đổi chương (kể cả
-        // auto-advance khi app bị ẩn rồi mở lại).
-        void sync() {
-          if (!mounted) return;
-          final ch = handler.currentChapterNumber;
-          if (ch != _playingChapter) setState(() => _playingChapter = ch);
-        }
+  /// (Re)subscribe idempotent từ build — xem TtsNowPlayingBar: subscription
+  /// 1 lần trong initState chết vĩnh viễn nếu provider lỗi transient lúc
+  /// mounted (dependencies chưa sẵn sàng).
+  void _ensureSubscriptions(TtsAudioHandler handler) {
+    if (identical(_handler, handler)) return;
+    _progressSub?.cancel();
+    _playbackSub?.cancel();
+    _handler = handler;
+    // loadChapter/play/stop đều emit playbackState; chunkProgress fire
+    // mỗi chunk → banner cập nhật NGAY khi handler đổi chương (kể cả
+    // auto-advance khi app bị ẩn rồi mở lại).
+    void sync() {
+      if (!mounted) return;
+      final ch = handler.currentChapterNumber;
+      if (ch != _playingChapter) setState(() => _playingChapter = ch);
+    }
 
-        _progressSub = handler.chunkProgress.listen((_) => sync());
-        _playbackSub = handler.playbackState.listen((_) => sync());
-        sync();
-      } catch (_) {
-        // TTS init fail — không hiện banner, reader vẫn hoạt động.
-      }
-    });
+    _progressSub = handler.chunkProgress.listen((_) => sync());
+    _playbackSub = handler.playbackState.listen((_) => sync());
+    sync();
   }
 
   @override
@@ -77,7 +73,9 @@ class _TtsSwitchChapterBannerState
 
   @override
   Widget build(BuildContext context) {
-    final handler = _handler;
+    final handlerAsync = ref.watch(ttsHandlerProvider);
+    final handler = handlerAsync.value;
+    if (handler != null) _ensureSubscriptions(handler);
     if (handler == null || _dismissed) return const SizedBox.shrink();
     final current = handler.currentChapterId;
     // Chỉ hiện khi handler đang phục vụ MỘT chương KHÁC của CÙNG truyện

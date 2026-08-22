@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -87,6 +89,13 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   late final ScrollController _scrollController;
   final PageController _pageController = PageController();
   bool _progressSaved = false;
+  /// Pill "Chương kế tiếp" đếm ngược khi cuộn chạm đáy (xem _onScroll) —
+  /// auto-lật sau vài giây thay vì lật tức thì (vuốt mạnh qua đáy cũng
+  /// không lật nhầm). User hủy → chương này không tự lật nữa.
+  Timer? _autoContinueTimer;
+  int _autoContinueRemaining = 0;
+  bool _autoContinueCancelled = false;
+  static const _autoContinueSeconds = 5;
 
   @override
   void initState() {
@@ -105,11 +114,16 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     // new chapter's reading progress is never marked.
     if (oldWidget.chapter.id != widget.chapter.id) {
       _progressSaved = false;
+      _autoContinueTimer?.cancel();
+      _autoContinueTimer = null;
+      _autoContinueRemaining = 0;
+      _autoContinueCancelled = false;
     }
   }
 
   @override
   void dispose() {
+    _autoContinueTimer?.cancel();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _pageController.dispose();
@@ -130,6 +144,70 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       _progressSaved = true;
       widget.onChapterNearEnd?.call();
     }
+    // Cuộn dọc: chạm ĐÁY → hiện pill "Chương kế tiếp" đếm ngược, auto
+    // chuyển sau vài giây (kiểu webtoon). KHÔNG lật tức thì — vuốt
+    // mạnh/flick qua đáy rồi dừng sẽ không lật nhầm; user đang ngó lại
+    // đoạn cuối có thể hủy (✕) hoặc chuyển ngay. Cuộn lên → pill biến
+    // mất, xuống lại thì hẹn giờ lại. Chương ngắn hơn viewport
+    // (maxScrollExtent == 0) và chương cuối (onNext null) không kích
+    // hoạt.
+    final atBottom = widget.settings.scrollMode == ReaderScrollMode.vertical &&
+        pos.maxScrollExtent > 0 &&
+        pos.pixels >= pos.maxScrollExtent - 8;
+    if (atBottom) {
+      _startAutoContinue();
+    } else {
+      _cancelAutoContinue(permanent: false);
+    }
+  }
+
+  /// Bắt đầu đếm ngược pill chuyển chương — no-op nếu đang chạy / đã hủy
+  /// ở chương này / không có chương kế.
+  void _startAutoContinue() {
+    if (_autoContinueTimer != null ||
+        _autoContinueCancelled ||
+        widget.onNext == null) {
+      return;
+    }
+    _autoContinueRemaining = _autoContinueSeconds;
+    setState(() {});
+    _autoContinueTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      _autoContinueRemaining--;
+      if (_autoContinueRemaining <= 0) {
+        t.cancel();
+        _autoContinueTimer = null;
+        _autoContinueCancelled = true;
+        if (mounted) {
+          final cb = widget.onNext;
+          if (cb != null) cb();
+        }
+        return;
+      }
+      if (mounted) setState(() {});
+    });
+  }
+
+  /// Nút "Chuyển ngay" trên pill: chuyển chương ngay, và chương này
+  /// không tự hiện pill lại nữa.
+  void _goToNextNow() {
+    _cancelAutoContinue(permanent: false);
+    _autoContinueCancelled = true;
+    widget.onNext?.call();
+  }
+
+  /// Huỷ đếm ngược. [permanent] = true (nút ✕): chương này không tự lật
+  /// nữa dù quay lại đáy; false (cuộn lên): chỉ tạm ẩn, xuống lại thì
+  /// hẹn giờ tiếp.
+  void _cancelAutoContinue({bool permanent = true}) {
+    if (_autoContinueTimer == null && (permanent || !_autoContinueCancelled)) {
+      // Không có gì đang hiển thị — không cần setState.
+      if (permanent) _autoContinueCancelled = true;
+      return;
+    }
+    _autoContinueTimer?.cancel();
+    _autoContinueTimer = null;
+    if (permanent) _autoContinueCancelled = true;
+    if (mounted) setState(() {});
   }
 
   /// Chat chapters reveal messages one tap at a time — when everything
@@ -282,7 +360,30 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                       widget.chapter is! VideoChapterContent &&
                       widget.chapter is! MangaChapterContent)
                     Positioned.fill(
-                        child: ReaderTapZones(onTap: _onTapZone)),
+                        child: ReaderTapZones(
+                      // Chế độ cuộn dọc: vùng viền thu hẹp 20% mỗi bên
+                      // (giữa 60%) — bấm gần giữa không nhảy chương nhầm.
+                      // Lật trang ngang giữ 30% như cũ.
+                      edgeFlex: isPageMode ? 3 : 2,
+                      centerFlex: isPageMode ? 4 : 6,
+                      onTap: _onTapZone,
+                    )),
+                  // Pill "Chương kế tiếp" đếm ngược khi cuộn chạm đáy
+                  // (chỉ chế độ cuộn dọc — isPageMode không kích hoạt).
+                  if (_autoContinueTimer != null &&
+                      _autoContinueRemaining > 0 &&
+                      !isPageMode)
+                    Positioned(
+                      left: 24,
+                      right: 24,
+                      bottom: 24,
+                      child: _AutoContinuePill(
+                        remainingSeconds: _autoContinueRemaining,
+                        onGoNow: _goToNextNow,
+                        onCancel: () =>
+                            _cancelAutoContinue(permanent: true),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -311,3 +412,54 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
 
 // Re-export ReaderTheme for callers that need it.
 typedef ReaderThemeAlias = ReaderTheme;
+
+/// Pill nổi "Chương kế tiếp" đếm ngược — hiện khi cuộn dọc chạm đáy
+/// chương. Auto-lật sau [remainingSeconds]s; người đọc có thể chuyển
+/// ngay hoặc hủy (✕) nếu chỉ muốn ngó lại đoạn cuối. Nổi trên nội dung
+/// nên không làm nhảy vị trí scroll.
+class _AutoContinuePill extends StatelessWidget {
+  const _AutoContinuePill({
+    required this.remainingSeconds,
+    required this.onGoNow,
+    required this.onCancel,
+  });
+  final int remainingSeconds;
+  final VoidCallback onGoNow;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.only(left: 14, right: 4, top: 4, bottom: 4),
+        child: Row(
+          children: [
+            Icon(Icons.menu_book_outlined, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Chương kế tiếp · $remainingSeconds',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+            TextButton(
+              onPressed: onGoNow,
+              child: const Text('Chuyển ngay'),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: 'Không tự chuyển chương ở chương này',
+              onPressed: onCancel,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -148,6 +148,7 @@ class ChapterSummary {
     required this.contentVersion,
     required this.isPublished,
     required this.wordCount,
+    this.viewCount = 0,
     this.updatedAt,
     this.url,
     this.volumeNumber,
@@ -167,6 +168,7 @@ class ChapterSummary {
       contentVersion: (json['content_version'] as num? ?? 1).toInt(),
       isPublished: json['is_published'] as bool? ?? true,
       wordCount: (json['word_count'] as num? ?? 0).toInt(),
+      viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
       updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
       url: json['url'] as String?,
       volumeNumber: (json['volume_number'] as num?)?.toInt(),
@@ -181,6 +183,11 @@ class ChapterSummary {
   final int contentVersion;
   final bool isPublished;
   final int wordCount;
+
+  /// Lượt đọc của chương (backend `chapters.view_count`) — hiển thị
+  /// trong danh sách chương như web (`chapter-views`). 0 khi endpoint
+  /// không trả (offline/dữ liệu cũ) → UI ẩn.
+  final int viewCount;
 
   /// Lần cuối chương được sửa (backend `chapters.updated_at`). Dùng để
   /// phát hiện chapter cache stale: tác giả sửa chương → updated_at đổi

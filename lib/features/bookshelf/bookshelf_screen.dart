@@ -52,12 +52,12 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
       _tabs.length, (_) => GlobalKey());
 
   static const _tabs = [
-    ('all', 'Tất cả', Icons.apps),
-    ('reading', 'Đang đọc', Icons.menu_book),
-    ('completed', 'Đã đọc xong', Icons.check_circle_outline),
-    ('plan_to_read', 'Sẽ đọc', Icons.bookmark_outline),
-    ('favorite', 'Yêu thích', Icons.favorite_outline),
-    ('downloaded', 'Đã tải', Icons.download_done),
+    ('all', 'Tất cả'),
+    ('reading', 'Đang đọc'),
+    ('completed', 'Đã đọc xong'),
+    ('plan_to_read', 'Muốn đọc'),
+    ('favorite', 'Yêu thích'),
+    ('downloaded', 'Đã tải'),
   ];
 
   @override
@@ -204,7 +204,9 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                       child: FilterChip(
                         key: _chipKeys[i],
                         label: Text(_tabs[i].$2),
-                        avatar: Icon(_tabs[i].$3, size: 18),
+                        // Không dùng avatar icon — chip row đã dày đặc
+                        // chữ; icon lặp lại ý nghĩa nhãn, gây rối thị
+                        // giác (web dùng text tabs thuần).
                         selected: _tab == i,
                         onSelected: (_) {
                           setState(() => _tab = i);

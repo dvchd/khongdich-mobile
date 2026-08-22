@@ -13,6 +13,7 @@ void main() {
         'avatar_url': 'https://cdn.khongdich.com/a.png',
         'bio': 'Người kể chuyện.',
         'follower_count': 42,
+        'trust_score': 85,
       },
       'stories': [
         {
@@ -42,6 +43,7 @@ void main() {
     expect(profile.author.username, 'du-linh-tu');
     expect(profile.author.bio, 'Người kể chuyện.');
     expect(profile.author.followerCount, 42);
+    expect(profile.author.trustScore, 85);
     expect(profile.totalStories, 9);
     expect(profile.stories.single.title, 'Hậu Chiến Văn Minh');
     expect(profile.stories.single.isVip, true);
@@ -58,5 +60,7 @@ void main() {
     });
     expect(info.name, 'nobody');
     expect(info.avatarUrl, isNull);
+    // Endpoint cũ chưa trả trust_score → mặc định 0 (badge ẩn).
+    expect(info.trustScore, 0);
   });
 }

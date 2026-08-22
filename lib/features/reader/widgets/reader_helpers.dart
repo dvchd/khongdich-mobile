@@ -287,8 +287,22 @@ enum ReaderTapZone { left, center, right }
 /// the reader settings sheet; the left/right zones navigate to the
 /// previous/next chapter (or page, in page-flip mode).
 class ReaderTapZones extends StatelessWidget {
-  const ReaderTapZones({super.key, required this.onTap});
+  const ReaderTapZones({
+    super.key,
+    required this.onTap,
+    this.edgeFlex = 3,
+    this.centerFlex = 4,
+  });
   final void Function(ReaderTapZone) onTap;
+
+  /// Độ rộng vùng trái/phải (so với vùng giữa [centerFlex]). Chế độ cuộn
+  /// dọc truyền edgeFlex 2 + centerFlex 6 → mỗi bên 20% (giữa 60%): bấm
+  /// gần giữa không còn nhảy chương nhầm. Chế độ ngang (lật trang) giữ
+  /// mặc định 3:4:3 — đổi trang cần vùng bấm rộng.
+  final int edgeFlex;
+
+  /// Độ rộng vùng giữa (mở settings).
+  final int centerFlex;
 
   @override
   Widget build(BuildContext context) {
@@ -296,21 +310,21 @@ class ReaderTapZones extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          flex: 3,
+          flex: edgeFlex,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTap: () => onTap(ReaderTapZone.left),
           ),
         ),
         Expanded(
-          flex: 4,
+          flex: centerFlex,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTap: () => onTap(ReaderTapZone.center),
           ),
         ),
         Expanded(
-          flex: 3,
+          flex: edgeFlex,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTap: () => onTap(ReaderTapZone.right),
