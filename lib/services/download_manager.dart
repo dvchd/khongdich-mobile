@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart' show Options, ResponseType;
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../core/database/app_database.dart';
 import '../core/network/api_client.dart';
@@ -27,13 +31,27 @@ import 'manga_image_downloader.dart';
 /// time so we don't overwhelm the backend. Failures are recorded on the
 /// queue row and the user can retry.
 class DownloadManager {
-  DownloadManager(this._db, this._repo, this._api, this._mangaImageDownloader);
+  DownloadManager(
+    this._db,
+    this._repo,
+    this._api,
+    this._mangaImageDownloader, {
+    StoryRepository? storyRepo,
+  }) : _storyRepo = storyRepo; // ignore: prefer_initializing_formals
 
   final AppDatabase _db;
   final ChapterFetcher _repo;
   // ignore: unused_field
   final ApiClient? _api;
   final MangaImageDownloader _mangaImageDownloader;
+
+  /// Repository đầy đủ (có fetchStoryDetail) để snapshot thông tin
+  /// truyện khi download. Null trong test unit (FakeFetcher) → bỏ qua
+  /// phần snapshot, vẫn tải chương bình thường.
+  final StoryRepository? _storyRepo;
+
+  /// Guard trùng fetch story info khi tải nhiều chương cùng story.
+  final Set<String> _storyInfoInFlight = {};
 
   /// Serializes [\_processQueue] — without this, two concurrent
   /// `_processQueue()` runs (e.g. rapid enqueues from the story detail
@@ -80,6 +98,92 @@ class DownloadManager {
     unawaited(_processQueue());
   }
 
+  /// Khi user tải chương, tải LUÔN thông tin chi tiết truyện + bìa về
+  /// máy (bảng offline_stories + file bìa local) để offline story detail
+  /// / tủ truyện hiển thị y hệt online khi không có mạng. Best-effort:
+  /// fail không ảnh hưởng việc tải chương.
+  Future<void> ensureStoryInfoSaved({
+    required String storyId,
+    required String storySlug,
+  }) async {
+    final storyRepo = _storyRepo;
+    if (storyRepo == null) return;
+    if (_storyInfoInFlight.contains(storyId)) return;
+    final existing = await _db.getOfflineStory(storyId);
+    // Đã có snapshot + bìa local rồi → không cần tải lại.
+    if (existing != null && existing.coverLocalPath != null) return;
+    _storyInfoInFlight.add(storyId);
+    try {
+      final detail = await storyRepo.fetchStoryDetail(storySlug);
+      final story = detail.story;
+      String? coverLocalPath = existing?.coverLocalPath;
+      final coverUrl = story.coverUrl;
+      if (coverLocalPath == null && coverUrl != null && coverUrl.isNotEmpty) {
+        coverLocalPath = await _downloadCoverToLocal(coverUrl, story.id);
+      }
+      await _db.upsertOfflineStory(OfflineStoriesCompanion.insert(
+        storyId: story.id,
+        title: story.title,
+        slug: story.slug,
+        coverUrl: Value(coverUrl),
+        coverLocalPath: Value(coverLocalPath),
+        author: Value(story.author),
+        authorUsername: Value(detail.authorUsername),
+        synopsis: Value(story.synopsis ?? ''),
+        contentType: Value(story.contentTypes.isNotEmpty
+            ? story.contentTypes.first
+            : 'text'),
+        status: Value(story.status ?? ''),
+        categoriesJson: Value(jsonEncode(story.categories)),
+        tagsJson: Value(jsonEncode(story.tags)),
+        rating: Value(story.rating ?? 0),
+        viewCount: Value(story.viewCount ?? 0),
+        chapterCount: Value(story.chapterCount ?? 0),
+        wordCount: Value(story.wordCount ?? 0),
+        updatedAt: Value(DateTime.now().toIso8601String()),
+      ));
+      AppLogger.info(
+          'DownloadManager: saved story info for $storyId (cover=${coverLocalPath != null})');
+    } catch (e, s) {
+      AppLogger.warning(
+          'DownloadManager: ensureStoryInfoSaved failed for $storyId', e, s);
+    } finally {
+      _storyInfoInFlight.remove(storyId);
+    }
+  }
+
+  /// Tải bìa truyện về file local ổn định
+  /// (documents/covers/[storyId].jpg) — không phụ thuộc cache ảnh có
+  /// thể bị evict.
+  Future<String?> _downloadCoverToLocal(String url, String storyId) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final coversDir = Directory(p.join(dir.path, 'covers'));
+      if (!await coversDir.exists()) {
+        await coversDir.create(recursive: true);
+      }
+      final file = File(p.join(coversDir.path, '$storyId.jpg'));
+      if (await file.exists()) return file.path;
+      final client = _api;
+      if (client != null) {
+        final bytes = await client.dio
+            .get<List<int>>(
+              url,
+              options: Options(responseType: ResponseType.bytes),
+            )
+            .then((r) => r.data ?? const <int>[]);
+        if (bytes.isNotEmpty) {
+          await file.writeAsBytes(bytes, flush: true);
+          return file.path;
+        }
+      }
+      return null;
+    } catch (e) {
+      AppLogger.warning('DownloadManager: cover download failed ($url)', e);
+      return null;
+    }
+  }
+
   /// Enqueue a single chapter for download.
   Future<int> enqueueChapter({
     required String storyId,
@@ -103,6 +207,8 @@ class DownloadManager {
         AppLogger.info(
             'DownloadManager: promoted auto_cache → manual_download for $chapterId');
       }
+      // User chủ động tải → kèm luôn snapshot thông tin + bìa truyện.
+      unawaited(ensureStoryInfoSaved(storyId: storyId, storySlug: storySlug));
       return -1;
     }
 
@@ -138,6 +244,8 @@ class DownloadManager {
       storySynopsis: Value(storySynopsis),
       queuedAt: DateTime.now().toIso8601String(),
     ));
+    // Tải luôn snapshot thông tin truyện + bìa (best-effort, không chặn).
+    unawaited(ensureStoryInfoSaved(storyId: storyId, storySlug: storySlug));
     unawaited(_processQueue());
     return id;
   }
@@ -192,6 +300,8 @@ class DownloadManager {
       queuedIds.add(cs.id);
       enqueued++;
     }
+    // Tải luôn snapshot thông tin truyện + bìa (best-effort, không chặn).
+    unawaited(ensureStoryInfoSaved(storyId: storyId, storySlug: storySlug));
     unawaited(_processQueue());
     return enqueued;
   }
@@ -569,5 +679,11 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
       );
   final repo = ref.watch(storyRepositoryProvider);
   final mangaImageDownloader = ref.watch(mangaImageDownloaderProvider);
-  return DownloadManager(db, repo, api, mangaImageDownloader);
+  return DownloadManager(
+    db,
+    repo,
+    api,
+    mangaImageDownloader,
+    storyRepo: repo,
+  );
 });

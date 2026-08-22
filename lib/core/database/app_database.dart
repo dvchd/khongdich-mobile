@@ -135,6 +135,34 @@ class AppSettingsTable extends Table {
   Set<Column> get primaryKey => {key};
 }
 
+/// `offline_stories` — snapshot thông tin chi tiết truyện khi user tải
+/// chương. Lưu đủ metadata (tác giả, giới thiệu, thể loại/tag, thống kê)
+/// + đường dẫn BÌA LƯU LOCAL để offline story detail + tủ truyện tab
+/// "Đã tải" hiển thị y hệt online khi không có mạng (trước đây bìa phụ
+/// thuộc CachedNetworkImage — chưa từng xem bìa thì offline trắng).
+class OfflineStories extends Table {
+  TextColumn get storyId => text()();
+  TextColumn get title => text()();
+  TextColumn get slug => text()();
+  TextColumn get coverUrl => text().nullable()();
+  TextColumn get coverLocalPath => text().nullable()();
+  TextColumn get author => text().withDefault(const Constant(''))();
+  TextColumn get authorUsername => text().withDefault(const Constant(''))();
+  TextColumn get synopsis => text().withDefault(const Constant(''))();
+  TextColumn get contentType => text().withDefault(const Constant('text'))();
+  TextColumn get status => text().withDefault(const Constant(''))();
+  TextColumn get categoriesJson => text().withDefault(const Constant('[]'))();
+  TextColumn get tagsJson => text().withDefault(const Constant('[]'))();
+  RealColumn get rating => real().withDefault(const Constant(0))();
+  IntColumn get viewCount => integer().withDefault(const Constant(0))();
+  IntColumn get chapterCount => integer().withDefault(const Constant(0))();
+  IntColumn get wordCount => integer().withDefault(const Constant(0))();
+  TextColumn get updatedAt => text().withDefault(const Constant(''))();
+
+  @override
+  Set<Column> get primaryKey => {storyId};
+}
+
 @DriftDatabase(tables: [
   DownloadedChapters,
   DownloadedChapterImages,
@@ -142,6 +170,7 @@ class AppSettingsTable extends Table {
   LocalBookmarks,
   TtsPlaybackState,
   DownloadQueue,
+  OfflineStories,
   AppSettingsTable,
 ])
 class AppDatabase extends _$AppDatabase {
@@ -153,7 +182,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -204,6 +233,11 @@ class AppDatabase extends _$AppDatabase {
             for (final stmt in _indexStatements) {
               await m.database.customStatement(stmt);
             }
+          }
+          if (from < 8) {
+            // v8: offline_stories — snapshot chi tiết truyện + bìa local
+            // khi user tải chương (hiển thị offline y hệt online).
+            await m.createTable(offlineStories);
           }
         },
       );
@@ -320,6 +354,36 @@ class AppDatabase extends _$AppDatabase {
         .write(DownloadedChaptersCompanion(
       source: const Value('manual_download'),
     ));
+  }
+
+  // ---- Offline stories (snapshot chi tiết truyện + bìa local) ----
+
+  Future<OfflineStory?> getOfflineStory(String storyId) {
+    return (select(offlineStories)
+          ..where((t) => t.storyId.equals(storyId)))
+        .getSingleOrNull();
+  }
+
+  Stream<OfflineStory?> watchOfflineStory(String storyId) {
+    return (select(offlineStories)
+          ..where((t) => t.storyId.equals(storyId)))
+        .watchSingleOrNull();
+  }
+
+  Future<List<OfflineStory>> getAllOfflineStories() {
+    return (select(offlineStories)
+          ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
+        .get();
+  }
+
+  Future<void> upsertOfflineStory(OfflineStoriesCompanion entry) {
+    return into(offlineStories).insertOnConflictUpdate(entry);
+  }
+
+  Future<void> deleteOfflineStory(String storyId) {
+    return (delete(offlineStories)
+          ..where((t) => t.storyId.equals(storyId)))
+        .go();
   }
 
   // ---- Downloaded chapter images (manga offline) ----

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:drift/drift.dart' show BaseAggregate, OrderingTerm;
 import 'package:flutter/material.dart';
@@ -21,6 +23,8 @@ class OfflineLibraryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chaptersAsync = ref.watch(offlineLibraryStreamProvider);
+    // Bìa lưu local (snapshot khi download) — offline vẫn hiện bìa.
+    final offlineStories = ref.watch(offlineStoriesMapProvider).value ?? {};
     return Scaffold(
       appBar: AppBar(
         title: const Text('Truyện đã tải'),
@@ -72,25 +76,38 @@ class OfflineLibraryScreen extends ConsumerWidget {
               storyChapters.sort(
                   (a, b) => a.chapterNumber.compareTo(b.chapterNumber));
               final first = storyChapters.first;
+              final localCover = offlineStories[storyId]?.coverLocalPath;
               return ExpansionTile(
-                leading: first.coverUrl != null && first.coverUrl!.isNotEmpty
+                leading: localCover != null && File(localCover).existsSync()
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(4),
-                        child: CachedNetworkImage(
-                          imageUrl: first.coverUrl!,
-                          cacheManager: AppImageCache.instance,
+                        child: Image.file(
+                          File(localCover),
                           width: 40,
                           height: 56,
                           fit: BoxFit.cover,
-                          // CachedNetworkImage render được cả khi
-                          // OFFLINE (ảnh đã cache khi duyệt online) —
-                          // Image.network cũ chỉ hiện icon book khi
-                          // không có mạng.
-                          errorWidget: (_, _, _) =>
+                          errorBuilder: (_, _, _) =>
                               const Icon(Icons.book, size: 40),
                         ),
                       )
-                    : const Icon(Icons.book, size: 40),
+                    : first.coverUrl != null && first.coverUrl!.isNotEmpty
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: CachedNetworkImage(
+                              imageUrl: first.coverUrl!,
+                              cacheManager: AppImageCache.instance,
+                              width: 40,
+                              height: 56,
+                              fit: BoxFit.cover,
+                              // CachedNetworkImage render được cả khi
+                              // OFFLINE (ảnh đã cache khi duyệt online) —
+                              // Image.network cũ chỉ hiện icon book khi
+                              // không có mạng.
+                              errorWidget: (_, _, _) =>
+                                  const Icon(Icons.book, size: 40),
+                            ),
+                          )
+                        : const Icon(Icons.book, size: 40),
                 title: Text(
                   first.storyTitle.isEmpty ? first.storyId : first.storyTitle,
                   maxLines: 1,
@@ -163,6 +180,18 @@ final downloadedStoryIdsProvider = Provider<Set<String>>((ref) {
 
 /// Cache cho [downloadedStoryIdsProvider] — xem comment provider.
 Set<String>? _lastDownloadedStoryIds;
+
+/// Map storyId → snapshot truyện offline (bìa local + metadata). Được
+/// DownloadManager ghi khi user tải chương; UI (offline story detail,
+/// tủ truyện tab Đã tải) dùng để hiển thị bìa/giới thiệu Y HỆT online
+/// khi không có mạng (bìa là FILE LOCAL, không phụ thuộc cache ảnh).
+final offlineStoriesMapProvider =
+    StreamProvider<Map<String, OfflineStory>>((ref) async* {
+  final db = ref.watch(appDatabaseProvider);
+  await for (final rows in db.select(db.offlineStories).watch()) {
+    yield {for (final r in rows) r.storyId: r};
+  }
+});
 
 /// Number of chapters the user has manually downloaded (excludes
 /// background auto-cache). Powers the "Đã lưu X chương" hero stat on

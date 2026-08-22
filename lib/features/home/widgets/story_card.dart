@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,12 +25,25 @@ class StoryCard extends ConsumerWidget {
     /// Used by screens that already convey download state in another
     /// way (e.g. the Downloaded tab in the bookshelf).
     this.hideDownloadedBadge = false,
+    /// Đường dẫn bìa LƯU LOCAL (offline_stories.coverLocalPath) — khi có,
+    /// hiển thị file local thay cho mạng (bìa offline y hệt online).
+    this.coverLocalPath,
   });
+
+  /// Fallback khi không có bìa (chưa có URL / file local lỗi).
+  static Widget _coverFallback(BuildContext context) {
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      alignment: Alignment.center,
+      child: const Icon(Icons.book, size: 36),
+    );
+  }
 
   final StorySummary story;
   final VoidCallback? onTap;
   final String? badge;
   final bool hideDownloadedBadge;
+  final String? coverLocalPath;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -57,15 +72,16 @@ class StoryCard extends ConsumerWidget {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: story.coverUrl == null || story.coverUrl!.isEmpty
-                        ? Container(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            alignment: Alignment.center,
-                            child: const Icon(Icons.book, size: 36),
+                    child: coverLocalPath != null &&
+                            File(coverLocalPath!).existsSync()
+                        ? Image.file(
+                            File(coverLocalPath!),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => _coverFallback(context),
                           )
-                        : CachedNetworkImage(
+                        : story.coverUrl == null || story.coverUrl!.isEmpty
+                            ? _coverFallback(context)
+                            : CachedNetworkImage(
                             imageUrl: story.coverUrl!,
                             cacheManager: AppImageCache.instance,
                             fit: BoxFit.cover,

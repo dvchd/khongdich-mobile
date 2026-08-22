@@ -9,7 +9,8 @@ import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
-import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
+import '../downloads/offline_library_screen.dart'
+    show offlineLibraryStreamProvider, offlineStoriesMapProvider;
 import '../home/widgets/story_card.dart';
 
 /// Index of the "Downloaded" tab. The home screen sets this as the
@@ -94,6 +95,9 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(bookshelfProvider);
     final downloadsAsync = ref.watch(offlineLibraryStreamProvider);
+    // Bìa lưu local (tải kèm khi download chương) — tab Đã tải hiển thị
+    // bìa y hệt online khi không có mạng.
+    final offlineStories = ref.watch(offlineStoriesMapProvider).value ?? {};
 
     final chapters = downloadsAsync.value ?? [];
     // Set of story IDs that have at least one chapter downloaded —
@@ -260,6 +264,9 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
                             downloadedStoryIds.contains(s.id);
                         return StoryCard(
                           story: s,
+                          // Bìa local nếu đã snapshot khi download —
+                          // offline vẫn hiện bìa như online.
+                          coverLocalPath: offlineStories[s.id]?.coverLocalPath,
                           onTap: () {
                             if (isDownloadedTab) {
                               // Navigate to offline story detail instead of
