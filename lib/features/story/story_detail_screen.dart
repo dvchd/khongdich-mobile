@@ -10,6 +10,7 @@ import '../../core/markdown/markdown.dart';
 import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_bottom_nav.dart';
+import '../../core/widgets/app_snack_bar.dart';
 import '../../core/widgets/follow_button.dart';
 import '../../core/widgets/report_sheet.dart';
 import '../../core/widgets/share_story_sheet.dart';
@@ -18,6 +19,7 @@ import '../../repositories/story_repository.dart';
 import '../../services/download_manager.dart';
 import '../bookshelf/bookshelf_screen.dart' show bookshelfProvider;
 import '../profile/profile_screen.dart' show currentUserProvider;
+import '../tts/tts_now_playing_bar.dart';
 
 /// Stream of download queue rows for a specific story — auto-updates
 /// via Drift's `watch()`.
@@ -96,8 +98,16 @@ class StoryDetailScreen extends ConsumerWidget {
       ),
       // Bottom nav so the user can jump between Home / Search /
       // Bookshelf / Profile directly from the story detail page
-      // (this screen lives outside MainShell).
-      bottomNavigationBar: const AppBottomNav(currentIndex: -1),
+      // (this screen lives outside MainShell). TTS now-playing bar nằm
+      // TRONG slot này (trên menu) — vị trí thực, Scaffold tự thu hẹp
+      // body nên không đè nội dung như overlay nổi.
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const TtsNowPlayingBar(),
+          const AppBottomNav(currentIndex: -1),
+        ],
+      ),
     );
   }
 }
@@ -504,20 +514,16 @@ class _StoryDetailBody extends ConsumerWidget {
                           // Offline / 5xx — trước đây unhandled async
                           // error, không có phản hồi gì cho user.
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                    'Không tải được danh sách chương: $e'),
-                              ),
+                            showAppSnackBar(
+                              context,
+                              'Không tải được danh sách chương: $e',
                             );
                           }
                           return;
                         }
                         if (chapters.isEmpty) {
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Chưa có chương để tải.')),
-                            );
+                            showAppSnackBar(context, 'Chưa có chương để tải.');
                           }
                           return;
                         }
@@ -541,9 +547,7 @@ class _StoryDetailBody extends ConsumerWidget {
                           final msg = enqueued == 0
                               ? 'Đã tải xong $already/$total chương.'
                               : 'Đang tải $enqueued chương (đã có $already/$total).';
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(msg)),
-                          );
+                          showAppSnackBar(context, msg);
                         }
                       },
                     ),
@@ -694,23 +698,12 @@ class _StoryDetailBody extends ConsumerWidget {
     );
   }
 
-  String _contentTypeLabel(String type) => switch (type) {
-        'text' => 'Truyện text',
-        'visual' => 'Bách khoa',
-        'manga' => 'Manga',
-        'chat' => 'Truyện chat',
-        'video' => 'Video YouTube',
-        _ => type,
-      };
-
-  /// Subtitle mỗi dòng chương: loại truyện + số từ (+ lượt đọc nếu có).
-  /// Backend đã trả sẵn `word_count` / `view_count` trong ChapterMeta —
-  /// không cần đẩy gì thêm, UI chỉ hiển thị.
+  /// Subtitle mỗi dòng chương: số từ (+ lượt đọc nếu có). Loại truyện
+  /// ("Truyện chữ") đã hiện ở badge trên đầu trang — lặp lại ở từng
+  /// chương là thừa. Backend trả sẵn `word_count` / `view_count` trong
+  /// ChapterMeta — không cần đẩy gì thêm, UI chỉ hiển thị.
   String _chapterSubtitle(StorySummary story, ChapterSummary c) {
-    final typeLabel = _contentTypeLabel(story.contentTypes.isNotEmpty
-        ? story.contentTypes.first
-        : 'text');
-    final parts = <String>[typeLabel];
+    final parts = <String>[];
     if (c.wordCount > 0) parts.add('${_StoryStats._fmtCount(c.wordCount)} từ');
     if (c.viewCount > 0) {
       parts.add('${_StoryStats._fmtCount(c.viewCount)} đọc');
@@ -826,11 +819,10 @@ class _StoryDetailBody extends ConsumerWidget {
             : 'text',
       );
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Đã xoá khỏi tủ truyện'),
-            duration: Duration(seconds: 1),
-          ),
+        showAppSnackBar(
+          context,
+          'Đã xoá khỏi tủ truyện',
+          duration: const Duration(seconds: 1),
         );
       }
       return;
@@ -848,15 +840,12 @@ class _StoryDetailBody extends ConsumerWidget {
           : 'text',
     );
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            currentListType == chosen
-                ? 'Đã xoá khỏi tủ truyện'
-                : 'Đã thêm vào "$label"',
-          ),
-          duration: const Duration(seconds: 1),
-        ),
+      showAppSnackBar(
+        context,
+        currentListType == chosen
+            ? 'Đã xoá khỏi tủ truyện'
+            : 'Đã thêm vào "$label"',
+        duration: const Duration(seconds: 1),
       );
     }
   }

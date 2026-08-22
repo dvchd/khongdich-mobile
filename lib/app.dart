@@ -104,34 +104,33 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
     // Wait for ApiClient to be ready before rendering the router.
     final apiAsync = ref.watch(apiClientProvider);
 
-    // Màn hình hiện tại có bottom nav không → đặt now-playing bar lên trên
-    // thay vì đè lên nav (cập nhật real-time khi đổi route).
-    final hasBottomNav = locationHasBottomNav(ref.watch(topLocationProvider));
-
     return MaterialApp.router(
       title: 'Không Dịch',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
-      // Global TTS now-playing bar — overlay ở gốc app, trên MỌI màn hình
-      // (reader, story detail, home...) bất kể TTS đang phục vụ chương nào.
+      // Global TTS now-playing bar — bar ở VỊ TRÍ THỰC ở đáy (không còn
+      // nổi che nội dung): màn hình KHÔNG có bottom nav (reader, settings,
+      // comments…) được xếp thành Column [nội dung, bar] nên Scaffold tự
+      // thu hẹp lại — không bao giờ đè nội dung/SnackBar. Màn hình CÓ
+      // bottom nav (4 tab shell, story detail) tự đặt bar trong slot
+      // bottomNavigationBar của chúng (nằm trên menu) — root không render
+      // trùng (xem MainShell / story detail).
+      //
+      // hasBottomNav thay đổi real-time theo topLocationProvider: mở
+      // reader từ shell → root bar xuất hiện (shell bar chìm dưới route
+      // phủ kín), quay lại shell → ngược lại.
       builder: (context, child) {
-        final bottomSafe = MediaQuery.paddingOf(context).bottom;
-        final barBottom =
-            (hasBottomNav ? kBottomNavHeight + bottomSafe : bottomSafe) + 8;
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            if (child != null) child,
-            Positioned(
-              left: 8,
-              right: 8,
-              bottom: barBottom,
-              child: const TtsNowPlayingBar(),
-            ),
-          ],
-        );
+        if (!locationHasBottomNav(ref.watch(topLocationProvider))) {
+          return Column(
+            children: [
+              Expanded(child: child ?? const SizedBox()),
+              const TtsNowPlayingBar(bottomSafe: true),
+            ],
+          );
+        }
+        return child ?? const SizedBox();
       },
       routerConfig: apiAsync.when(
         loading: () => _splashRouter(),

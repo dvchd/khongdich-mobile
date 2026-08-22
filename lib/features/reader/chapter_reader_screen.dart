@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/network/api_client.dart';
+import '../../core/widgets/app_snack_bar.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/chapter_content.dart';
 import '../../models/comment.dart';
@@ -14,7 +15,7 @@ import '../../repositories/story_repository.dart';
 import '../../services/chapter_cache_service.dart';
 import '../story/story_detail_screen.dart' show vipStatusProvider;
 import '../tts/tts_audio_handler.dart';
-import '../tts/tts_control_panel.dart';
+import '../tts/tts_control_panel.dart' show showTtsControlPanel;
 import '../comments/segment_composer_sheet.dart';
 import 'chapter_provider.dart';
 import 'chapter_tts_support.dart';
@@ -222,16 +223,11 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     String plainText,
   ) async {
     // Capture UI handles before any await (lint + safety).
-    final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
     final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (!mounted) return;
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('Đăng nhập để bình luận đoạn và góp ý.'),
-        ),
-      );
+      showAppSnackBar(context, 'Đăng nhập để bình luận đoạn và góp ý.');
       router.push('/auth');
       return;
     }
@@ -250,11 +246,7 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
       _ => null,
     };
     if (message == null) return;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-      );
+    showAppSnackBar(context, message, duration: const Duration(seconds: 2));
     if (result is CommentPostResult) {
       router.push('/chapter-comments/${chapter.id}', extra: chapter.title);
     }
@@ -300,16 +292,10 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
           await handler.play();
         }
       }
-      // Open the full TTS control panel as a bottom sheet.
+      // Open the full TTS control panel as a bottom sheet — qua helper
+      // để now-playing bar ẩn khi panel mở (xem showTtsControlPanel).
       if (mounted) {
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          isDismissible: true, // cho phép tap ngoài / back để tắt
-          enableDrag: true, // cho phép swipe down để tắt
-          showDragHandle: true, // vẽ handle + nút X góc phải
-          builder: (_) => const TtsControlPanel(),
-        );
+        unawaited(showTtsControlPanel(context, ref));
       }
     } catch (e) {
       if (mounted) {

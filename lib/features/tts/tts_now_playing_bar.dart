@@ -6,16 +6,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/router/app_router.dart' show appRouterProvider;
 import 'tts_audio_handler.dart';
-import 'tts_control_panel.dart';
+import 'tts_bar_state.dart';
+import 'tts_control_panel.dart' show showTtsControlPanel;
 import 'tts_mini_player.dart' show nextSpeedInCycle;
 
 /// Thanh "now playing" TOÀN CỤC cho TTS.
 ///
 /// Thay thế mini player cũ ghim trong `ReaderBody` (chỉ hiện khi đang đọc
 /// đúng chương mà TTS phục vụ — đổi chương là bar biến mất, điều hướng ra
-/// ngoài reader cũng không biết đang nghe chương nào). Bar này được đặt ở
-/// gốc app (MaterialApp.builder overlay) nên hiển thị trên MỌI màn hình
-/// khi TTS đang phục vụ một chương:
+/// ngoài reader cũng không biết đang nghe chương nào). Bar được đặt vào
+/// LUỒNG LAYOUT ở đáy (không phải overlay nổi) nên mọi màn hình có nó
+/// trong cây khi TTS đang phục vụ một chương:
+///
+///   - Route KHÔNG có bottom nav (reader, settings…) → root app xếp
+///     Column [nội dung, bar] — Scaffold tự thu hẹp, không đè nội dung.
+///   - Route CÓ bottom nav (4 tab shell, story detail) → bar nằm trong
+///     slot bottomNavigationBar, TRÊN menu (Column [bar, AppBottomNav]).
 ///
 ///   - Luôn cho biết đang nghe truyện/chương nào (story + "Chương N").
 ///   - Điều khiển nhanh: play/pause, tốc độ (xoay vòng), stop, dismiss (X).
@@ -23,9 +29,14 @@ import 'tts_mini_player.dart' show nextSpeedInCycle;
 ///   - Nút sách → nhảy thẳng tới reader của chương đang nghe.
 ///
 /// Ẩn khi: chưa có handler / chưa load chương nào / user đã bấm X
-/// "dừng hẳn và đóng" (dismissedChapterId).
+/// "dừng hẳn và đóng" (dismissedChapterId) / có modal sheet đang mở.
 class TtsNowPlayingBar extends ConsumerStatefulWidget {
-  const TtsNowPlayingBar({super.key});
+  const TtsNowPlayingBar({super.key, this.bottomSafe = false});
+
+  /// Che đáy màn hình (safe-area gesture bar) bằng padding dưới — chỉ
+  /// dùng khi bar đứng cuối layout (root Column). Trong slot
+  /// bottomNavigationBar thì menu bên dưới lo phần safe này.
+  final bool bottomSafe;
 
   @override
   ConsumerState<TtsNowPlayingBar> createState() => _TtsNowPlayingBarState();
@@ -117,14 +128,9 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
     final navigatorContext =
         ref.read(appRouterProvider).routerDelegate.navigatorKey.currentContext;
     if (navigatorContext == null) return;
-    showModalBottomSheet(
-      context: navigatorContext,
-      isScrollControlled: true,
-      isDismissible: true,
-      enableDrag: true,
-      showDragHandle: true,
-      builder: (_) => const TtsControlPanel(),
-    );
+    // showTtsControlPanel ẩn bar trong lúc panel mở (bar nổi trên Navigator
+    // nên modal sheet không che được nó), đóng panel thì bar hiện lại.
+    unawaited(showTtsControlPanel(navigatorContext, ref));
   }
 
   Future<void> _cycleSpeed(TtsAudioHandler handler) async {
@@ -159,10 +165,14 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
     // được stream khi handler mới xuất hiện).
     if (handler != null) _ensureSubscriptions(handler);
     // Ẩn bar khi: chưa có handler / chưa load chương nào / user đã bấm
-    // X "dừng hẳn và đóng" (dismiss).
+    // X "dừng hẳn và đóng" (dismiss) / có modal sheet đang mở (bar nằm
+    // TRÊN Navigator nên không nên đè lên sheet — do TtsBarRouteObserver
+    // cập nhật sheetOpen).
+    final sheetOpen = ref.watch(ttsBarStateProvider).sheetOpen;
     final visible = handler != null &&
         handler.currentChapterId != null &&
-        handler.dismissedChapterId != handler.currentChapterId;
+        handler.dismissedChapterId != handler.currentChapterId &&
+        !sheetOpen;
 
     final Widget child;
     if (!visible) {
@@ -183,88 +193,63 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
           : (rawTitle.isNotEmpty ? rawTitle : 'Chương ${number ?? ''}');
       final storyTitle = media?.album ?? '';
 
-      child = Material(
-        key: const ValueKey('tts-now-playing-bar'),
-        color: scheme.surfaceContainerHigh,
-        elevation: 8,
-        borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-          child: Row(
-            children: [
-              IconButton(
-                icon: Icon(
-                  playing
-                      ? Icons.pause_circle_filled
-                      : Icons.play_circle_filled,
-                  size: 32,
-                  color: scheme.primary,
+      // Margin ngoài: 8 hai bên + 4 trên (dáng pill nổi); dưới = khoảng
+      // nghỉ phía trên gesture bar của hệ điều hành (chỉ khi bar đứng cuối
+      // layout — slot bottomNavigationBar thì menu bên dưới đã tự xử lý
+      // safe-area, chỉ cần khe 4px đằm giữa bar và menu).
+      child = Padding(
+        padding: EdgeInsets.only(
+          left: 8,
+          right: 8,
+          top: 4,
+          bottom: widget.bottomSafe
+              ? MediaQuery.paddingOf(context).bottom
+              : 4,
+        ),
+        child: Material(
+          key: const ValueKey('tts-now-playing-bar'),
+          color: scheme.surfaceContainerHigh,
+          elevation: 8,
+          borderRadius: BorderRadius.circular(16),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: Icon(
+                    playing
+                        ? Icons.pause_circle_filled
+                        : Icons.play_circle_filled,
+                    size: 32,
+                    color: scheme.primary,
+                  ),
+                  onPressed: () {
+                    if (playing) {
+                      handler.pause();
+                    } else {
+                      handler.play();
+                    }
+                  },
                 ),
-                onPressed: () {
-                  if (playing) {
-                    handler.pause();
-                  } else {
-                    handler.play();
-                  }
-                },
-              ),
-              Expanded(
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () => _openPanel(handler),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 4,
-                      horizontal: 4,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (storyTitle.isNotEmpty)
-                          Text(
-                            storyTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: scheme.onSurface.withValues(
-                                    alpha: 0.6,
-                                  ),
-                                ),
-                          ),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: ratio,
-                            minHeight: 4,
-                            backgroundColor: scheme.primary.withValues(
-                              alpha: 0.12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.headphones,
-                              size: 13,
-                              color: scheme.onSurface.withValues(alpha: 0.6),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                chapterLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.labelSmall,
-                              ),
-                            ),
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => _openPanel(handler),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 4,
+                        horizontal: 4,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (storyTitle.isNotEmpty)
                             Text(
-                              total > 0
-                                  ? 'Đoạn ${index + 1}/$total'
-                                  : 'Đang đọc',
+                              storyTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
                                     color: scheme.onSurface.withValues(
@@ -272,58 +257,95 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
                                     ),
                                   ),
                             ),
-                          ],
-                        ),
-                      ],
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(2),
+                            child: LinearProgressIndicator(
+                              value: ratio,
+                              minHeight: 4,
+                              backgroundColor: scheme.primary.withValues(
+                                alpha: 0.12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.headphones,
+                                size: 13,
+                                color: scheme.onSurface.withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  chapterLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.labelSmall,
+                                ),
+                              ),
+                              Text(
+                                total > 0
+                                    ? 'Đoạn ${index + 1}/$total'
+                                    : 'Đang đọc',
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: scheme.onSurface.withValues(
+                                        alpha: 0.6,
+                                      ),
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              InkWell(
-                onTap: () => _cycleSpeed(handler),
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 6,
-                  ),
-                  child: Text(
-                    '${handler.speed}x',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          color: scheme.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
+                InkWell(
+                  onTap: () => _cycleSpeed(handler),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    child: Text(
+                      '${handler.speed}x',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
                   ),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.menu_book_outlined, size: 22),
-                onPressed: () => _goToChapter(handler),
-              ),
-              IconButton(
-                icon: const Icon(Icons.stop_circle_outlined, size: 24),
-                onPressed: () => handler.stopAutoAdvance(),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 22),
-                onPressed: () => handler.dismiss(),
-              ),
-            ],
+                IconButton(
+                  icon: const Icon(Icons.menu_book_outlined, size: 22),
+                  onPressed: () => _goToChapter(handler),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop_circle_outlined, size: 24),
+                  onPressed: () => handler.stopAutoAdvance(),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 22),
+                  onPressed: () => handler.dismiss(),
+                ),
+              ],
+            ),
           ),
         ),
       );
     }
 
     // AnimatedSwitcher nằm ngoài cả hai nhánh (hidden/shown) để bar trượt
-    // + fade vào/ra mượt thay vì xuất hiện đột ngột.
-    //
-    // ConstrainedBox maxHeight bắt buộc: bar đặt trong Positioned chỉ có
-    // left/right/bottom (không top/height) → height nhận UNBOUNDED. IconButton
-    // M3 với constraints unbounded tự phóng to 100000x100000 (hằng số nội bộ
-    // _kUnboundedSize) → bar cao 100008px, đẩy toàn bộ ra khỏi màn hình.
-    // Giới hạn maxHeight để Row tính chiều cao tự nhiên (~56dp).
+    // + fade vào/ra mượt thay vì xuất hiện đột ngột. Padding đáy
+    // (safe-area) chỉ tồn tại khi bar HIỂN THỊ — ẩn thì bar là SizedBox
+    // 0px nên layout thu về, modal sheet / snackbar chạm đáy thật.
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 72),
+      constraints: const BoxConstraints(maxHeight: 108),
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 220),
         reverseDuration: const Duration(milliseconds: 180),

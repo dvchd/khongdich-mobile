@@ -10,6 +10,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../network/api_client.dart';
+import 'app_snack_bar.dart';
 
 /// Share sheet for a story — mirrors the web story-detail's share
 /// affordances (copy link + QR code) with native clipboard/snackbar UX.
@@ -74,14 +75,11 @@ Future<void> showStoryShareSheet(
                       await Clipboard.setData(ClipboardData(text: url));
                       if (!sheetContext.mounted) return;
                       Navigator.of(sheetContext).pop();
-                      ScaffoldMessenger.of(context)
-                        ..hideCurrentSnackBar()
-                        ..showSnackBar(
-                          const SnackBar(
-                            content: Text('Đã sao chép link'),
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
+                      showAppSnackBar(
+                        context,
+                        'Đã sao chép link',
+                        duration: const Duration(seconds: 2),
+                      );
                     },
                     icon: const Icon(Icons.link, size: 18),
                     label: const Text('Sao chép link'),

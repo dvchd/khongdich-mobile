@@ -97,24 +97,30 @@ class MarkdownRenderer extends StatefulWidget {
     this.activeBlock,
     this.baseBlockIndex = 0,
     this.onParagraphLongPress,
+    this.globalIndices,
   });
 
   final List<Block> blocks;
   final ReaderTheme theme;
   final void Function(Uri url)? onLinkTap;
 
-  /// Index of the block currently being read by TTS (GLOBAL index into
-  /// the chapter's block list — subtract [baseBlockIndex] to map into
-  /// [blocks]). The renderer wraps that block in a yellow-tinted
-  /// background so the user can see where the audio is up to. Null when
-  /// TTS is idle or the active chunk doesn't map to any block (e.g.
-  /// horizontal rule). Listenable cho phép highlight đổi mà không rebuild
-  /// cả cây widget.
+  /// Index của block đang được TTS đọc (GLOBAL index vào danh sách block
+  /// gốc của chương — subtract [baseBlockIndex] để map vào [blocks]).
+  /// Renderer bọc block đó trong nền vàng để user thấy audio đang đọc
+  /// tới đâu. Null khi TTS idle hoặc chunk không map vào block nào
+  /// (vd. horizontal rule). Listenable cho phép highlight đổi mà không
+  /// rebuild cả cây widget.
   final ValueListenable<int?>? activeBlock;
 
-  /// Global block index of [blocks].first — dùng khi render một page con
+  /// Global block index của [blocks].first — dùng khi render một page con
   /// của chương (page mode chia blocks thành nhiều trang).
   final int baseBlockIndex;
+
+  /// Global index của TỪNG block trong [blocks] — dùng khi page mode đã
+  /// chẻ paragraph quá cao thành nhiều paragraph con (indices trong
+  /// [blocks] lúc đó không còn liên tục, `baseBlockIndex + i` sai).
+  /// Khi có [globalIndices] thì nó được ưu tiên hơn [baseBlockIndex].
+  final List<int>? globalIndices;
 
   /// Fired when a paragraph block is long-pressed. Receives the block's
   /// normalized plain text (used as the paragraph quote for bình luận
@@ -182,7 +188,9 @@ class _MarkdownRendererState extends State<MarkdownRenderer> {
   Widget _maybeHighlight(int index, Widget child) {
     final activeBlock = widget.activeBlock;
     if (activeBlock == null) return child;
-    final globalIndex = widget.baseBlockIndex + index;
+    final globalIndex = widget.globalIndices != null
+        ? widget.globalIndices![index]
+        : widget.baseBlockIndex + index;
     return ValueListenableBuilder<int?>(
       valueListenable: activeBlock,
       builder: (context, active, child) {

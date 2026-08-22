@@ -22,6 +22,10 @@ sealed class ChapterContent {
     required this.prevChapter,
     required this.nextChapter,
     required this.updatedAt,
+    this.commentCount,
+    this.label,
+    this.nextLabel,
+    this.prevLabel,
   });
 
   final String id;
@@ -38,6 +42,26 @@ sealed class ChapterContent {
   final int? nextChapter;
   final DateTime updatedAt;
 
+  /// Tổng bình luận (comments + segment) của chương — backend trả kèm
+  /// trong chapter API; null khi offline/tải batch → ẩn số trên icon.
+  final int? commentCount;
+
+  /// Nhãn hiển thị chương này theo rule web (`volume.rs::
+  /// chapter_display_label`): "Q2·Ch.3" khi có quyển, "Ch.3" khi không
+  /// chia quyển, số trần cho visual. Null ở cache offline cũ → UI tự
+  /// fallback "Ch. N".
+  final String? label;
+
+  /// Nhãn hiển thị của CHƯƠNG KẾ TIẾP — nút cuối reader hiện "Q2·Ch.4"
+  /// để user biết sắp chuyển tới chương nào. Null khi hết truyện /
+  /// offline / cache cũ.
+  final String? nextLabel;
+
+  /// Nhãn hiển thị của CHƯƠNG LIỀN TRƯỚC — nav cuối reader mirror web
+  /// `.ch-nav`: "← Q1·Ch.3" biết mình sẽ quay về chương mấy. Null khi
+  /// chương đầu truyện / offline / cache cũ.
+  final String? prevLabel;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'story_id': storyId,
@@ -52,6 +76,9 @@ sealed class ChapterContent {
         'prev_chapter': prevChapter,
         'next_chapter': nextChapter,
         'updated_at': updatedAt.toIso8601String(),
+        if (label != null) 'label': label,
+        if (nextLabel != null) 'next_label': nextLabel,
+        if (prevLabel != null) 'prev_label': prevLabel,
       };
 
   /// Construct the right variant from a `ChapterContentResponse` JSON
@@ -84,6 +111,10 @@ class _CommonFields {
   final int? prevChapter;
   final int? nextChapter;
   final DateTime updatedAt;
+  final int? commentCount;
+  final String? label;
+  final String? nextLabel;
+  final String? prevLabel;
 
   const _CommonFields({
     required this.id,
@@ -99,6 +130,10 @@ class _CommonFields {
     required this.prevChapter,
     required this.nextChapter,
     required this.updatedAt,
+    this.commentCount,
+    this.label,
+    this.nextLabel,
+    this.prevLabel,
   });
 
   factory _CommonFields.fromJson(Map<String, dynamic> json) => _CommonFields(
@@ -117,6 +152,10 @@ class _CommonFields {
         updatedAt:
             DateTime.tryParse(json['updated_at'] as String? ?? '') ??
                 DateTime.now(),
+        commentCount: (json['comment_count'] as num?)?.toInt(),
+        label: (json['label'] as String?)?.takeIfNonEmpty,
+        nextLabel: (json['next_label'] as String?)?.takeIfNonEmpty,
+        prevLabel: (json['prev_label'] as String?)?.takeIfNonEmpty,
       );
 }
 
@@ -138,6 +177,10 @@ class TextChapterContent extends ChapterContent {
     required super.prevChapter,
     required super.nextChapter,
     required super.updatedAt,
+    super.commentCount,
+    super.label,
+    super.nextLabel,
+    super.prevLabel,
     required this.contentMarkdown,
     required this.contentFormat,
     this.authorNote,
@@ -168,6 +211,10 @@ class TextChapterContent extends ChapterContent {
         prevChapter: c.prevChapter,
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
+        commentCount: c.commentCount,
+        label: c.label,
+        nextLabel: c.nextLabel,
+        prevLabel: c.prevLabel,
         contentMarkdown: json['content_markdown'] as String? ?? '',
         contentFormat: json['content_format'] as String? ?? 'markdown',
         authorNote: json['author_note'] as String?,
@@ -199,6 +246,10 @@ class VisualChapterContent extends ChapterContent {
     required super.prevChapter,
     required super.nextChapter,
     required super.updatedAt,
+    super.commentCount,
+    super.label,
+    super.nextLabel,
+    super.prevLabel,
     required this.contentMarkdown,
     required this.contentFormat,
     this.authorNote,
@@ -231,6 +282,10 @@ class VisualChapterContent extends ChapterContent {
         prevChapter: c.prevChapter,
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
+        commentCount: c.commentCount,
+        label: c.label,
+        nextLabel: c.nextLabel,
+        prevLabel: c.prevLabel,
         contentMarkdown: json['content_markdown'] as String? ?? '',
         contentFormat: json['content_format'] as String? ?? 'markdown',
         authorNote: json['author_note'] as String?,
@@ -299,6 +354,10 @@ class MangaChapterContent extends ChapterContent {
     required super.prevChapter,
     required super.nextChapter,
     required super.updatedAt,
+    super.commentCount,
+    super.label,
+    super.nextLabel,
+    super.prevLabel,
     required this.images,
   }) : super(contentType: 'manga');
 
@@ -325,6 +384,10 @@ class MangaChapterContent extends ChapterContent {
         prevChapter: c.prevChapter,
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
+        commentCount: c.commentCount,
+        label: c.label,
+        nextLabel: c.nextLabel,
+        prevLabel: c.prevLabel,
         images: [
           for (final p in (json['images'] as List? ?? const []))
             MangaPage.fromJson(p as Map<String, dynamic>),
@@ -408,6 +471,10 @@ class ChatChapterContent extends ChapterContent {
     required super.prevChapter,
     required super.nextChapter,
     required super.updatedAt,
+    super.commentCount,
+    super.label,
+    super.nextLabel,
+    super.prevLabel,
     required this.participants,
     required this.messages,
   }) : super(contentType: 'chat');
@@ -436,6 +503,10 @@ class ChatChapterContent extends ChapterContent {
         prevChapter: c.prevChapter,
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
+        commentCount: c.commentCount,
+        label: c.label,
+        nextLabel: c.nextLabel,
+        prevLabel: c.prevLabel,
         participants: [
           for (final p in (json['participants'] as List? ?? const []))
             ChatParticipant.fromJson(p as Map<String, dynamic>),
@@ -487,6 +558,10 @@ class VideoChapterContent extends ChapterContent {
     required super.prevChapter,
     required super.nextChapter,
     required super.updatedAt,
+    super.commentCount,
+    super.label,
+    super.nextLabel,
+    super.prevLabel,
     required this.video,
     this.captionMarkdown,
   }) : super(contentType: 'video');
@@ -515,6 +590,10 @@ class VideoChapterContent extends ChapterContent {
         prevChapter: c.prevChapter,
         nextChapter: c.nextChapter,
         updatedAt: c.updatedAt,
+        commentCount: c.commentCount,
+        label: c.label,
+        nextLabel: c.nextLabel,
+        prevLabel: c.prevLabel,
         video: json['video'] != null
             ? VideoInfo.fromJson(json['video'] as Map<String, dynamic>)
             : const VideoInfo(provider: 'youtube', videoId: ''),

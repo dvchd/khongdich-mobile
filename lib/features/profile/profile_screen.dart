@@ -199,12 +199,28 @@ class TrustScoreBadge extends StatelessWidget {
         ),
         const SizedBox(width: 2),
         // Nút ? giải thích — mirror .trust-info-btn (web dùng Alpine
-        // toggle; mobile dùng Tooltip).
-        Tooltip(
-          message: 'Điểm uy tín phản ánh lịch sử đăng truyện và chấp hành '
-              'quy định của bạn trên Không Dịch. Tài khoản mới bắt đầu ở '
-              '50/100 — đăng truyện/chương chất lượng giúp điểm tăng dần, '
-              'vi phạm quy định sẽ bị trừ.',
+        // toggle; Tooltip của Flutter trên mobile chỉ hiện khi ấn GIỮ,
+        // user muốn tap 1 lần là hiện → dùng dialog).
+        GestureDetector(
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('🎯 Điểm uy tín'),
+              content: const Text(
+                'Điểm uy tín phản ánh lịch sử đăng truyện và chấp hành '
+                'quy định của bạn trên Không Dịch. Tài khoản mới bắt đầu ở '
+                '50/100 — đăng truyện/chương chất lượng giúp điểm tăng dần, '
+                'vi phạm quy định sẽ bị trừ.',
+                style: TextStyle(fontSize: 14, height: 1.5),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Đóng'),
+                ),
+              ],
+            ),
+          ),
           child: Container(
             width: 18,
             height: 18,

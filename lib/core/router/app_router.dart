@@ -34,7 +34,8 @@ import '../../features/settings/settings_screen.dart';
 import '../../features/story/story_detail_screen.dart';
 import '../../features/story/story_reviews_screen.dart';
 import '../../features/tts/tts_audio_handler.dart';
-import '../../features/tts/tts_control_panel.dart';
+import '../../features/tts/tts_bar_state.dart';
+import '../../features/tts/tts_control_panel.dart' show showTtsControlPanel;
 import '../../core/database/app_database.dart';
 import '../../core/network/api_client.dart';
 import '../../models/chapter_content.dart';
@@ -43,8 +44,13 @@ import '../../services/manga_image_downloader.dart';
 import '../shell/main_shell.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
+  // Theo dõi modal sheet/dialog → now-playing bar ẩn khi sheet mở (bar
+  // nổi trên Navigator nên sheet không che được bar, bar sẽ đè lên đáy
+  // sheet). Xem TtsBarRouteObserver.
+  final ttsBarObserver = TtsBarRouteObserver(ref.read(ttsBarStateProvider));
   final router = GoRouter(
     initialLocation: '/home',
+    observers: [ttsBarObserver],
     routes: [
       // Bottom-nav shell: 4 tabs giữ STATE khi chuyển tab (trước đây
       // context.go destroy + remount từng tab → Home refetch + spinner
@@ -276,10 +282,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 /// cho các overlay toàn cục (vd. TtsNowPlayingBar) quyết định vị trí,
 /// ví dụ có cần chừa chỗ cho bottom nav không.
 final topLocationProvider = StateProvider<String>((ref) => '/home');
-
-/// Chiều cao bottom nav (Material 3 NavigationBar) — dùng để đặt
-/// now-playing bar lên trên khi màn hình hiện tại có nav.
-const double kBottomNavHeight = 80.0;
 
 /// Màn hình nào có bottom nav hiển thị: 4 tab của MainShell + story
 /// detail online/offline (chúng tự vẽ AppBottomNav trong Scaffold của
@@ -683,14 +685,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         }
       }
       if (mounted) {
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          isDismissible: true,
-          enableDrag: true,
-          showDragHandle: true,
-          builder: (_) => const TtsControlPanel(),
-        );
+        unawaited(showTtsControlPanel(context, ref));
       }
     } catch (e) {
       if (mounted) {

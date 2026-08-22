@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/markdown/markdown.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/widgets/report_sheet.dart';
 import '../../../models/chapter_content.dart';
 import '../reader_settings_provider.dart';
@@ -102,12 +103,17 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   /// đã fire event nào (mở chương xong chạm ngay "Chia sẻ" vẫn phải chừa
   /// vùng — trước đây để false nên chạm đầu chương bị vùng tap nuốt).
   bool _atTop = true;
+  /// Trang hiện tại trong chế độ lật trang — trang 1 (index 0) cũng phải
+  /// chừa vùng trên cho header "Chia sẻ / Báo cáo" (tap-zones overlay nằm
+  /// trên nội dung, không chừa thì nuốt mọi chạm của header).
+  int _pageModeIndex = 0;
   /// Chiều cao vùng footer cuối chương chừa cho tap-zones (~Hết chương +
-  /// nút + padding). Lớn hơn một chút để chừa thừa cũng vô hại.
+  /// nút "Chương kế tiếp" + padding). Lớn hơn một chút để chừa thừa cũng
+  /// vô hại.
   static const _footerBottomInset = 190.0;
   /// Chiều cao header đầu chương (tiêu đề 1-2 dòng + meta + chia sẻ/báo
   /// cáo). Phải đủ lớn để cả header nằm trong vùng chừa — trước đây 110
-  /// còn nhỏ hơn header thật nên chạm "Chia sẻ" vẫn bị vùng tap giữa nuốt.
+  /// còn nhỏ hơn header thật nên chạm "Chia sẻ" vẫn bị vùng tap nuốt.
   static const _headerTopInset = 160.0;
 
   @override
@@ -115,6 +121,9 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     super.initState();
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
+    // Theo dõi trang hiện tại (lật trang) — header đầu trang 1 được
+    // chừa khỏi tap-zones như ở chế độ cuộn dọc (xem _pageModeIndex).
+    _pageController.addListener(_onPageController);
   }
 
   @override
@@ -130,6 +139,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       _atBottom = false;
       // Chương mới mở ở đầu trang → chừa vùng header ngay.
       _atTop = true;
+      _pageModeIndex = 0;
     }
   }
 
@@ -137,8 +147,19 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _pageController.removeListener(_onPageController);
     _pageController.dispose();
     super.dispose();
+  }
+
+  /// Trang lật đổi (swipe / tap cạnh / TTS auto-flip) → setState cho
+  /// tap-zones biết vùng nào cần chừa (trang-1: bỏ chạm vào header).
+  void _onPageController() {
+    if (!_pageController.hasClients) return;
+    final page = _pageController.page?.round() ?? 0;
+    if (page != _pageModeIndex) {
+      setState(() => _pageModeIndex = page);
+    }
   }
 
   void _onScroll() {
@@ -267,28 +288,39 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         onAllRevealed: widget.chapter is ChatChapterContent
             ? _onAllRevealed
             : null,
-        // Block "Hết chương — Chương kế tiếp" nằm TRONG nội dung scroll
-        // (thay pill float đếm ngược từng che chữ cuối). Chỉ áp dụng cho
-        // text/visual (chế độ cuộn dọc) — bấm mới chuyển chương, không
-        // auto-lật.
+        // Block cuối chương — mirror web `.ch-nav`: 2 nút song song
+        // "← Ch.3" (chương trước) / "Ch.5 →" (chương kế) hiện đúng nhãn
+        // chương mấy (Q·Ch khi chia quyển). Nằm TRONG nội dung scroll
+        // (thay pill float đếm ngược từng che chữ cuối). Bấm mới chuyển
+        // chương — không auto-lật. Chỉ áp dụng text/visual, cuộn dọc.
         footer: widget.settings.scrollMode == ReaderScrollMode.vertical
             ? _ChapterEndFooter(
+                hasPrev: widget.onPrev != null,
                 hasNext: widget.onNext != null,
+                prevLabel: widget.chapter.prevLabel ??
+                    (widget.chapter.prevChapter != null
+                        ? 'Ch. ${widget.chapter.prevChapter}'
+                        : null),
+                nextLabel: widget.chapter.nextLabel ??
+                    (widget.chapter.nextChapter != null
+                        ? 'Ch. ${widget.chapter.nextChapter}'
+                        : null),
+                onPrev: widget.onPrev,
                 onNext: widget.onNext,
                 textColor:
                     readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
               )
             : null,
         // Header chương đầu nội dung — mirror web mobile (ch-head +
-        // ch-meta): "Ch. N: Title" + thời gian đọc · số từ · Chia sẻ ·
-        // Báo cáo. Nằm trong luồng scroll nên cuộn xuống là trôi đi.
-        header: widget.settings.scrollMode == ReaderScrollMode.vertical
-            ? _ChapterHeader(
-                chapter: widget.chapter,
-                textColor:
-                    readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
-              )
-            : null,
+        // ch-meta): "Ch. N: Title" (nhãn Q·Ch khi truyện chia quyển) +
+        // thời gian đọc · số từ · Chia sẻ · Báo cáo. Cuộn dọc: nằm trong
+        // luồng scroll nên cuộn xuống là trôi đi. Lật trang:
+        // TextChapterView tự đặt ở đầu trang 1.
+        header: _ChapterHeader(
+          chapter: widget.chapter,
+          textColor:
+              readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
+        ),
       ),
     );
 
@@ -359,11 +391,12 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                           ? _footerBottomInset
                           : 0,
                       // Ở đầu chương: chừa vùng trên cho header (Chia sẻ /
-                      // Báo cáo) — không chừa thì chạm vào header bị vùng
-                      // tap trái/giữa bắt → nhảy chương/settings.
-                      topInset: _atTop && !isPageMode
-                          ? _headerTopInset
-                          : 0,
+                      // Báo cáo). Cuộn dọc: khi scroll ở đỉnh. Lật trang:
+                      // khi đang ở trang 1 (index 0) — header cũng nằm ở
+                      // đầu nội dung trang đầu tiên.
+                      topInset: isPageMode
+                          ? (_pageModeIndex == 0 ? _headerTopInset : 0)
+                          : (_atTop ? _headerTopInset : 0),
                       onTap: _onTapZone,
                     )),
                 ],
@@ -430,23 +463,20 @@ class _ChapterHeader extends StatelessWidget {
         '$baseUrl/truyen/${chapter.storySlug}/chuong/${chapter.chapterNumber}';
     await Clipboard.setData(ClipboardData(text: url));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Đã sao chép link chương'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+    showAppSnackBar(context, 'Đã sao chép link chương',
+        duration: const Duration(seconds: 2));
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final muted = textColor.withValues(alpha: 0.55);
-    final title = chapter.title.isEmpty
-        ? 'Ch. ${chapter.chapterNumber}'
-        : 'Ch. ${chapter.chapterNumber}: ${chapter.title}';
+    // Nhãn chương theo rule web: "Q2·Ch.3" khi truyện chia quyển, "Ch.3"
+    // khi không, số trần cho visual (backend trả `label`; cache cũ tự
+    // fallback "Ch. N").
+    final label =
+        chapter.label ?? 'Ch. ${chapter.chapterNumber}';
+    final title = chapter.title.isEmpty ? label : '$label: ${chapter.title}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
       child: Column(
@@ -517,18 +547,32 @@ class _ChapterHeader extends StatelessWidget {
   }
 }
 
-/// Block "Hết chương — Chương kế tiếp" nằm TRONG nội dung scroll (thay
-/// pill float đếm ngược từng che mất chữ cuối). Cuộn tới cuối là thấy
-/// tự nhiên, BẤM mới chuyển chương — không auto-lật nữa (trước đây đếm
-/// ngược 5s có thể nhảy sang chương kế khi user chưa đọc xong đoạn
-/// cuối). Chương cuối cùng (không có chương kế) chỉ hiện "Hết truyện".
+/// Block cuối chương nằm TRONG nội dung scroll (thay pill float đếm
+/// ngược từng che mất chữ cuối). Cuộn tới cuối là thấy tự nhiên, BẤM mới
+/// chuyển chương — không auto-lật nữa (trước đây đếm ngược 5s có thể nhảy
+/// sang chương kế khi user chưa đọc xong đoạn cuối). Mirror web `.ch-nav`
+/// (templates/story/chapter.html): 2 nút song song "← Ch.3" (trước) /
+/// "Ch.5 →" (kế), mỗi nút hiện đúng nhãn chương mấy ("Q2·Ch.1" khi chia
+/// quyển — backend trả `prev_label`/`next_label`); offline/cache cũ thì
+/// fallback "Ch. N". Chương đầu/cuối thì ẩn nút tương ứng, hết truyện
+/// chỉ còn "Hết truyện".
 class _ChapterEndFooter extends StatelessWidget {
   const _ChapterEndFooter({
+    required this.hasPrev,
     required this.hasNext,
+    this.prevLabel,
+    this.nextLabel,
+    required this.onPrev,
     required this.onNext,
     required this.textColor,
   });
+  final bool hasPrev;
   final bool hasNext;
+
+  /// Nhãn chương trước / kế ("Q1·Ch.3") — null khi offline/cache cũ.
+  final String? prevLabel;
+  final String? nextLabel;
+  final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final Color textColor;
 
@@ -543,7 +587,7 @@ class _ChapterEndFooter extends StatelessWidget {
           const SizedBox(height: 20),
           Center(
             child: Text(
-              hasNext ? 'Hết chương' : 'Hết truyện',
+              hasNext || hasPrev ? 'Hết chương' : 'Hết truyện',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: textColor.withValues(alpha: 0.5),
                     fontWeight: FontWeight.w600,
@@ -551,16 +595,36 @@ class _ChapterEndFooter extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          if (hasNext && onNext != null)
-            Center(
-              child: FilledButton.icon(
-                onPressed: onNext,
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Chương kế tiếp'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Nút "← Ch.3" — chừa đúng nửa trái như web (.ch-nav
+              // justify-between); không có chương trước thì chừa trống.
+              Expanded(
+                child: hasPrev && onPrev != null
+                    ? OutlinedButton.icon(
+                        onPressed: onPrev,
+                        icon: const Icon(Icons.arrow_back, size: 18),
+                        label: Text(prevLabel ?? 'Chương trước'),
+                      )
+                    : const SizedBox.shrink(),
               ),
-            ),
+              const SizedBox(width: 12),
+              // Nút "Ch.5 →" — bên phải.
+              Expanded(
+                child: hasNext && onNext != null
+                    ? FilledButton.icon(
+                        onPressed: onNext,
+                        icon: const Icon(Icons.arrow_forward),
+                        label: Text(nextLabel ?? 'Chương kế tiếp'),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 }
+

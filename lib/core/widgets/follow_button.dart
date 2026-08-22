@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../network/api_client.dart';
+import 'app_snack_bar.dart';
 import '../../repositories/story_repository.dart';
 
 /// Nút Theo dõi tác giả (dùng chung: màn hình tác giả + story detail).
@@ -37,9 +38,7 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
     final api = ref.read(apiClientProvider).value;
     if (api == null || !await api.isAuthenticated()) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Đăng nhập để theo dõi tác giả.')),
-        );
+        showAppSnackBar(context, 'Đăng nhập để theo dõi tác giả.');
         context.push('/auth');
       }
       return;
@@ -54,22 +53,15 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
         _following = following;
         _followerCount = count;
       });
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              following ? 'Đã theo dõi tác giả.' : 'Đã bỏ theo dõi tác giả.',
-            ),
-            duration: const Duration(seconds: 2),
-          ),
-        );
+      showAppSnackBar(
+        context,
+        following ? 'Đã theo dõi tác giả.' : 'Đã bỏ theo dõi tác giả.',
+        duration: const Duration(seconds: 2),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Thao tác thất bại: $e')),
-      );
+      showAppSnackBar(context, 'Thao tác thất bại: $e');
     }
   }
 

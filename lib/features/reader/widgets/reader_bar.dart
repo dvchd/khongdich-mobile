@@ -73,9 +73,25 @@ class ReaderBar extends StatelessWidget {
             ),
           if (onOpenComments != null)
             IconButton(
-              icon: const Icon(Icons.chat_bubble_outline),
               tooltip: 'Bình luận',
               onPressed: onOpenComments,
+              icon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(chapter.commentCount != null
+                      ? Icons.chat_bubble
+                      : Icons.chat_bubble_outline),
+                  if (chapter.commentCount != null) ...[
+                    const SizedBox(width: 3),
+                    Text(
+                      '${chapter.commentCount}',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           IconButton(
             icon: const Icon(Icons.list),

@@ -63,9 +63,26 @@ class TextChapterView extends ConsumerStatefulWidget {
 class _TextChapterViewState extends ConsumerState<TextChapterView> {
   late List<Block> _blocks;
   late final PageController _pageController;
-  // Pre-split pages: each entry is a list of block indices.
+  // Pre-split pages: each entry is a list of indices vào [_pageBlocks]
+  // (khác [_blocks]: _pageBlocks đã chẻ paragraph quá cao thành nhiều
+  // paragraph con — xem _computePages).
   List<List<int>> _pageBlockIndices = [];
+  /// Block đã chẻ dùng để dựng trang (page mode).
+  List<Block> _pageBlocks = [];
+  /// Với mỗi index trong [_pageBlocks], index GỐC của block trong
+  /// [_blocks] — TTS highlight + tìm trang theo block gốc vẫn đúng.
+  List<int> _pageBlockOriginalIndex = [];
+  /// Trang nào còn chứa block cao hơn 1 trang (code block, ảnh, quote
+  /// dài, inline phức tạp…) thì trang đó mới được phép scroll dọc.
+  List<bool> _pageHasOversized = [];
   Size? _lastSize;
+
+  // Header chương ("Ch. N: Title" + meta) ở ĐẦU TRANG 1 của page mode —
+  // đo chiều cao thật sau frame đầu rồi trừ đúng phần đó khỏi capacity
+  // trang 1 khi phân trang (các trang sau giữ nguyên độ cao đọc).
+  double _pageHeaderHeight = 0;
+  final GlobalKey _pageHeaderKey = GlobalKey();
+  bool _pageHeaderMeasured = false;
 
   // TTS highlight state.
   TtsAudioHandler? _handler;
@@ -140,6 +157,9 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       _blocks = MarkdownParser().parse(widget.markdown);
       _lastSize = null;
       _heightCache.clear();
+      // Đổi chương → header đổi tiêu đề → đo lại chiều cao trang 1.
+      _pageHeaderMeasured = false;
+      _pageHeaderHeight = 0;
       // Clear highlight when chapter changes — the new chunk event for
       // the new chapter will set a fresh highlight starting from block 0.
       _activeBlock.value = null;
@@ -157,6 +177,10 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       _lastSize = null;
       // Chiều cao block phụ thuộc font/size/line-height → đo lại.
       _heightCache.clear();
+      // Header chương (chữ lớn hơn/nhỏ hơn) cũng cao/thấp theo font →
+      // đo lại reserve trang 1 (page mode).
+      _pageHeaderMeasured = false;
+      _pageHeaderHeight = 0;
     }
   }
 
@@ -296,11 +320,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
   /// Split blocks into pages based on measured heights.
   ///
-  /// Blocks taller than a full page are placed on their own page —
-  /// the SingleChildScrollView inside each PageView page will scroll
-  /// vertically to reveal the rest. This is better than the old behavior
-  /// which would push a tall block to the next page, leaving the current
-  /// page mostly empty.
+  /// Bước 1: chẻ paragraph thuần text quá cao (cao hơn 1 trang) thành
+  /// nhiều paragraph nhỏ — đây là lý do trước đây "mỗi trang vẫn có
+  /// scroll": block cao hơn viewport bị đẩy vào trang riêng với
+  /// SingleChildScrollView. Giờ chỉ còn những block KHÔNG chẻ được
+  /// (code block, ảnh, quote/inline phức tạp) giữ scroll fallback, còn
+  /// trang bình thường thì không scroll.
   void _computePages(Size size) {
     if (_lastSize != null &&
         (_lastSize!.width - size.width).abs() < 1 &&
@@ -312,27 +337,131 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     final maxWidth = size.width;
     final maxHeight = size.height - 80; // -80 for page indicator + padding
 
+    // Trang 1 chứa header chương → capacity trang đầu bị trừ đúng phần
+    // header đã đo; các trang sau dùng trọn viewport.
+    final headerReserve =
+        widget.header != null && _pageHeaderMeasured ? _pageHeaderHeight : 0.0;
+    double capacity(int pageIndex) {
+      if (pageIndex != 0) return maxHeight;
+      final cap = maxHeight - headerReserve;
+      return cap <= 0 ? 0.0 : cap;
+    }
+
+    _pageBlocks = _buildPageBlocks(_blocks, maxWidth, maxHeight);
+
     _pageBlockIndices = [];
+    _pageHasOversized = [];
     var current = <int>[];
     var currentHeight = 0.0;
+    var currentHasOversized = false;
+    var pageIndex = 0;
 
-    for (var i = 0; i < _blocks.length; i++) {
-      final h = _measureBlockHeightCached(i, _blocks[i], maxWidth);
-      if (currentHeight + h > maxHeight && current.isNotEmpty) {
+    for (var i = 0; i < _pageBlocks.length; i++) {
+      final cap = capacity(pageIndex);
+      final h = _measureBlockHeightCached(i, _pageBlocks[i], maxWidth);
+      final oversized = h > cap;
+      if (currentHeight + h > cap && current.isNotEmpty) {
         // Current page is full — flush it and start a new page.
         _pageBlockIndices.add(current);
+        _pageHasOversized.add(currentHasOversized);
         current = [];
         currentHeight = 0;
+        currentHasOversized = false;
+        pageIndex++;
       }
-      // Add block to current page. If the block itself is taller than
-      // maxHeight, it gets its own page and the SingleChildScrollView
-      // inside the page will allow vertical scrolling to see the rest.
-      // This avoids leaving large blank space on the previous page.
       current.add(i);
       currentHeight += h;
+      currentHasOversized = currentHasOversized || oversized;
     }
-    if (current.isNotEmpty) _pageBlockIndices.add(current);
-    if (_pageBlockIndices.isEmpty) _pageBlockIndices = [[]];
+    if (current.isNotEmpty) {
+      _pageBlockIndices.add(current);
+      _pageHasOversized.add(currentHasOversized);
+    }
+    if (_pageBlockIndices.isEmpty) {
+      _pageBlockIndices = [[]];
+      _pageHasOversized = [false];
+    }
+  }
+
+  /// Chẻ các paragraph quá cao thành paragraph nhỏ hơn (giữ nguyên
+  /// index gốc trong [_pageBlockOriginalIndex]). Chỉ chẻ paragraph mà
+  /// mọi inline đều là [TextRun]/[LineBreak] (plain prose — đại đa số
+  /// truyện chữ); inline phức tạp (đậm/liên kết/…) giữ nguyên → trang
+  /// đó rơi vào _pageHasOversized và có scroll fallback.
+  List<Block> _buildPageBlocks(
+    List<Block> blocks,
+    double maxWidth,
+    double maxHeight,
+  ) {
+    final result = <Block>[];
+    final origin = <int>[];
+    for (var i = 0; i < blocks.length; i++) {
+      final b = blocks[i];
+      if (b is Paragraph &&
+          b.children.every((c) => c is TextRun || c is LineBreak)) {
+        final h = _measureBlockHeightCached(i, b, maxWidth);
+        if (h > maxHeight) {
+          for (final p in _splitTallParagraph(b, maxWidth, maxHeight)) {
+            result.add(p);
+            origin.add(i);
+          }
+          continue;
+        }
+      }
+      result.add(b);
+      origin.add(i);
+    }
+    _pageBlockOriginalIndex = origin;
+    return result;
+  }
+
+  /// Chia [Paragraph] thành N paragraph nhỏ sao cho mỗi phần vừa khít
+  /// trang. Cắt tại khoảng trắng gần ranh giới (không chẻ giữa từ);
+  /// nếu không tìm được khoảng trắng thì cắt đúng ranh giới (hiếm).
+  List<Paragraph> _splitTallParagraph(
+    Paragraph p,
+    double maxWidth,
+    double maxHeight,
+  ) {
+    final style = widget.theme.bodyStyle;
+    final tp = TextPainter(
+      text: TextSpan(
+        style: style,
+        children: [
+          for (final i in p.children) _inlineToSpan(i, widget.theme),
+        ],
+      ),
+      textAlign: TextAlign.left,
+      textDirection: TextDirection.ltr,
+      maxLines: null,
+    );
+    tp.layout(maxWidth: maxWidth - 32); // -32 for horizontal padding
+    final h = tp.height + widget.theme.paragraphSpacing;
+    tp.dispose();
+    if (h <= maxHeight) return [p];
+
+    // Hệ số 0.92: chẻ nhiều hơn vừa đủ để phần cuối không tràn đúng
+    // ranh giới trang (sai số đo lường nhỏ cũng không làm trang scroll).
+    final parts = (h / (maxHeight * 0.92)).ceil().clamp(2, 64);
+    final full = p.children.map((i) => i.plainText).join();
+    if (full.isEmpty) return [p];
+
+    final target = full.length ~/ parts;
+    final chunks = <String>[];
+    var start = 0;
+    while (chunks.length < parts - 1) {
+      var end = (start + target).clamp(0, full.length);
+      // Lùi về khoảng trắng gần ranh giới nhất (cửa sổ 40 ký tự) để
+      // không cắt giữa từ.
+      final windowStart = (end - 40).clamp(0, full.length);
+      final space = full.lastIndexOf(RegExp(r'\s'), end);
+      if (space > windowStart) end = space + 1;
+      if (end <= start) end = (start + target).clamp(0, full.length);
+      chunks.add(full.substring(start, end));
+      start = end;
+    }
+    chunks.add(full.substring(start));
+    return [for (final c in chunks) Paragraph([TextRun(c)])];
   }
 
   @override
@@ -343,9 +472,33 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         _computePages(Size(constraints.maxWidth, constraints.maxHeight));
+        _schedulePageHeaderMeasure();
         return _buildPageMode();
       },
     );
+  }
+
+  /// Đo chiều cao header chương trên trang 1 (page mode). Trước khi đo
+  /// xong, trang 1 được phép scroll dọc (chống tràn chữ trong lúc chờ);
+  /// đo xong nếu khác giá trị cũ thì setState ép phân trang lại với
+  /// reserve đúng.
+  void _schedulePageHeaderMeasure() {
+    if (!widget.isPageMode || widget.header == null) return;
+    if (_pageHeaderMeasured) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _pageHeaderMeasured) return;
+      final ctx = _pageHeaderKey.currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      final h = ctx.size?.height ?? 0.0;
+      _pageHeaderMeasured = true;
+      if ((h - _pageHeaderHeight).abs() > 1) {
+        setState(() {
+          _pageHeaderHeight = h;
+          // Ép LayoutBuilder → _computePages chạy lại với reserve mới.
+          _lastSize = null;
+        });
+      }
+    });
   }
 
   Widget _buildScrollMode() {
@@ -383,18 +536,30 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
 
   Widget _buildPageMode() {
     if (_pageBlockIndices.length <= 1) {
-      // Single page — just render all blocks, allow scroll if content
-      // is taller than viewport.
+      // Single page — content đã vừa khít (paragraph quá cao đã chẻ),
+      // không scroll trừ khi còn block oversize (code/ảnh) hoặc header
+      // chưa kịp đo chiều cao.
+      final indices = [
+        for (var i = 0; i < _pageBlocks.length; i++) _pageBlockOriginalIndex[i],
+      ];
+      final scrollable = (_pageHasOversized.isNotEmpty &&
+              _pageHasOversized.first) ||
+          !_pageHeaderMeasured;
       return SingleChildScrollView(
-        physics: const ClampingScrollPhysics(),
+        physics: scrollable
+            ? const ClampingScrollPhysics()
+            : const NeverScrollableScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (widget.header != null)
+              KeyedSubtree(key: _pageHeaderKey, child: widget.header!),
             MarkdownRenderer(
-              blocks: _blocks,
+              blocks: _pageBlocks,
               theme: widget.theme,
               activeBlock: _activeBlock,
+              globalIndices: indices,
               onParagraphLongPress: widget.onParagraphLongPress,
             ),
             const SizedBox(height: 32),
@@ -417,25 +582,37 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       itemCount: _pageBlockIndices.length,
       itemBuilder: (context, pageIndex) {
         final blockIndices = _pageBlockIndices[pageIndex];
-        final pageBlocks = [for (final i in blockIndices) _blocks[i]];
-        // Highlight theo GLOBAL block index — renderer trừ đi baseIndex
-        // của trang này. Không cần rebuild PageView khi active đổi (đã do
-        // ValueListenableBuilder trong renderer lo).
-        final baseIndex = blockIndices.isNotEmpty ? blockIndices.first : 0;
+        final pageBlocks = [
+          for (final i in blockIndices) _pageBlocks[i],
+        ];
+        // Global index gốc của từng block trên trang — TTS highlight theo
+        // block gốc (chương chưa chẻ) nên không thể dùng baseBlockIndex+i
+        // khi page blocks đã bị chẻ paragraph.
+        final globalIndices = [
+          for (final i in blockIndices) _pageBlockOriginalIndex[i],
+        ];
+        // Trang chỉ scroll dọc khi chứa block oversize (code block, ảnh,
+        // quote/inline phức tạp) — hoặc trang 1 chưa đo xong header.
+        // Trang thuần prose không scroll nữa.
+        final scrollable =
+            _pageHasOversized[pageIndex] ||
+                (pageIndex == 0 && !_pageHeaderMeasured);
         return SingleChildScrollView(
-          // Allow vertical scrolling for pages with tall blocks that
-          // exceed the viewport height. Previously NeverScrollable caused
-          // tall blocks to be clipped with no way to see the rest.
-          physics: const ClampingScrollPhysics(),
+          physics: scrollable
+              ? const ClampingScrollPhysics()
+              : const NeverScrollableScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (pageIndex == 0 && widget.header != null)
+                KeyedSubtree(key: _pageHeaderKey, child: widget.header!),
               MarkdownRenderer(
                 blocks: pageBlocks,
                 theme: widget.theme,
                 activeBlock: _activeBlock,
-                baseBlockIndex: baseIndex,
+                baseBlockIndex: 0,
+                globalIndices: globalIndices,
                 onParagraphLongPress: widget.onParagraphLongPress,
               ),
               const SizedBox(height: 32),
@@ -565,10 +742,14 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     if (widget.isPageMode) {
       // Page mode: find the page containing the active block, then
       // animate to it. We avoid animateToPage when already on the
-      // target page (no-op) to prevent jitter.
+      // target page (no-op) to prevent jitter. So sánh theo index GỐC
+      // vì page blocks đã chẻ paragraph (một block gốc có thể nằm rải
+      // nhiều trang — tìm trang ĐẦU TIÊN chứa nó).
       if (!_pageController.hasClients) return;
       for (var p = 0; p < _pageBlockIndices.length; p++) {
-        if (_pageBlockIndices[p].contains(active)) {
+        final contains = _pageBlockIndices[p]
+            .any((i) => _pageBlockOriginalIndex[i] == active);
+        if (contains) {
           final current = _pageController.page?.round() ?? 0;
           if (current != p) {
             _pageController.animateToPage(

@@ -11,6 +11,23 @@ import '../../repositories/story_repository.dart';
 import '../profile/profile_screen.dart' show currentUserProvider;
 import 'tts_audio_exporter.dart';
 import 'tts_audio_handler.dart';
+import 'tts_bar_state.dart';
+
+/// Mở [TtsControlPanel] dạng bottom sheet từ MỌI nơi (bar, reader, offline
+/// reader). Việc ẩn now-playing bar khi panel mở do [TtsBarRouteObserver]
+/// (gắn trên GoRouter) lo — bar nổi TRÊN Navigator nên modal sheet không
+/// che được nó; trước đây reader mở panel trực tiếp bằng
+/// showModalBottomSheet nên bar vẫn đè lên panel.
+Future<void> showTtsControlPanel(BuildContext context, WidgetRef ref) {
+  return showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: true,
+    enableDrag: true,
+    showDragHandle: true,
+    builder: (_) => const TtsControlPanel(),
+  );
+}
 
 /// Full-screen TTS control panel with:
 ///   - Play/pause/stop buttons
