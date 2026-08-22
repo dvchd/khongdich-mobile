@@ -16,9 +16,10 @@ CI chạy `flutter analyze` và `flutter test` song song (2 job) trên mọi pus
 ### Release notes (nguồn duy nhất)
 
 - Nguồn duy nhất: `docs/release-notes/v<version>.md` (tiếng Việt) và `v<version>.en-US.md` (tiếng Anh) — viết markdown, commit TRƯỚC khi bump version (script `scripts/bump_version.sh` fail nếu thiếu).
-- **GitHub Release** đọc thẳng file md qua `body_path` (markdown render đẹp).
-- **Play Console** đọc cùng file đó, CI dùng `scripts/md_to_whatsnew.py` strip markdown → plain text `play/whatsnew/whatsnew-vi|en-US` → upload qua `whatsNewDirectory`.
-- `scripts/bump_version.sh` kiểm tra 2 file tồn tại trước khi tạo tag.
+- **GitHub Release** đọc thẳng file md qua `body_path` (markdown render đẹp) — body viết đầy đủ, không giới hạn độ dài.
+- **Play Console** đọc cùng file đó, CI dùng `scripts/md_to_whatsnew.py` → plain text `play/whatsnew/whatsnew-vi|en-US` → upload qua `whatsNewDirectory`. Khối `<!-- whatsnew:start -->` … `<!-- whatsnew:end -->` trong file md là bản tóm tắt viết tay dành cho Play Console, **bắt buộc ≤500 ký tự** (script fail nếu vượt, không auto-cắt khối viết tay). Thiếu khối → fallback strip+truncate toàn body (mất phần sau — tránh dùng).
+- Mẫu cấu trúc + ví dụ: `docs/release-notes/TEMPLATE.md`.
+- `scripts/bump_version.sh` kiểm tra 2 file tồn tại + validate khối whatsnew trước khi tạo tag.
 
 ### Commit message
 
