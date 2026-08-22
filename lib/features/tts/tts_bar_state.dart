@@ -42,8 +42,6 @@ class TtsBarRouteObserver extends NavigatorObserver {
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    debugPrint(
-        'TTS-ROUTE: push ${route.runtimeType} barrier=${route is ModalRoute ? route.barrierDismissible : 'n/a'}');
     if (_isModal(route)) {
       _modalRoutes.add(route);
       _barState.setSheetOpen(true);
@@ -53,7 +51,6 @@ class TtsBarRouteObserver extends NavigatorObserver {
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    debugPrint('TTS-ROUTE: pop ${route.runtimeType}');
     if (_modalRoutes.remove(route)) {
       _barState.setSheetOpen(_modalRoutes.isNotEmpty);
     }

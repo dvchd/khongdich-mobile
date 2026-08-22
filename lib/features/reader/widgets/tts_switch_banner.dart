@@ -39,7 +39,6 @@ class _TtsSwitchChapterBannerState
   StreamSubscription<PlaybackState>? _playbackSub;
   StreamSubscription<TtsChunkProgress>? _progressSub;
   TtsAudioHandler? _handler;
-  int? _playingChapter;
   bool _dismissed = false;
 
   /// (Re)subscribe idempotent từ build — xem TtsNowPlayingBar: subscription
@@ -54,9 +53,7 @@ class _TtsSwitchChapterBannerState
     // mỗi chunk → banner cập nhật NGAY khi handler đổi chương (kể cả
     // auto-advance khi app bị ẩn rồi mở lại).
     void sync() {
-      if (!mounted) return;
-      final ch = handler.currentChapterNumber;
-      if (ch != _playingChapter) setState(() => _playingChapter = ch);
+      if (mounted) setState(() {});
     }
 
     _progressSub = handler.chunkProgress.listen((_) => sync());

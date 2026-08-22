@@ -238,7 +238,8 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
   /// Measure the height of rendering a set of blocks with the current
   /// theme + font size. Uses TextPainter on a RichText for text blocks,
   /// and estimated heights for other block types.
-  double _measureBlockHeight(Block block, double maxWidth) {    final style = widget.theme.bodyStyle;
+  double _measureBlockHeight(Block block, double maxWidth) {
+    final style = widget.theme.bodyStyle;
     final padding = widget.theme.paragraphSpacing;
 
     return switch (block) {
@@ -388,9 +389,16 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     var currentHasOversized = false;
     var pageIndex = 0;
 
+    // KHÔNG dùng _measureBlockHeightCached ở đây: cache được [_buildPageBlocks]
+    // ghi theo index GỐC trong [_blocks], còn [_pageBlocks] sau khi chẻ
+    // paragraph quá cao thì index bị DỊCH — tra cache bằng index mới lấy
+    // nhầm chiều cao của block khác (fragment đầu của paragraph bị chẻ
+    // còn bị gán nguyên chiều cao paragraph mẹ) → phân trang sai và trang
+    // thuần prose bị gắn cờ scroll fallback oan. _computePages chỉ chạy
+    // lại khi kích thước/font đổi nên đo trực tiếp không tốn thêm gì.
     for (var i = 0; i < _pageBlocks.length; i++) {
       final cap = capacity(pageIndex);
-      final h = _measureBlockHeightCached(i, _pageBlocks[i], maxWidth);
+      final h = _measureBlockHeight(_pageBlocks[i], maxWidth);
       final oversized = h > cap;
       if (currentHeight + h > cap && current.isNotEmpty) {
         // Current page is full — flush it and start a new page.
@@ -478,7 +486,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
     final full = p.children.map((i) => i.plainText).join();
     if (full.isEmpty) return [p];
 
+    // Guard: text quá ngắn so với số phần cần chẻ → target = 0 làm vòng
+    // lặp cắt không bao giờ tiến (chunks rỗng, start đứng yên → loop
+    // vô hạn). Trường hợp này không thể chẻ thêm → giữ nguyên paragraph.
     final target = full.length ~/ parts;
+    if (target < 1) return [p];
+
     final chunks = <String>[];
     var start = 0;
     while (chunks.length < parts - 1) {
@@ -696,14 +709,6 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             ],
           ),
         );
-      },
-      // Page swipe is handled by PageView. Chapter navigation happens
-      // ONLY when user swipes past the first/last page — we use
-      // onPageChanged to detect this.
-      onPageChanged: (page) {
-        // No chapter nav here — that caused the bug. Chapter nav is
-        // handled by the _HorizontalSwipeWrapper in the parent, which
-        // is NOT used in page mode. Instead, we detect overscroll.
       },
     );
   }

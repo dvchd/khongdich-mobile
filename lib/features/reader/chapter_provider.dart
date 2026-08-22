@@ -23,6 +23,19 @@ final chapterProvider =
   );
 });
 
+/// Chương kế bị VIP-khoá → ghost "cuộn hết chương đọc tiếp" không tải.
+/// Throw bằng TYPE này (không phải StateError chứa chữ "VIP") để UI bắt
+/// bằng `e is VipChapterLockedException` thay vì so khớp chuỗi lỗi.
+class VipChapterLockedException implements Exception {
+  const VipChapterLockedException(this.chapterNumber);
+
+  final int chapterNumber;
+
+  @override
+  String toString() =>
+      'Chương $chapterNumber là chương VIP — không tải ngầm.';
+}
+
 /// Lấy chương kế cho ghost "cuộn hết chương → hiện chương sau" ở reader
 /// cuộn dọc. Chương này thường đã được prefetch (xem ChapterCacheService
 /// .prefetchNext) → resolve instant, không thêm spinner. Chặn chương VIP
@@ -35,7 +48,7 @@ final nextChapterGhostProvider =
     storyId: ref_.storyId,
     chapterNumber: ref_.chapterNumber,
   )) {
-    throw StateError('Chương VIP — ghost không tải.');
+    throw VipChapterLockedException(ref_.chapterNumber);
   }
   return cache.getChapter(
     storyId: ref_.storyId,

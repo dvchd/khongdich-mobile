@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../core/network/api_client.dart';
+import '../../core/widgets/app_retry_view.dart';
 import '../../core/widgets/app_snack_bar.dart';
 import '../../core/observability/app_logger.dart';
 import '../../models/chapter_content.dart';
@@ -146,9 +146,10 @@ class _ChapterReaderScreenState extends ConsumerState<ChapterReaderScreen> {
     });
     return Scaffold(
       body: chapter.when(
-        loading: () => const _ReaderSkeleton(),
-        error: (e, _) => _ReaderError(
-          error: e,
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => AppRetryView(
+          message: 'Không tải được chương',
+          detail: '$e',
           onRetry: () => ref.invalidate(chapterProvider(_ref)),
         ),
         data: (c) {
@@ -326,8 +327,17 @@ class _OnlineChapterListSheet extends ConsumerWidget {
         height: 400,
         child: Center(child: CircularProgressIndicator()),
       ),
-      error: (e, _) =>
-          SizedBox(height: 400, child: Center(child: Text('Lỗi: $e'))),
+      error: (e, _) => SizedBox(
+        height: 400,
+        // Trước đây chỉ hiện 'Lỗi: $e' không có nút thử lại — offline
+        // mở danh sách chương là kẹt chết. Dùng AppRetryView như các
+        // màn lỗi khác.
+        child: AppRetryView(
+          message: 'Không tải được danh sách chương.',
+          detail: '$e',
+          onRetry: () => ref.invalidate(chapterListProvider(storyId)),
+        ),
+      ),
       data: (chapters) => ChapterListSheet(
         entries: [
           for (final c in chapters)
@@ -339,49 +349,6 @@ class _OnlineChapterListSheet extends ConsumerWidget {
         currentChapter: currentChapter,
         storyId: storyId,
         onSelect: (number) => context.replace('/chapter/$storyId:$number'),
-      ),
-    );
-  }
-}
-
-class _ReaderSkeleton extends StatelessWidget {
-  const _ReaderSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: CircularProgressIndicator());
-  }
-}
-
-class _ReaderError extends StatelessWidget {
-  const _ReaderError({required this.error, required this.onRetry});
-  final Object error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off, size: 48, color: AppTheme.primary),
-            const SizedBox(height: 12),
-            Text(
-              'Không tải được chương',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '$error',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Thử lại')),
-          ],
-        ),
       ),
     );
   }
@@ -421,70 +388,24 @@ class _AccessGate extends ConsumerWidget {
       // of leaking chapter content. The previous code returned `child`
       // (full chapter content) on any error → VIP bypass on transient
       // network failures or backend 500s.
-      error: (e, _) => _AccessCheckError(
-        error: e,
-        chapterId: chapter.id,
-        storyId: storyId,
+      error: (e, _) => AppRetryView(
+        icon: Icons.lock_clock,
+        message: 'Không kiểm tra được quyền truy cập',
+        detail: '$e',
+        onRetry: () => ref.invalidate(chapterAccessProvider(chapter.id)),
+        secondaryLabel: 'Về trang truyện',
+        onSecondary: () {
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go('/story/$storyId');
+          }
+        },
       ),
       data: (access) {
         if (access.canRead) return child;
         return VipLockedScreen(chapter: chapter, storyId: storyId);
       },
-    );
-  }
-}
-
-/// Shown when the access check fails (network error / 5xx). Offers a
-/// retry button that re-runs the access check.
-class _AccessCheckError extends ConsumerWidget {
-  const _AccessCheckError({
-    required this.error,
-    required this.chapterId,
-    required this.storyId,
-  });
-  final Object error;
-  final String chapterId;
-  final String storyId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.cloud_off, size: 48, color: Color(0xFFD97706)),
-            const SizedBox(height: 12),
-            const Text(
-              'Không kiểm tra được quyền truy cập',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '$error',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () =>
-                  ref.invalidate(chapterAccessProvider(chapterId)),
-              child: const Text('Thử lại'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (context.canPop()) {
-                  context.pop();
-                } else {
-                  context.go('/story/$storyId');
-                }
-              },
-              child: const Text('Về trang truyện'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -541,7 +462,7 @@ class VipLockedScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Chương này là chương VIP — chỉ những đọc giả được tác giả '
+              'Chương này là chương VIP — chỉ những độc giả được tác giả '
               'cấp quyền mới có thể đọc. Liên hệ tác giả để được cấp '
               'quyền truy cập.',
               textAlign: TextAlign.center,

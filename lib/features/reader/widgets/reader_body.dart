@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/markdown/markdown.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/utils/format.dart';
 import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/widgets/report_sheet.dart';
 import '../../../models/chapter_content.dart';
@@ -287,6 +287,22 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     widget.onNext?.call();
   }
 
+  /// Chống chuyển chương trùng: chạm cạnh 2 lần nhanh (hoặc chạm phải ở
+  /// trang cuối page-mode — onNext bị delay 250ms để xác nhận hết trang)
+  /// trước đây fire onNext/onPrev 2 lần → nhảy QUA 2 chương. Lock trong
+  /// 500ms — đủ lâu cho route replace hoàn tất, không nuốt chạm hợp lệ
+  /// kế tiếp (đọc xong 1 chương mất phút chứ không phải nửa giây).
+  bool _chapterNavLocked = false;
+
+  void _navigateToChapter(VoidCallback? nav) {
+    if (nav == null || _chapterNavLocked) return;
+    _chapterNavLocked = true;
+    nav();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _chapterNavLocked = false;
+    });
+  }
+
   void _onTapZone(ReaderTapZone zone) {
     final isPageMode =
         widget.settings.scrollMode == ReaderScrollMode.horizontal;
@@ -302,7 +318,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
             return;
           }
         }
-        widget.onPrev?.call();
+        _navigateToChapter(widget.onPrev);
       case ReaderTapZone.right:
         if (isPageMode && _pageController.hasClients) {
           final before = _pageController.page?.round() ?? 0;
@@ -314,12 +330,12 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
             if (!mounted) return;
             final after = _pageController.page?.round() ?? 0;
             if (after <= before) {
-              widget.onNext?.call();
+              _navigateToChapter(widget.onNext);
             }
           });
           return;
         }
-        widget.onNext?.call();
+        _navigateToChapter(widget.onNext);
       case ReaderTapZone.center:
         // Tap center → open the reader settings sheet (matches the
         // behaviour of popular reader apps like NovelFever).
@@ -357,10 +373,20 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         ),
       );
       nextAsync.when(
-        data: (next) => nextChapter = next,
+        // Ghost chỉ render được text/visual — chương kế là manga/chat/
+        // video thì ẩn ghost (trước đây render khối "Chương sau" RỖNG
+        // dưới "Hết chương" vì markdown của các loại đó rơi vào nhánh '').
+        data: (next) {
+          if (next is TextChapterContent || next is VisualChapterContent) {
+            nextChapter = next;
+          } else {
+            continueHint =
+                'Chương kế tiếp không đọc liền mạch được — dùng nút chuyển chương.';
+          }
+        },
         loading: () =>
             continueHint = 'Đang tải chương kế tiếp — cuộn tiếp để đọc…',
-        error: (e, _) => continueHint = e.toString().contains('VIP')
+        error: (e, _) => continueHint = e is VipChapterLockedException
             ? 'Chương kế tiếp là chương VIP — chấp hành quy định nhé.'
             : 'Chương kế tiếp không tải được (hết mạng?) — dùng nút chuyển chương.',
       );
@@ -525,9 +551,6 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   }
 }
 
-// Re-export ReaderTheme for callers that need it.
-typedef ReaderThemeAlias = ReaderTheme;
-
 /// Header đầu chương — mirror web mobile (`templates/story/chapter.html`
 /// `.ch-head` + `.ch-meta`): dòng tiêu đề "Ch. N: Title" rồi meta
 /// "~X phút đọc · Y từ · 📋 Chia sẻ · ⚠️ Báo cáo". Nằm TRONG nội dung
@@ -543,16 +566,6 @@ class _ChapterHeader extends StatelessWidget {
     if (wordCount <= 0) return 'Chưa rõ';
     final minutes = (wordCount / 200).ceil().clamp(1, 9999);
     return '~$minutes phút đọc';
-  }
-
-  static String _fmtCount(int n) {
-    final s = n.toString();
-    final buf = StringBuffer();
-    for (var i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
-      buf.write(s[i]);
-    }
-    return buf.toString();
   }
 
   Future<void> _copyChapterLink(BuildContext context) async {
@@ -598,7 +611,7 @@ class _ChapterHeader extends StatelessWidget {
             children: [
               if (chapter.wordCount > 0)
                 Text(
-                  '${_readingTime(chapter.wordCount)} · ${_fmtCount(chapter.wordCount)} từ',
+                  '${_readingTime(chapter.wordCount)} · ${formatCount(chapter.wordCount)} từ',
                   style: Theme.of(
                     context,
                   ).textTheme.bodySmall?.copyWith(color: muted),

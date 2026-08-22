@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_retry_view.dart';
 import '../../core/widgets/follow_button.dart';
 import '../../models/story.dart';
 import '../../repositories/story_repository.dart';
@@ -37,30 +38,11 @@ class AuthorScreen extends ConsumerWidget {
       ),
       body: state.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.person_off_outlined, size: 48),
-                const SizedBox(height: 12),
-                const Text('Không tìm thấy tác giả hoặc mất kết nối.'),
-                const SizedBox(height: 8),
-                Text(
-                  '$e',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: () =>
-                      ref.invalidate(authorProfileProvider(username)),
-                  child: const Text('Thử lại'),
-                ),
-              ],
-            ),
-          ),
+        error: (e, _) => AppRetryView(
+          icon: Icons.person_off_outlined,
+          message: 'Không tìm thấy tác giả hoặc mất kết nối.',
+          detail: '$e',
+          onRetry: () => ref.invalidate(authorProfileProvider(username)),
         ),
         data: (data) => _AuthorContent(data: data, username: username),
       ),

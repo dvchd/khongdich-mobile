@@ -268,6 +268,10 @@ class _PageModeWrapperState extends State<PageModeWrapper> {
   double _accumulatedOverscroll = 0;
   static const _threshold = 60.0; // px of overscroll to trigger chapter nav
 
+  /// Chống fire chuyển chương 2 lần khi user kéo overscroll liên tục
+  /// trong lúc route replace đang chạy (nhảy qua 2 chương).
+  bool _navLocked = false;
+
   @override
   Widget build(BuildContext context) {
     return NotificationListener<ScrollNotification>(
@@ -283,19 +287,26 @@ class _PageModeWrapperState extends State<PageModeWrapper> {
             //   NEGATIVE = user is scrolling BACKWARD past the min extent
             //     (swiping RIGHT on the FIRST page → user wants PREV chapter)
             if (_accumulatedOverscroll > 0 && widget.onNext != null) {
-              widget.onNext!();
+              _fireNav(widget.onNext);
             } else if (_accumulatedOverscroll < 0 && widget.onPrev != null) {
-              widget.onPrev!();
+              _fireNav(widget.onPrev);
             }
             _accumulatedOverscroll = 0;
           }
         } else if (notification is ScrollEndNotification) {
           _accumulatedOverscroll = 0;
+          _navLocked = false;
         }
         return false;
       },
       child: widget.child,
     );
+  }
+
+  void _fireNav(VoidCallback? nav) {
+    if (nav == null || _navLocked) return;
+    _navLocked = true;
+    nav();
   }
 }
 
