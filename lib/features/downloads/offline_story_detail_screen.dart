@@ -6,12 +6,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/database/app_database.dart' show DownloadQueueData;
 import '../../core/network/app_image_cache.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/format.dart';
 import '../../core/widgets/app_bottom_nav.dart';
 import '../../features/tts/tts_now_playing_bar.dart';
-import '../story/story_detail_screen.dart' show downloadedChaptersForStoryProvider;
+import '../../models/story.dart' show ChapterSummary;
+import '../../repositories/story_repository.dart' show chapterListProvider;
+import '../../services/download_manager.dart'
+    show downloadManagerProvider;
+import '../story/story_detail_screen.dart'
+    show downloadQueueForStoryProvider, downloadedChaptersForStoryProvider;
 import 'offline_library_screen.dart' show offlineStoriesMapProvider;
 
 /// Offline story detail — reads downloaded chapters from the local Drift DB
@@ -25,6 +31,14 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final chaptersAsync = ref.watch(downloadedChaptersForStoryProvider(storyId));
     final offlineStory = ref.watch(offlineStoriesMapProvider).value?[storyId];
+    // Danh sách chương ĐẦY ĐỦ từ API — khi CÓ MẠNG hiển thị full list
+    // (badge đã tải + nút tải chương chưa tải → đọc liên tục, không bị
+    // giới hạn trong chương đã tải). Khi MẤT MẠNG provider error →
+    // fallback danh sách chương đã tải trong DB (như trước đây).
+    final fullChaptersAsync = ref.watch(chapterListProvider(storyId));
+    final queueRows =
+        ref.watch(downloadQueueForStoryProvider(storyId)).value ??
+            const <DownloadQueueData>[];
     return Scaffold(
       body: chaptersAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -230,7 +244,8 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
                       ),
                       const Spacer(),
                       Text(
-                        '${chapters.length} chương',
+                        // Full list (online) hoặc chỉ chương đã tải (offline).
+                        '${fullChaptersAsync.value?.length ?? chapters.length} chương',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -240,6 +255,86 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
               SliverList(
                 delegate: SliverChildBuilderDelegate(
                   (context, i) {
+                    // CÓ MẠNG: danh sách đầy đủ từ API — mọi chương đều
+                    // đọc được (đã tải → DB, chưa tải → fetch online),
+                    // kèm nút tải cho chương chưa tải.
+                    final full = fullChaptersAsync.value;
+                    if (full != null) {
+                      final c = full[i];
+                      final downloadedIds = chapters
+                          .map((d) => d.chapterId)
+                          .toSet();
+                      final isDownloaded = downloadedIds.contains(c.id);
+                      final queueState = queueRows
+                          .where((q) => q.chapterId == c.id)
+                          .map((q) => q.status)
+                          .firstOrNull;
+                      final isActiveInQueue = queueState == 'pending' ||
+                          queueState == 'downloading' ||
+                          queueState == 'retry';
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor:
+                              AppTheme.primary.withValues(alpha: 0.12),
+                          child: Text(
+                            '${c.chapterNumber}',
+                            style: const TextStyle(color: AppTheme.primary),
+                          ),
+                        ),
+                        title: Text(
+                          c.title.isEmpty
+                              ? 'Chương ${c.chapterNumber}'
+                              : c.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text('${c.wordCount} từ'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isActiveInQueue)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                ),
+                              ),
+                            if (isDownloaded)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(Icons.download_done,
+                                    size: 16, color: Colors.green),
+                              ),
+                            if (!isDownloaded && !isActiveInQueue)
+                              IconButton(
+                                icon: const Icon(Icons.download_outlined,
+                                    size: 20),
+                                tooltip:
+                                    'Tải chương ${c.chapterNumber} để đọc offline',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => _downloadChapter(
+                                  context,
+                                  ref,
+                                  c,
+                                  storySlug:
+                                      offlineStory?.slug ?? first.storySlug,
+                                  storyTitle: title,
+                                  storyAuthor: author,
+                                  storySynopsis: synopsis,
+                                  coverUrl: coverUrl,
+                                ),
+                              ),
+                            const Icon(Icons.chevron_right),
+                          ],
+                        ),
+                        onTap: () => context.push(
+                            '/chapter-offline/$storyId/${c.chapterNumber}'),
+                      );
+                    }
+                    // MẤT MẠNG: chỉ chương đã tải (đọc từ DB).
                     final ch = chapters[i];
                     return ListTile(
                       leading: CircleAvatar(
@@ -272,10 +367,11 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
                           const Icon(Icons.chevron_right),
                         ],
                       ),
-                      onTap: () => context.push('/chapter-offline/${ch.chapterId}'),
+                      onTap: () => context.push(
+                          '/chapter-offline/$storyId/${ch.chapterNumber}'),
                     );
                   },
-                  childCount: chapters.length,
+                  childCount: fullChaptersAsync.value?.length ?? chapters.length,
                 ),
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
@@ -295,6 +391,53 @@ class OfflineStoryDetailScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+  /// Tải một chương từ danh sách đầy đủ (khi đang có mạng) — chương tải
+  /// xong tự hiện badge "đã tải" nhờ stream `downloadedChaptersForStory`.
+  Future<void> _downloadChapter(
+    BuildContext context,
+    WidgetRef ref,
+    ChapterSummary c, {
+    required String storySlug,
+    required String storyTitle,
+    required String storyAuthor,
+    required String storySynopsis,
+    required String? coverUrl,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final manager = ref.read(downloadManagerProvider);
+      final result = await manager.enqueueChapter(
+        storyId: storyId,
+        storySlug: storySlug,
+        chapterId: c.id,
+        chapterNumber: c.chapterNumber,
+        storyTitle: storyTitle,
+        coverUrl: coverUrl,
+        storyAuthor: storyAuthor,
+        storySynopsis: storySynopsis,
+      );
+      if (result == -1) {
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(const SnackBar(
+            content: Text('Chương đã có trong bộ nhớ hoặc hàng chờ.'),
+            duration: Duration(seconds: 2),
+          ));
+      } else {
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            content:
+                Text('Đã thêm chương ${c.chapterNumber} vào hàng chờ tải.'),
+            duration: const Duration(seconds: 2),
+          ));
+      }
+    } catch (e) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('Không tải được: $e')));
+    }
   }
 }
 

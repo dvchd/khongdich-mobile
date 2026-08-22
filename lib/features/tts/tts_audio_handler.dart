@@ -808,9 +808,11 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   /// Load chapter content để đọc. Chạy qua operation chain — load song
   /// song với play/pause/skip sẽ làm loạn state (bug #7/#8).
   ///
-  /// [offline]: `true` = chương đang đọc là chương tải về (Drift) —
-  /// prev/next sẽ được GIỚI HẠN trong danh sách chương đã tải và mọi
-  /// skip/auto-advance resolve từ DB, không đụng mạng.
+  /// [offline]: `true` = context "truyện đã tải" — skip/auto-advance
+  /// resolve DB TRƯỚC (instant, không đụng mạng), chương chưa tải thì
+  /// fallback online qua ChapterCacheService → nghe liên tục khi có
+  /// mạng, báo "chưa tải" rõ ràng khi mất mạng. Deep-link tới reader
+  /// hybrid (`/chapter-offline/...`).
   Future<void> loadChapter({
     required String chapterId,
     required String storyId,
@@ -880,6 +882,12 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     _offlineMode = offline;
     _prevChapterNumber = prevChapterNumber;
     _nextChapterNumber = nextChapterNumber;
+    // prev/next do READER tính từ sibling list của nó (full list khi có
+    // mạng — nghe liên tục qua chương chưa tải; DB list khi offline).
+    // Trước đây handler ghi đè bằng DB siblings khi offline → chuỗi nghe
+    // bị chặn ở chương cuối đã tải dù đang có mạng. Resolve chương đích
+    // đã có hybrid fallback (DB → API) nên prev/next truyền vào luôn
+    // đúng — không cần ghi đè ở đây nữa.
     // Reset chunk index NGAY khi publish chương mới — UI (reader highlight,
     // chapter-list sheet) đọc `currentChapterId` + `currentChunkIndex` đồng
     // thời; nếu `_currentChunk` còn giữ index của chương CŨ trong lúc này
@@ -890,23 +898,6 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
     // Load chương mới = phiên nghe mới → bỏ trạng thái "đã đóng" của
     // chương cũ để mini player hiện lại bình thường.
     _dismissedChapterId = null;
-    if (offline) {
-      // Offline: prev/next phải nằm TRONG danh sách chương đã tải —
-      // prev/next từ API không biết chương nào user đã download. DB là
-      // nguồn chân lý; fallback tham số truyền vào nếu DB lỗi.
-      try {
-        final siblings = await _db.getDownloadedChaptersForStory(storyId);
-        final i = siblings.indexWhere((s) => s.chapterNumber == chapterNumber);
-        if (i >= 0) {
-          _prevChapterNumber =
-              i > 0 ? siblings[i - 1].chapterNumber : null;
-          _nextChapterNumber =
-              i < siblings.length - 1 ? siblings[i + 1].chapterNumber : null;
-        }
-      } catch (e, s) {
-        AppLogger.warning('TTS: offline sibling lookup failed', e, s);
-      }
-    }
 
     final state = await _db.getTtsState(chapterId);
     _currentChunk = state?.chunkIndex ?? 0;
@@ -1204,8 +1195,13 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   }
 
   /// Resolve nội dung chương [chapterNumber] theo nguồn hiện tại:
-  ///   - Offline: query Drift `downloaded_chapters` (không đụng mạng).
-  ///   - Online: `ChapterCacheService.getChapter` (memory → DB → API).
+  ///   - Offline (`_offlineMode`): query Drift `downloaded_chapters`
+  ///     TRƯỚC (không đụng mạng). Chương CHƯA tải → fallback online qua
+  ///     `ChapterCacheService` — nghe truyện đã tải khi CÓ MẠNG vẫn
+  ///     liên tục qua các chương chưa tải (tự fetch + auto_cache), mất
+  ///     mạng thì báo "chưa tải" rõ ràng thay vì đứng im.
+  ///   - Online: `ChapterCacheService.getChapter` (memory → DB → API) —
+  ///     bản thân getChapter đã fallback DB khi mất mạng.
   /// Trả [TtsResolveResult] — chapter hoặc LÝ DO thất bại để thông báo
   /// đúng cho user (VIP ≠ mạng ≠ chưa tải — trước đây chỉ có 1 message
   /// "kiểm tra kết nối" chung chung).
@@ -1222,9 +1218,17 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
             .getSingleOrNull();
         if (row == null) {
           AppLogger.info(
-              'TTS: offline chapter $chapterNumber not downloaded');
-          return const TtsResolveResult.failed(
-              TtsResolveFailure.notDownloaded);
+              'TTS: offline chapter $chapterNumber not downloaded — '
+              'falling back to online resolve');
+          final online = await _resolveOnline(chapterNumber);
+          // Online fail vì MẠNG trong context offline → rất có thể chương
+          // tồn tại nhưng vừa mất mạng — báo "chưa tải" (message gợi ý
+          // kết nối mạng) thay vì lỗi mạng chung chung.
+          if (online.failure == TtsResolveFailure.network) {
+            return const TtsResolveResult.failed(
+                TtsResolveFailure.notDownloaded);
+          }
+          return online;
         }
         final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
         final fullJson = <String, dynamic>{
@@ -1244,6 +1248,17 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
         AppLogger.warning('TTS: offline chapter resolve failed', e, s);
         return const TtsResolveResult.failed(TtsResolveFailure.network);
       }
+    }
+    return _resolveOnline(chapterNumber);
+  }
+
+  /// Resolve online qua `ChapterCacheService.getChapter` — bản thân
+  /// getChapter check memory → DB → API nên chương đã tải/download vẫn
+  /// resolve được cả khi mất mạng (không cần nhánh offline riêng).
+  Future<TtsResolveResult> _resolveOnline(int chapterNumber) async {
+    final storyId = _currentStoryId;
+    if (storyId == null) {
+      return const TtsResolveResult.failed(TtsResolveFailure.notFound);
     }
     try {
       return TtsResolveResult.success(await _cache.getChapter(
@@ -1716,8 +1731,9 @@ String ttsResolveFailureMessage(
           'đọc. Liên hệ tác giả để được mở khóa.',
     TtsResolveFailure.notFound => '$prefix — không tìm thấy chương này.',
     TtsResolveFailure.notDownloaded =>
-      '$prefix — chương này chưa được tải về máy. Kết nối mạng và tải '
-          'chương trước khi nghe offline.',
+      '$prefix — chương này chưa được tải về máy và không tải được từ '
+          'máy chủ. Kết nối mạng rồi thử lại — khi có mạng, chương sẽ tự '
+          'tải để nghe tiếp.',
     _ => '$prefix — kiểm tra kết nối rồi thử lại.',
   };
 }

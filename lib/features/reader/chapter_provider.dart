@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/database/app_database.dart';
 import '../../models/chapter_content.dart';
 import '../../services/chapter_cache_service.dart';
 
@@ -35,6 +36,21 @@ class VipChapterLockedException implements Exception {
   String toString() =>
       'Chương $chapterNumber là chương VIP — không tải ngầm.';
 }
+
+/// Chương đã tồn tại trong `downloaded_chapters` (manual_download hoặc
+/// auto_cache)? Dùng bởi `_AccessGate` của reader online: access check
+/// (API) fail vì mất mạng → chương ĐÃ TẢI được phép đọc (user đã có
+/// quyền từ lúc tải — download manager + fetch thành công trước đó đều
+/// đã qua VIP gate). Fail-closed vẫn giữ nguyên với chương chưa tải.
+final chapterDownloadedProvider =
+    StreamProvider.autoDispose.family<bool, String>((ref, chapterId) async* {
+  final db = ref.watch(appDatabaseProvider);
+  final query = db.select(db.downloadedChapters)
+    ..where((t) => t.chapterId.equals(chapterId));
+  await for (final rows in query.watch()) {
+    yield rows.isNotEmpty;
+  }
+});
 
 /// Lấy chương kế cho ghost "cuộn hết chương → hiện chương sau" ở reader
 /// cuộn dọc. Chương này thường đã được prefetch (xem ChapterCacheService

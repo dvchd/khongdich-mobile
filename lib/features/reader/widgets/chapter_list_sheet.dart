@@ -21,12 +21,18 @@ class ChapterListEntry {
     required this.number,
     required this.title,
     this.viewCount = 0,
+    this.isDownloaded = false,
   });
   final int number;
   final String title;
 
   /// Lượt đọc của chương (0 = không có dữ liệu → không hiển thị).
   final int viewCount;
+
+  /// Chương đã được tải về máy (manual_download) → badge ✓ xanh ở
+  /// trailing. Reader hybrid (truyện đã tải) hiển thị badge trên danh
+  /// sách chương đầy đủ khi đang có mạng.
+  final bool isDownloaded;
 }
 
 /// Bottom sheet listing chapters in the current story.
@@ -34,8 +40,8 @@ class ChapterListEntry {
 /// Shared by the online and offline readers. The parent screen
 /// supplies the entries (from API or Drift) and an `onSelect`
 /// callback that performs the navigation appropriate for its data
-/// source (online → `/chapter/$storyId:$number`, offline →
-/// `/chapter-offline/$chapterId`).
+/// source (online → `/chapter/$storyId:$number`, truyện đã tải →
+/// `/chapter-offline/$storyId/$number`).
 ///
 /// The current chapter is highlighted with [AppTheme.primary] and a
 /// check-circle icon.
@@ -226,36 +232,52 @@ class _ChapterListSheetState extends ConsumerState<ChapterListSheet> {
                             ),
                             // Lượt đọc chương — mirror web `.chapter-views`
                             // (muted, nhỏ). Chỉ hiện khi có dữ liệu; chương
-                            // đang mở vẫn ưu tiên icon check.
+                            // đang mở vẫn ưu tiên icon check. Chương đã tải
+                            // hiện badge download_done (reader hybrid).
                             trailing: isCurrent
-                                ? const Icon(Icons.check_circle,
-                                    color: AppTheme.primary, size: 20)
-                                : (e.viewCount > 0
+                                ? const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.check_circle,
+                                          color: AppTheme.primary, size: 20),
+                                    ],
+                                  )
+                                : (e.viewCount > 0 || e.isDownloaded
                                     ? Padding(
                                         padding:
                                             const EdgeInsets.only(right: 4),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Icon(
-                                              Icons.visibility_outlined,
-                                              size: 14,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurfaceVariant
-                                                  .withValues(alpha: 0.6),
-                                            ),
-                                            const SizedBox(width: 3),
-                                            Text(
-                                              formatCount(e.viewCount),
-                                              style: TextStyle(
-                                                fontSize: 11.5,
+                                            if (e.isDownloaded) ...[
+                                              const Icon(
+                                                Icons.download_done,
+                                                size: 14,
+                                                color: Colors.green,
+                                              ),
+                                              const SizedBox(width: 3),
+                                            ],
+                                            if (e.viewCount > 0) ...[
+                                              Icon(
+                                                Icons.visibility_outlined,
+                                                size: 14,
                                                 color: Theme.of(context)
                                                     .colorScheme
                                                     .onSurfaceVariant
-                                                    .withValues(alpha: 0.8),
+                                                    .withValues(alpha: 0.6),
                                               ),
-                                            ),
+                                              const SizedBox(width: 3),
+                                              Text(
+                                                formatCount(e.viewCount),
+                                                style: TextStyle(
+                                                  fontSize: 11.5,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant
+                                                      .withValues(alpha: 0.8),
+                                                ),
+                                              ),
+                                            ],
                                           ],
                                         ),
                                       )

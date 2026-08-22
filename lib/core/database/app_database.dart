@@ -264,6 +264,20 @@ class AppDatabase extends _$AppDatabase {
         .getSingleOrNull();
   }
 
+  /// Lấy chapter đã download/cache theo (storyId, chapterNumber) —
+  /// offline fallback khi không resolve được chapterId từ chapter list
+  /// API (reader hybrid / ChapterCacheService.getChapter). Dùng index
+  /// `idx_downloaded_chapters_story_num` nên nhanh cả truyện nhiều chương.
+  Future<DownloadedChapter?> getDownloadedChapterByNumber({
+    required String storyId,
+    required int chapterNumber,
+  }) {
+    return (select(downloadedChapters)
+          ..where((t) => t.storyId.equals(storyId))
+          ..where((t) => t.chapterNumber.equals(chapterNumber)))
+        .getSingleOrNull();
+  }
+
   /// Lấy chapter đã download/cache. Nếu `manualOnly = true`, chỉ trả
   /// manual_download (filter auto_cache khỏi Offline Library UI).
   Future<DownloadedChapter?> getDownloadedChapterFiltered(
@@ -304,6 +318,17 @@ class AppDatabase extends _$AppDatabase {
           ..where((t) => t.storyId.equals(storyId))
           ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
         .get();
+  }
+
+  /// Stream variant của [getDownloadedChaptersForStory] — UI (reader
+  /// hybrid, offline story detail) hiển thị badge "đã tải" real-time
+  /// khi hàng chờ tải xong.
+  Stream<List<DownloadedChapter>> watchDownloadedChaptersForStory(
+      String storyId) {
+    return (select(downloadedChapters)
+          ..where((t) => t.storyId.equals(storyId))
+          ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
+        .watch();
   }
 
   Future<void> upsertDownloadedChapter(DownloadedChaptersCompanion entry) {

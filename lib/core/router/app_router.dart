@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:audio_service/audio_service.dart';
-import 'package:drift/drift.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
@@ -38,8 +37,11 @@ import '../../features/tts/tts_bar_state.dart';
 import '../../features/tts/tts_control_panel.dart' show showTtsControlPanel;
 import '../../core/database/app_database.dart';
 import '../../core/network/api_client.dart';
+import '../../core/observability/app_logger.dart';
 import '../../models/chapter_content.dart';
 import '../../models/comment.dart';
+import '../../models/story.dart' show ChapterSummary;
+import '../../services/chapter_cache_service.dart';
 import '../../services/manga_image_downloader.dart';
 import '../shell/main_shell.dart';
 
@@ -198,15 +200,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           storyTitle: state.extra as String? ?? '',
         ),
       ),
-      // Offline chapter reader — loads from local Drift DB, no network.
+      // Reader cho TRUYỆN ĐÃ TẢI (hybrid offline/online) — nguồn dữ liệu
+      // linh hoạt: chương đã tải đọc từ Drift ngay (offline vẫn chạy),
+      // chương chưa tải fetch qua API khi có mạng → đọc LIÊN TỤC.
       GoRoute(
-        path: '/chapter-offline/:chapterId',
+        path: '/chapter-offline/:storyId/:chapterNumber',
         name: 'chapter_offline',
         builder: (context, state) {
-          final chapterId = state.pathParameters['chapterId']!;
+          final storyId = state.pathParameters['storyId']!;
+          final chapterNumber =
+              int.tryParse(state.pathParameters['chapterNumber'] ?? '') ?? 1;
           return OfflineChapterReader(
-            key: ValueKey('offline-chapter-$chapterId'),
-            chapterId: chapterId,
+            key: ValueKey('offline-chapter-$storyId-$chapterNumber'),
+            storyId: storyId,
+            chapterNumber: chapterNumber,
           );
         },
       ),
@@ -380,24 +387,28 @@ class _FadeIndexedStackState extends State<_FadeIndexedStack>
   }
 }
 
-/// Reads a downloaded chapter from the local Drift DB and displays it
-/// using the **shared** [ReaderBody] widget — same UI as the online
-/// reader, only the data source differs.
+/// Hybrid reader cho TRUYỆN ĐÃ TẢI — một reader phục vụ cả 2 ngữ cảnh:
 ///
-/// Plan §5.4 — the only offline-specific behaviour is:
-///   - Loading the chapter from `downloaded_chapters` (Drift).
-///   - Resolving prev/next chapter from the local `siblings` list
-///     (chapters of the same story that are also downloaded).
-///   - Marking the chapter as read in the local Drift DB when the
-///     user scrolls near the end (no API call).
-///   - Building the chapter-list sheet from the local siblings.
+///   - **Đang có mạng**: danh sách chương ĐẦY ĐỦ từ API (badge "đã tải"),
+///     next/prev + chapter-list sheet đi xuyên suốt truyện — chương chưa
+///     tải được fetch ngầm qua ChapterCacheService (auto_cache) nên trải
+///     nghiệm đọc LIÊN TỤC, không dừng ở chương cuối đã tải.
+///   - **Mất mạng**: chương đã tải đọc thẳng từ Drift (100% offline),
+///     danh sách chương chỉ còn chương đã tải; chương chưa tải hiện lỗi
+///     rõ ràng kèm nút thử lại.
 ///
-/// Everything else (reader chrome, theme resolution, content
-/// rendering, page-flip / swipe wrappers, tap zones, TTS) is handled
-/// by [ReaderBody] and its helpers in `reader_helpers.dart`.
+/// TTS dùng `offline: true` — handler resolve DB trước rồi fallback API
+/// (xem TtsAudioHandler) → nghe liên tục khi có mạng, offline nghe đúng
+/// các chương đã tải.
 class OfflineChapterReader extends ConsumerStatefulWidget {
-  const OfflineChapterReader({super.key, required this.chapterId});
-  final String chapterId;
+  const OfflineChapterReader({
+    super.key,
+    required this.storyId,
+    required this.chapterNumber,
+  });
+
+  final String storyId;
+  final int chapterNumber;
 
   @override
   ConsumerState<OfflineChapterReader> createState() =>
@@ -406,7 +417,13 @@ class OfflineChapterReader extends ConsumerStatefulWidget {
 
 class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   ChapterContent? _chapter;
-  List<DownloadedChapter> _siblings = [];
+
+  /// Danh sách chương ĐẦY ĐỦ từ API (khi có mạng). Rỗng khi offline.
+  List<ChapterSummary> _fullSiblings = const [];
+
+  /// Danh sách chương ĐÃ TẢI từ DB (fallback offline).
+  List<DownloadedChapter> _dbSiblings = const [];
+  bool _hasFullList = false;
   Map<String, String> _mangaLocalImagePaths = {};
   bool _loading = true;
   String? _loadError;
@@ -438,6 +455,15 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     super.dispose();
   }
 
+  /// Số chương dùng cho prev/next — full list khi có mạng, DB list khi
+  /// offline.
+  List<int> get _siblingNumbers {
+    if (_hasFullList) {
+      return [for (final s in _fullSiblings) s.chapterNumber];
+    }
+    return [for (final s in _dbSiblings) s.chapterNumber];
+  }
+
   /// TTS đọc xong chương của màn hình này → chỉ ĐIỀU HƯỚNG sang chương
   /// đích. Load + play chương đích do HANDLER tự làm (hoạt động cả khi
   /// app bị ẩn). Màn hình chính là guard: nó chỉ còn mounted khi reader
@@ -448,7 +474,7 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     final chapter = _chapter;
     if (handler == null || chapter == null) return;
     final matchesCurrent = event.storyId == chapter.storyId &&
-        event.chapterId == chapter.id;
+        event.chapterNumber == chapter.chapterNumber;
     if (!shouldAutoAdvanceTts(
       matchesCurrentChapter: matchesCurrent,
       autoAdvanceEnabled: handler.autoAdvanceEnabled,
@@ -457,112 +483,146 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     )) {
       return;
     }
-    final target = _siblings
-        .where((s) => s.chapterNumber == event.nextChapterNumber)
-        .firstOrNull;
+    final target = event.nextChapterNumber;
     if (target == null) return;
-    context.replace('/chapter-offline/${target.chapterId}');
+    // DB-only list (offline) → chỉ điều hướng khi chương đích đã tải.
+    // Full list (online) → target luôn nằm trong list vì reader truyền
+    // prev/next từ chính list đó.
+    if (!_hasFullList && !_siblingNumbers.contains(target)) return;
+    context.replace('/chapter-offline/${widget.storyId}/$target');
   }
 
   Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
     try {
       final db = ref.read(appDatabaseProvider);
-      final row = await (db.select(
-        db.downloadedChapters,
-      )..where((t) => t.chapterId.equals(widget.chapterId))).getSingleOrNull();
-      if (row == null) {
-        if (mounted) {
-          setState(() {
-            _loading = false;
-            _loadError = 'Chương không có trong bộ nhớ.';
-          });
-        }
-        return;
+      final cache = ref.read(chapterCacheServiceProvider);
+
+      // 1. Nội dung chương: DB trước (chương đã tải — đọc ngay, không
+      // đụng mạng), fallback API qua cache service (memory → DB → API).
+      final row = await db.getDownloadedChapterByNumber(
+        storyId: widget.storyId,
+        chapterNumber: widget.chapterNumber,
+      );
+      ChapterContent? chapter;
+      var fromDb = false;
+      if (row != null) {
+        final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
+        final fullJson = <String, dynamic>{
+          ...json,
+          'content_markdown': json['content_markdown'] ?? '',
+          'content_type': row.contentType,
+          'story_title': row.storyTitle,
+          'story_slug': row.storySlug,
+          'chapter_number': row.chapterNumber,
+          'title': row.chapterTitle,
+        };
+        chapter = ChapterContent.fromJson(fullJson);
+        fromDb = true;
+        // Update lastReadAt để LRU evict biết chương này được đọc gần đây.
+        await db.markChapterRead(row.chapterId);
       }
-      // Find siblings (same story, also downloaded), sorted by chapterNumber.
-      final all =
-          await (db.select(db.downloadedChapters)
-                ..where((t) => t.storyId.equals(row.storyId))
-                ..orderBy([(t) => OrderingTerm.asc(t.chapterNumber)]))
-              .get();
-      final json = jsonDecode(row.contentRaw) as Map<String, dynamic>;
-      final fullJson = <String, dynamic>{
-        ...json,
-        'content_markdown': json['content_markdown'] ?? '',
-        'content_type': row.contentType,
-        'story_title': row.storyTitle,
-        'story_slug': row.storySlug,
-        'chapter_number': row.chapterNumber,
-        'title': row.chapterTitle,
-      };
-      // For manga chapters, load the local image path mappings so the
-      // reader can render images 100% offline.
+      chapter ??= await cache.getChapter(
+        storyId: widget.storyId,
+        chapterNumber: widget.chapterNumber,
+      );
+
+      // 2. Sibling list: full từ API (qua cache service, TTL 5 phút) —
+      // fallback danh sách chương đã tải trong DB khi offline.
+      final fullList = await cache.tryGetChapterList(widget.storyId);
+      final dbList = await db.getDownloadedChaptersForStory(widget.storyId);
+
+      // 3. Manga: map ảnh local để render 100% offline.
       Map<String, String> localPaths = {};
-      if (row.contentType == 'manga') {
-        final downloader = ref.read(mangaImageDownloaderProvider);
-        final images = await db.getDownloadedImagesForChapter(widget.chapterId);
+      if (chapter is MangaChapterContent) {
+        final images = await db.getDownloadedImagesForChapter(chapter.id);
         for (final img in images) {
           localPaths[img.imageUrl] = img.localPath;
         }
-        // Best-effort: if the chapter is manga but image rows are
-        // missing (e.g. user downloaded before the manga-image
-        // feature shipped), don't crash — the view will fall back
-        // to CachedNetworkImage which may still hit OS cache.
-        if (localPaths.isEmpty) {
-          // Try to extract image URLs from the chapter JSON and
-          // download them on-demand. This is a migration path for
-          // chapters downloaded before image caching existed.
+        // Best-effort: chương manga tải từ TRƯỚC khi có tính năng lưu ảnh
+        // local → tải on-demand (migration). Chỉ khi chương nằm trong DB
+        // (đã download) — chương fetch online không cần bước này.
+        if (fromDb && localPaths.isEmpty) {
           try {
-            final chapterObj = ChapterContent.fromJson(fullJson);
-            if (chapterObj is MangaChapterContent) {
-              await downloader.downloadImages(
-                chapterId: widget.chapterId,
-                imageUrls: [for (final p in chapterObj.images) p.url],
-              );
-              final freshImages = await db.getDownloadedImagesForChapter(
-                widget.chapterId,
-              );
-              for (final img in freshImages) {
-                localPaths[img.imageUrl] = img.localPath;
-              }
+            final downloader = ref.read(mangaImageDownloaderProvider);
+            await downloader.downloadImages(
+              chapterId: chapter.id,
+              imageUrls: [for (final p in chapter.images) p.url],
+            );
+            final freshImages =
+                await db.getDownloadedImagesForChapter(chapter.id);
+            for (final img in freshImages) {
+              localPaths[img.imageUrl] = img.localPath;
             }
           } catch (_) {
             /* best-effort */
           }
         }
       }
+
+      if (!mounted) return;
+      setState(() {
+        _chapter = chapter;
+        _fullSiblings = fullList ?? const [];
+        _dbSiblings = dbList;
+        _hasFullList = fullList != null;
+        _mangaLocalImagePaths = localPaths;
+        _loading = false;
+      });
+
+      // Prefetch chương kế ngầm (có mạng) → next không loading spinner.
+      unawaited(cache.prefetchNext(chapter));
+
+      // Best-effort: cập nhật vị trí đang đọc (service tự queue khi offline).
+      try {
+        await ref
+            .read(readingProgressServiceProvider)
+            .markChapterOpened(widget.storyId, widget.chapterNumber);
+      } catch (e, s) {
+        AppLogger.warning(
+            'OfflineChapterReader: markChapterOpened failed', e, s);
+      }
+    } on ApiException catch (e) {
       if (mounted) {
         setState(() {
-          _chapter = ChapterContent.fromJson(fullJson);
-          _siblings = all;
-          _mangaLocalImagePaths = localPaths;
           _loading = false;
+          _loadError = e.status == 403
+              ? 'Chương này là chương VIP — bạn chưa được cấp quyền đọc.'
+              : 'Không tải được chương (${e.status}): ${e.message}';
         });
       }
-    } catch (e) {
+    } catch (e, s) {
+      AppLogger.warning(
+          'OfflineChapterReader: load chapter ${widget.chapterNumber} '
+          'failed', e, s);
       if (mounted) {
         setState(() {
           _loading = false;
-          _loadError = 'Lỗi khi tải chương: $e';
+          _loadError = 'Chương chưa được tải về máy và không tải được từ '
+              'máy chủ. Kiểm tra kết nối rồi thử lại.';
         });
       }
     }
   }
 
-  int get _currentIndex =>
-      _siblings.indexWhere((s) => s.chapterId == widget.chapterId);
-
   void _goPrev() {
-    final i = _currentIndex;
+    final nums = _siblingNumbers;
+    final i = nums.indexOf(widget.chapterNumber);
     if (i > 0) {
-      context.replace('/chapter-offline/${_siblings[i - 1].chapterId}');
+      context.replace('/chapter-offline/${widget.storyId}/${nums[i - 1]}');
     }
   }
 
   void _goNext() {
-    final i = _currentIndex;
-    if (i >= 0 && i < _siblings.length - 1) {
-      context.replace('/chapter-offline/${_siblings[i + 1].chapterId}');
+    final nums = _siblingNumbers;
+    final i = nums.indexOf(widget.chapterNumber);
+    if (i >= 0 && i < nums.length - 1) {
+      context.replace('/chapter-offline/${widget.storyId}/${nums[i + 1]}');
     }
   }
 
@@ -577,31 +637,41 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
   void _openChapterList() {
     final ch = _chapter;
     if (ch == null) return;
+    final downloaded = ref
+            .read(downloadedChaptersForStoryProvider(widget.storyId))
+            .value ??
+        const <DownloadedChapter>[];
+    final downloadedNumbers =
+        downloaded.map((d) => d.chapterNumber).toSet();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (_) => ChapterListSheet(
-        entries: [
-          for (final s in _siblings)
-            ChapterListEntry(
-              number: s.chapterNumber,
-              title: s.chapterTitle,
-            ),
-        ],
+        entries: _hasFullList
+            ? [
+                for (final s in _fullSiblings)
+                  ChapterListEntry(
+                    number: s.chapterNumber,
+                    title: s.title,
+                    viewCount: s.viewCount,
+                    isDownloaded:
+                        downloadedNumbers.contains(s.chapterNumber),
+                  ),
+              ]
+            : [
+                for (final s in _dbSiblings)
+                  ChapterListEntry(
+                    number: s.chapterNumber,
+                    title: s.chapterTitle,
+                  ),
+              ],
         currentChapter: ch.chapterNumber,
         storyId: ch.storyId,
         onSelect: (number) {
-          // Find the sibling with this chapter number and navigate
-          // to its offline chapter route. Use `replace` (not `go`)
-          // so the parent offline-story-detail screen stays in the
-          // back stack — pressing Back from the chapter reader
-          // returns to the story detail, not exits the app.
-          final target = _siblings
-              .where((s) => s.chapterNumber == number)
-              .firstOrNull;
-          if (target != null) {
-            context.replace('/chapter-offline/${target.chapterId}');
-          }
+          // Chương đã tải → đọc DB; chưa tải → fetch API (có mạng).
+          // Reader hybrid xử lý cả hai — replace để parent story detail
+          // nằm lại trong back stack.
+          context.replace('/chapter-offline/${widget.storyId}/$number');
         },
       ),
     );
@@ -664,6 +734,10 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
 
       if (handler.currentChapterId != chapter.id) {
         await handler.stop();
+        // prev/next từ sibling list HIỆN TẠI: full list khi có mạng
+        // (nghe liên tục qua chương chưa tải), DB list khi offline.
+        final nums = _siblingNumbers;
+        final i = nums.indexOf(chapter.chapterNumber);
         await handler.loadChapter(
           chapterId: chapter.id,
           storyId: chapter.storyId,
@@ -672,13 +746,9 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           chapterNumber: chapter.chapterNumber,
           contentMarkdown: markdown,
           storySlug: chapter.storySlug,
-          prevChapterNumber: _currentIndex > 0
-              ? _siblings[_currentIndex - 1].chapterNumber
-              : null,
+          prevChapterNumber: i > 0 ? nums[i - 1] : null,
           nextChapterNumber:
-              (_currentIndex >= 0 && _currentIndex < _siblings.length - 1)
-              ? _siblings[_currentIndex + 1].chapterNumber
-              : null,
+              i >= 0 && i < nums.length - 1 ? nums[i + 1] : null,
           offline: true,
         );
         await handler.play();
@@ -706,19 +776,46 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (_chapter == null) {
+    final chapter = _chapter;
+    if (chapter == null) {
       return Scaffold(
         appBar: AppBar(),
         body: Center(
-          child: Text(_loadError ?? 'Chương không có trong bộ nhớ.'),
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.cloud_off,
+                  size: 64,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.4),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _loadError ?? 'Chương không có trong bộ nhớ.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Thử lại'),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
-    final chapter = _chapter!;
     final settings = ref.watch(readerSettingsProvider);
-    final i = _currentIndex;
+    final nums = _siblingNumbers;
+    final i = nums.indexOf(widget.chapterNumber);
     final hasPrev = i > 0;
-    final hasNext = i >= 0 && i < _siblings.length - 1;
+    final hasNext = i >= 0 && i < nums.length - 1;
 
     return Scaffold(
       body: ReaderBody(
@@ -736,11 +833,19 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
         onToggleTts: chapterSupportsTts(chapter) ? () => _toggleTts(chapter) : null,
         mangaLocalImagePaths: _mangaLocalImagePaths,
         onChapterNearEnd: () async {
-          // Mark chapter as read in local Drift DB (cho LRU evict +
-          // is_read flag).
+          // Mark chapter as read trong DB local (LRU evict + is_read).
           try {
             final db = ref.read(appDatabaseProvider);
-            await db.markChapterRead(widget.chapterId);
+            await db.markChapterRead(chapter.id);
+          } catch (_) {
+            /* best-effort */
+          }
+
+          // Retry prefetch khi user scroll gần cuối — prefetch ban đầu
+          // fail (lỗi mạng) thì đây là cơ hội retry.
+          try {
+            final cache = ref.read(chapterCacheServiceProvider);
+            unawaited(cache.prefetchNext(chapter));
           } catch (_) {
             /* best-effort */
           }
@@ -748,8 +853,6 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
           // Sync reading progress lên server (best-effort). Nếu offline,
           // _saveToServer fail silently và để lại row synced=0 —
           // flushPending() sẽ retry khi online lại (app resume / login).
-          // Trước đây offline reader không ghi reading_progress → tiến
-          // trình đọc offline bị "quên" khi online lại.
           try {
             final progress = ref.read(readingProgressServiceProvider);
             await progress.markChapterRead(
@@ -764,3 +867,4 @@ class _OfflineChapterReaderState extends ConsumerState<OfflineChapterReader> {
     );
   }
 }
+

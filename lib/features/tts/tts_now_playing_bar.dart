@@ -149,8 +149,9 @@ class _TtsNowPlayingBarState extends ConsumerState<TtsNowPlayingBar> {
     final storyId = handler.currentStoryId;
     final number = handler.currentChapterNumber;
     final router = ref.read(appRouterProvider);
-    if (handler.offlineMode) {
-      router.go('/chapter-offline/$chapterId');
+    if (handler.offlineMode && storyId != null && number != null) {
+      // Truyện đã tải → reader hybrid (đọc DB offline, fetch online).
+      router.go('/chapter-offline/$storyId/$number');
     } else if (storyId != null && number != null) {
       router.go('/chapter/$storyId:$number');
     }

@@ -388,20 +388,30 @@ class _AccessGate extends ConsumerWidget {
       // of leaking chapter content. The previous code returned `child`
       // (full chapter content) on any error → VIP bypass on transient
       // network failures or backend 500s.
-      error: (e, _) => AppRetryView(
-        icon: Icons.lock_clock,
-        message: 'Không kiểm tra được quyền truy cập',
-        detail: '$e',
-        onRetry: () => ref.invalidate(chapterAccessProvider(chapter.id)),
-        secondaryLabel: 'Về trang truyện',
-        onSecondary: () {
-          if (context.canPop()) {
-            context.pop();
-          } else {
-            context.go('/story/$storyId');
-          }
-        },
-      ),
+      //
+      // NGOẠI LỆ offline: chương ĐÃ TẢI (download thủ công hoặc đã đọc
+      // qua auto_cache — cả hai đều đã qua VIP gate lúc tải) → cho đọc
+      // khi access check fail vì mất mạng. Đọc offline truyện đã tải qua
+      // reader online không còn bị chặn bởi "Không kiểm tra được quyền".
+      error: (e, _) {
+        final downloaded =
+            ref.watch(chapterDownloadedProvider(chapter.id)).value ?? false;
+        if (downloaded) return child;
+        return AppRetryView(
+          icon: Icons.lock_clock,
+          message: 'Không kiểm tra được quyền truy cập',
+          detail: '$e',
+          onRetry: () => ref.invalidate(chapterAccessProvider(chapter.id)),
+          secondaryLabel: 'Về trang truyện',
+          onSecondary: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/story/$storyId');
+            }
+          },
+        );
+      },
       data: (access) {
         if (access.canRead) return child;
         return VipLockedScreen(chapter: chapter, storyId: storyId);

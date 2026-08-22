@@ -110,7 +110,17 @@ class ChapterCacheService {
     required int chapterNumber,
   }) async {
     if (_lockedChapterIds.isEmpty) return false;
-    final chapters = await _getChapterList(storyId);
+    List<ChapterSummary> chapters;
+    try {
+      chapters = await _getChapterList(storyId);
+    } catch (e) {
+      // Offline — không resolve được danh sách chương. Không chặn ghost:
+      // getChapter sẽ tự fallback DB; nếu chương không có trong DB thì
+      // ghost tự fail với hint "không tải được" như mong đợi.
+      AppLogger.info('ChapterCache: isChapterLocked skipped (list '
+          'unavailable, likely offline)');
+      return false;
+    }
     final meta =
         chapters.where((c) => c.chapterNumber == chapterNumber).firstOrNull;
     if (meta == null) return false;
@@ -119,14 +129,34 @@ class ChapterCacheService {
 
   /// Lấy chapter content. Check memory → DB → API.
   /// Nếu cache hit → return ngay (instant, không loading).
+  ///
+  /// **Offline fallback**: resolve chapterId từ chapter list (API) fail
+  /// (mất mạng) → resolve trực tiếp từ DB `downloaded_chapters` theo
+  /// (storyId, chapterNumber) → đọc chương ĐÃ TẢI hoạt động 100%
+  /// không cần mạng. Trước đây mất mạng là throw ngay → chương đã tải
+  /// không đọc được qua reader online.
   Future<ChapterContent> getChapter({
     required String storyId,
     required int chapterNumber,
   }) async {
     // 1. Resolve chapterId từ chapter list (cache TTL 5 phút).
-    final chapters = await _getChapterList(storyId);
+    final List<ChapterSummary> chapters;
+    try {
+      chapters = await _getChapterList(storyId);
+    } catch (e, s) {
+      final fallback = await _getChapterFromDbFallback(storyId, chapterNumber);
+      if (fallback != null) return fallback;
+      AppLogger.info('ChapterCache: chapter list fetch failed and no DB '
+          'fallback for N$chapterNumber — rethrow', e, s);
+      rethrow;
+    }
     final match = chapters.where((c) => c.chapterNumber == chapterNumber).firstOrNull;
     if (match == null) {
+      // Không có trong chapter list (chưa publish / đánh số lại) — thử
+      // DB fallback trước khi thất bại: chương đã tải trước đó vẫn đọc
+      // được dù server list không còn chương này.
+      final fallback = await _getChapterFromDbFallback(storyId, chapterNumber);
+      if (fallback != null) return fallback;
       throw StateError(
           'Chapter $chapterNumber not found in story $storyId');
     }
@@ -204,6 +234,35 @@ class ChapterCacheService {
     AppLogger.info('ChapterCache: MISS → fetched N$chapterNumber '
         '(${_chapterCache.length} memory, DB saved)');
     return chapter;
+  }
+
+  /// Offline fallback cho [getChapter]: tìm row `downloaded_chapters`
+  /// theo (storyId, chapterNumber) và parse thành [ChapterContent] —
+  /// không cần chapter list từ API (mất mạng vẫn đọc được chương đã
+  /// tải). Trả null khi không có row.
+  Future<ChapterContent?> _getChapterFromDbFallback(
+    String storyId,
+    int chapterNumber,
+  ) async {
+    try {
+      final row = await _db.getDownloadedChapterByNumber(
+        storyId: storyId,
+        chapterNumber: chapterNumber,
+      );
+      if (row == null) return null;
+      final chapter = ChapterContent.fromJson(
+        jsonDecode(row.contentRaw) as Map<String, dynamic>,
+      );
+      _cacheChapter(chapter.id, chapter);
+      await _db.markChapterRead(chapter.id);
+      AppLogger.info('ChapterCache: offline DB fallback HIT for '
+          'N$chapterNumber (source: ${row.source})');
+      return chapter;
+    } catch (e, s) {
+      AppLogger.warning('ChapterCache: offline DB fallback failed for '
+          'N$chapterNumber', e, s);
+      return null;
+    }
   }
 
   /// Prefetch N+1 và N+2 ngầm (fire-and-forget). Idempotent.
@@ -320,6 +379,19 @@ class ChapterCacheService {
       cachedAt: DateTime.now(),
     );
     return chapters;
+  }
+
+  /// Public variant của [_getChapterList] dùng cho reader offline/online
+  /// build danh sách siblings mà không crash khi mất mạng: trả `null`
+  /// khi fetch fail (offline / 5xx) thay vì throw. Cùng cache TTL 5 phút
+  /// nên không fetch trùng với [getChapter].
+  Future<List<ChapterSummary>?> tryGetChapterList(String storyId) async {
+    try {
+      return await _getChapterList(storyId);
+    } catch (e, s) {
+      AppLogger.info('ChapterCache: chapter list unavailable (offline?)', e, s);
+      return null;
+    }
   }
 
   /// Clear memory cache (DB cache vẫn giữ). Gọi khi memory pressure.

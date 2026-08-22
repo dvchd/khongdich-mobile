@@ -342,6 +342,92 @@ void main() {
       expect(handler.playbackState.value.errorMessage, isNotNull);
     });
 
+    // ── Hybrid offline/online: nghe truyện đã tải liên tục khi có mạng ──
+    test('skipToNext offline nhưng chương CHƯA tải → fallback online '
+        '(nghe liên tục, không dừng ở chương cuối đã tải)', () async {
+      await loadChapter(number: 1, next: 2, offline: true);
+      tts.speakCompletes = false;
+      await handler.play();
+
+      await handler.skipToNext();
+      await pumpEventQueue(times: 10);
+
+      expect(handler.currentChapterId, 'ch-2');
+      expect(handler.mediaItem.value?.title, 'Chương 2');
+      expect(handler.playbackState.value.playing, isTrue);
+      // Chương 2 không có trong DB → fallback qua cache (FakeCache trả ch-2).
+      expect(cache.requestedNumbers, contains(2));
+      await handler.stop();
+    });
+
+    test('skipToNext offline, chưa tải, cache fail (notFound) → error state',
+        () async {
+      await loadChapter(number: 1, next: 999, offline: true);
+      tts.speakCompletes = false;
+      await handler.play();
+
+      await handler.skipToNext();
+      await pumpEventQueue(times: 10);
+
+      expect(handler.currentChapterId, 'ch-1');
+      expect(handler.playbackState.value.processingState,
+          AudioProcessingState.error);
+      expect(handler.playbackState.value.errorMessage, contains('chương 999'));
+      await handler.stop();
+    });
+
+    test('skipToNext offline, chưa tải, cache fail vì MẠNG → báo "chưa tải"',
+        () async {
+      cache.throwNetwork = true;
+      await loadChapter(number: 1, next: 2, offline: true);
+      tts.speakCompletes = false;
+      await handler.play();
+
+      await handler.skipToNext();
+      await pumpEventQueue(times: 10);
+
+      expect(handler.currentChapterId, 'ch-1');
+      expect(handler.playbackState.value.processingState,
+          AudioProcessingState.error);
+      expect(handler.playbackState.value.errorMessage, contains('chưa được tải'));
+      await handler.stop();
+    });
+
+    test('loadChapter offline GIỮ NGUYÊN prev/next truyền vào '
+        '(reader truyền full-list → nghe liên tục)', () async {
+      // DB chỉ có ch-2 → trước đây handler ghi đè next=null (chặn chuỗi
+      // nghe ở chương cuối đã tải). Nay phải giữ next=3 do reader truyền.
+      await db.upsertDownloadedChapter(DownloadedChaptersCompanion.insert(
+        chapterId: 'ch-2',
+        storyId: 's1',
+        storyTitle: 'Truyện 1',
+        storySlug: 'truyen-1',
+        chapterNumber: 2,
+        chapterTitle: 'Chương 2',
+        contentType: 'text',
+        contentRaw: jsonEncode({
+          'id': 'ch-2',
+          'story_id': 's1',
+          'story_title': 'Truyện 1',
+          'story_slug': 'truyen-1',
+          'chapter_number': 2,
+          'title': 'Chương 2',
+          'content_type': 'text',
+          'content_version': 1,
+          'word_count': 10,
+          'is_published': true,
+          'updated_at': '2026-01-01T00:00:00Z',
+          'content_markdown': 'Nội dung chương hai.',
+          'content_format': 'markdown',
+        }),
+        downloadedAt: '2026-01-01T00:00:00Z',
+      ));
+
+      await loadChapter(number: 2, next: 3, prev: 1, offline: true);
+      expect(handler.nextChapterNumber, 3);
+      expect(handler.prevChapterNumber, 1);
+    });
+
     // ── Bug "đổi tốc độ chỉ nghe được 1 đoạn là dừng" ─────────────────
     // Engine thật gửi "speak.onCancel" ASYNC sau stop() — nó đến TRỄ,
     // khi loop mới đã relaunch. Trước fix, cancel handler set
@@ -570,12 +656,19 @@ class FakeTts extends FlutterTts {
 class FakeCache implements ChapterCacheService {
   final requestedNumbers = <int>[];
 
+  /// True = mọi request throw lỗi MẠNG (không phải notFound) — test
+  /// mapping lỗi của hybrid resolve offline.
+  bool throwNetwork = false;
+
   @override
   Future<ChapterContent> getChapter({
     required String storyId,
     required int chapterNumber,
   }) async {
     requestedNumbers.add(chapterNumber);
+    if (throwNetwork) {
+      throw Exception('network down');
+    }
     if (chapterNumber == 1 || chapterNumber == 2) {
       return TextChapterContent(
         id: 'ch-$chapterNumber',

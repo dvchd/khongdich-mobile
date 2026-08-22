@@ -135,7 +135,8 @@ class OfflineLibraryScreen extends ConsumerWidget {
                     trailing: ch.isRead == 1
                         ? const Icon(Icons.check_circle, color: Colors.green, size: 16)
                         : null,
-                    onTap: () => context.push('/chapter-offline/${ch.chapterId}'),
+                    onTap: () => context.push(
+                        '/chapter-offline/${ch.storyId}/${ch.chapterNumber}'),
                   );
                 }).toList(),
               );
