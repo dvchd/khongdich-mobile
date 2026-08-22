@@ -30,11 +30,13 @@ def to_plain(md: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) > MAX_LEN:
         # Cắt tại ranh giới dòng gần nhất để không vỡ giữa chừng dòng.
-        cut = text.rfind("\n", 0, MAX_LEN)
-        if cut < MAX_LEN * 3 // 4:  # ranh giới quá xa đầu đoạn cắt → cắt cứng
-            cut = MAX_LEN
-        text = text[:cut].rstrip() + "\n…"
-    return text + "\n"
+        # Chừa 1 chỗ cho "…" — tổng ký tự sau khi thêm không vượt MAX_LEN.
+        head = MAX_LEN - 1
+        cut = text.rfind("\n", 0, head)
+        if cut < head * 3 // 4:  # ranh giới quá xa đầu đoạn cắt → cắt cứng
+            cut = head
+        text = text[:cut].rstrip() + "…"
+    return text
 
 
 def main() -> int:
