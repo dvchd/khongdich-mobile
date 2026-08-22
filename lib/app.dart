@@ -129,16 +129,26 @@ class _KhongdichAppState extends ConsumerState<KhongdichApp>
       // hasBottomNav thay đổi real-time theo topLocationProvider: mở
       // reader từ shell → root bar xuất hiện (shell bar chìm dưới route
       // phủ kín), quay lại shell → ngược lại.
+      //
+      // CẤU TRÚC LUÔN LÀ Column[Expanded(navigator), bar|shrink]:
+      // trước đây hai nhánh trả CÂY KHÁC NHAU (Column vs child trần) —
+      // mỗi lần đổi route làm Navigator/Router bị RE-PARENT trong cây →
+      // Router re-fire didChangeDependencies → restoreState với route
+      // information CŨ (imperative push chưa kịp ghi lại) → route vừa
+      // pop bị PUSH LẠI — biểu hiện "ấn Back không về được" (reader,
+      // settings). Cột + Expanded cố định giữ nguyên parent chain của
+      // Navigator nên không bao giờ re-parent; bar ẩn là SizedBox 0px
+      // nên layout không đổi.
       builder: (context, child) {
-        if (!locationHasBottomNav(ref.watch(topLocationProvider))) {
-          return Column(
-            children: [
-              Expanded(child: child ?? const SizedBox()),
-              const TtsNowPlayingBar(bottomSafe: true),
-            ],
-          );
-        }
-        return child ?? const SizedBox();
+        final hasNav = locationHasBottomNav(ref.watch(topLocationProvider));
+        return Column(
+          children: [
+            Expanded(child: child ?? const SizedBox()),
+            hasNav
+                ? const SizedBox.shrink()
+                : const TtsNowPlayingBar(bottomSafe: true),
+          ],
+        );
       },
       routerConfig: apiAsync.when(
         loading: () => _splashRouter(),
