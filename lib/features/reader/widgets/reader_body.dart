@@ -98,12 +98,17 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   /// nút đều bị vùng tap giữa bắt → mở settings thay vì chuyển chương).
   bool _atBottom = false;
   /// Đang ở đầu chương → chừa vùng trên cho header (Chia sẻ / Báo cáo).
-  bool _atTop = false;
+  /// Mặc định TRUE: scroll khởi đầu ở pixels 0 nhưng listener chưa chắc
+  /// đã fire event nào (mở chương xong chạm ngay "Chia sẻ" vẫn phải chừa
+  /// vùng — trước đây để false nên chạm đầu chương bị vùng tap nuốt).
+  bool _atTop = true;
   /// Chiều cao vùng footer cuối chương chừa cho tap-zones (~Hết chương +
   /// nút + padding). Lớn hơn một chút để chừa thừa cũng vô hại.
   static const _footerBottomInset = 190.0;
-  /// Chiều cao header đầu chương (tiêu đề + meta + chia sẻ/báo cáo).
-  static const _headerTopInset = 110.0;
+  /// Chiều cao header đầu chương (tiêu đề 1-2 dòng + meta + chia sẻ/báo
+  /// cáo). Phải đủ lớn để cả header nằm trong vùng chừa — trước đây 110
+  /// còn nhỏ hơn header thật nên chạm "Chia sẻ" vẫn bị vùng tap giữa nuốt.
+  static const _headerTopInset = 160.0;
 
   @override
   void initState() {
@@ -123,7 +128,8 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     if (oldWidget.chapter.id != widget.chapter.id) {
       _progressSaved = false;
       _atBottom = false;
-      _atTop = false;
+      // Chương mới mở ở đầu trang → chừa vùng header ngay.
+      _atTop = true;
     }
   }
 

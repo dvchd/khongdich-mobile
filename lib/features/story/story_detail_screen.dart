@@ -1096,7 +1096,11 @@ class _StatusChip extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+        style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            height: 1.2),
       ),
     );
   }
@@ -1124,7 +1128,10 @@ class _BookmarkChip extends StatelessWidget {
       child: Text(
         label,
         style: const TextStyle(
-            color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w600),
+            color: AppTheme.primary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            height: 1.2),
       ),
     );
   }
