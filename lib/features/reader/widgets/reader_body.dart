@@ -107,9 +107,18 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   /// chừa vùng trên cho header "Chia sẻ / Báo cáo" (tap-zones overlay nằm
   /// trên nội dung, không chừa thì nuốt mọi chạm của header).
   int _pageModeIndex = 0;
-  /// Chiều cao vùng footer cuối chương chừa cho tap-zones (~Hết chương +
+  /// Chiều cao THẬT của phần footer còn nhìn thấy trên màn hình (đo từ
+  /// vị trí footer trong RenderBox — chương ngắn khiến footer nằm cao
+  /// hơn [_footerBottomInset] so với đáy màn hình; chừa thiếu vẫn bị
+  /// vùng tap giữa nuốt nút "Chương kế tiếp"). Fallback 190 khi kịp
+  /// đo (hoặc ngắn hơn 190 nếu footer đã chìm hết).
+  double _footerInset = 190;
+  final GlobalKey _footerKey = GlobalKey();
+  /// Đo chiều cao vùng footer cuối chương chừa cho tap-zones (~Hết chương +
   /// nút "Chương kế tiếp" + padding). Lớn hơn một chút để chừa thừa cũng
-  /// vô hại.
+  /// vô hại. Giá trị THẬT theo vị trí footer trên màn hình được đo thêm
+  /// trong [_measureFooterInset] cho chương ngắn (nội dung chỉ một màn
+  /// hình — footer nằm cao hơn con số này).
   static const _footerBottomInset = 190.0;
   /// Chiều cao header đầu chương (tiêu đề 1-2 dòng + meta + chia sẻ/báo
   /// cáo). Phải đủ lớn để cả header nằm trong vùng chừa — trước đây 110
@@ -140,6 +149,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       // Chương mới mở ở đầu trang → chừa vùng header ngay.
       _atTop = true;
       _pageModeIndex = 0;
+      _footerInset = _footerBottomInset;
     }
   }
 
@@ -165,6 +175,7 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     final pos = _scrollController.position;
+
     // maxScrollExtent == 0 → nội dung ngắn hơn viewport (không scroll
     // được). Trước đây ratio = 0/1 = 0 → chương ngắn KHÔNG BAO GIỜ được
     // đánh dấu đã đọc (onChapterNearEnd không fire, "continue reading"
@@ -177,15 +188,18 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
       widget.onChapterNearEnd?.call();
     }
     // Footer chỉ được render ở chế độ cuộn dọc cho text/visual → chỉ
-    // chừa vùng tap khi footer tồn tại và user đang ở sát cuối.
+    // chừa vùng tap khi footer tồn tại và user đang ở sát cuối (kể cả
+    // chương ngắn không scroll được — maxScrollExtent==0 — footer nằm
+    // nguyên trên màn hình).
     final hasFooter = widget.settings.scrollMode == ReaderScrollMode.vertical &&
         (widget.chapter is TextChapterContent ||
             widget.chapter is VisualChapterContent);
     final atBottom = hasFooter &&
-        pos.maxScrollExtent > 0 &&
-        pos.pixels >= pos.maxScrollExtent - 8;
+        (pos.maxScrollExtent == 0 ||
+            pos.pixels >= pos.maxScrollExtent - 8);
     if (atBottom != _atBottom) {
       setState(() => _atBottom = atBottom);
+      if (atBottom) _measureFooterInset();
     }
     // Header chương (Chia sẻ / Báo cáo) chỉ ở đầu nội dung → chừa vùng
     // trên cho tap-zones khi user đang ở sát đỉnh.
@@ -215,13 +229,47 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         widget.chapter is! VisualChapterContent) {
       return;
     }
+    final hasFooter =
+        widget.settings.scrollMode == ReaderScrollMode.vertical;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _progressSaved) return;
+      if (!mounted) return;
       if (!_scrollController.hasClients) return;
       final pos = _scrollController.position;
+
       if (pos.maxScrollExtent == 0) {
-        _progressSaved = true;
-        widget.onChapterNearEnd?.call();
+        if (!_progressSaved) {
+          _progressSaved = true;
+          widget.onChapterNearEnd?.call();
+        }
+        // Footer hiển thị đầy trên màn hình → chừa vùng tap cho nút
+        // cuối chương (và đo inset thật — xem _measureFooterInset).
+        if (hasFooter && !_atBottom) {
+          setState(() => _atBottom = true);
+        }
+        if (hasFooter) _measureFooterInset();
+      }
+    });
+  }
+
+  /// Đo phần footer còn nhìn thấy để chừa đúng vùng tap-zones: nội dung
+  /// ngắn hơn viewport thì footer nằm cao hơn [_footerBottomInset] so với
+  /// đáy — chừa thiếu vẫn bị vùng tap giữa nuốt "Chương kế tiếp".
+  void _measureFooterInset() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_atBottom) return;
+      final ctx = _footerKey.currentContext;
+      if (ctx == null) return;
+      final box = ctx.findRenderObject();
+      if (box is! RenderBox || !box.attached) return;
+      final screenHeight = MediaQuery.sizeOf(context).height;
+      final footerTop = box.localToGlobal(Offset.zero).dy;
+      // Chừa ĐÚNG phần footer còn nhìn thấy từ top footer tới đáy màn
+      // hình: chương ngắn → footer nằm cao (hơn 190) → chừa nhiều hơn;
+      // footer chìm một nửa → chừa nửa còn lại; không cap 190 vì chừa
+      // nhiều hơn giới hạn cố định cũng vô hại.
+      final inset = (screenHeight - footerTop).clamp(0.0, screenHeight);
+      if ((inset - _footerInset).abs() > 1) {
+        setState(() => _footerInset = inset);
       }
     });
   }
@@ -294,21 +342,24 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         // (thay pill float đếm ngược từng che chữ cuối). Bấm mới chuyển
         // chương — không auto-lật. Chỉ áp dụng text/visual, cuộn dọc.
         footer: widget.settings.scrollMode == ReaderScrollMode.vertical
-            ? _ChapterEndFooter(
-                hasPrev: widget.onPrev != null,
-                hasNext: widget.onNext != null,
-                prevLabel: widget.chapter.prevLabel ??
-                    (widget.chapter.prevChapter != null
-                        ? 'Ch. ${widget.chapter.prevChapter}'
-                        : null),
-                nextLabel: widget.chapter.nextLabel ??
-                    (widget.chapter.nextChapter != null
-                        ? 'Ch. ${widget.chapter.nextChapter}'
-                        : null),
-                onPrev: widget.onPrev,
-                onNext: widget.onNext,
-                textColor:
-                    readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
+            ? KeyedSubtree(
+                key: _footerKey,
+                child: _ChapterEndFooter(
+                  hasPrev: widget.onPrev != null,
+                  hasNext: widget.onNext != null,
+                  prevLabel: widget.chapter.prevLabel ??
+                      (widget.chapter.prevChapter != null
+                          ? 'Ch. ${widget.chapter.prevChapter}'
+                          : null),
+                  nextLabel: widget.chapter.nextLabel ??
+                      (widget.chapter.nextChapter != null
+                          ? 'Ch. ${widget.chapter.nextChapter}'
+                          : null),
+                  onPrev: widget.onPrev,
+                  onNext: widget.onNext,
+                  textColor:
+                      readerTheme.bodyStyle.color ?? const Color(0xFF0F172A),
+                ),
               )
             : null,
         // Header chương đầu nội dung — mirror web mobile (ch-head +
@@ -387,8 +438,10 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                       // Ở cuối chương: chừa vùng đáy cho nút "Chương kế
                       // tiếp" trong footer (overlay nằm trên nội dung nên
                       // không chừa thì bấm nút bị vùng tap giữa nuốt).
+                      // Inset đo THEO VỊ TRÍ THẬT của footer (chương ngắn
+                      // → footer nằm cao → chừa phần còn nhìn thấy).
                       bottomInset: _atBottom && !isPageMode
-                          ? _footerBottomInset
+                          ? _footerInset
                           : 0,
                       // Ở đầu chương: chừa vùng trên cho header (Chia sẻ /
                       // Báo cáo). Cuộn dọc: khi scroll ở đỉnh. Lật trang:
@@ -595,8 +648,12 @@ class _ChapterEndFooter extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
+          // LƯU Ý: KHÔNG dùng CrossAxisAlignment.stretch — Row nằm trong
+          // SingleChildScrollView (chiều cao content vô hạn) → stretch đòi
+          // h bounded ⇔ lỗi "BoxConstraints forces an infinite height" khi
+          // cuộn tới cuối chương. Hai nút cùng chiều cao 40 mặc định —
+          // align giữa vẫn thẳng hàng.
           Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Nút "← Ch.3" — chừa đúng nửa trái như web (.ch-nav
               // justify-between); không có chương trước thì chừa trống.
