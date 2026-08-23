@@ -5,12 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/network/app_image_cache.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/manga_image_downloader.dart';
+import '../home/widgets/home_hero.dart' show homeHeroHiddenProvider;
 import '../reader/reader_settings_provider.dart';
 
 /// Settings screen — plan §5.7. Includes:
@@ -150,6 +152,23 @@ class SettingsScreen extends ConsumerWidget {
             title: const Text('Xoá toàn bộ truyện đã tải'),
             subtitle: const Text('Giải phóng dung lượng'),
             onTap: () => _confirmClearAllDownloads(context, ref),
+          ),
+          const Divider(),
+          _Section('Cấu hình'),
+          // Thẻ "Đọc & nghe offline" trên Home — user có thể ẩn hẳn bằng
+          // nút X trên thẻ; đây là chỗ bật lại (nguồn duy nhất:
+          // homeHeroHiddenProvider). Section riêng trước "Về ứng dụng"
+          // — cấu trúc nhóm đồng bộ với các section còn lại.
+          SwitchListTile(
+            secondary: const Icon(Icons.headphones_outlined),
+            title: const Text('Thẻ "Đọc & nghe offline" trên Trang chủ'),
+            subtitle: const Text('Hiện lại thẻ giới thiệu ở đầu Trang chủ'),
+            value: !(ref.watch(homeHeroHiddenProvider).value ?? false),
+            onChanged: (show) async {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('home_hero_hidden', !show);
+              ref.invalidate(homeHeroHiddenProvider);
+            },
           ),
           const Divider(),
           _Section('Về ứng dụng'),

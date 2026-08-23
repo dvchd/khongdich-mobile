@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../../models/story.dart';
 import '../../core/observability/app_logger.dart';
@@ -19,9 +20,14 @@ import 'widgets/story_section.dart';
 
 /// Home / discovery feed. Plan §5.2.
 ///
-/// Hits `GET /api/v1/mobile/stories?sort=hot|fresh|completed|picks` for
-/// each section. Authenticated users also see a "Đọc tiếp" strip from
+/// Hits `GET /api/v1/mobile/stories?sort=hot|fresh|completed|picks|random|flop`
+/// for each section. Authenticated users also see a "Đọc tiếp" strip from
 /// `GET /api/v1/mobile/reading-progress`.
+///
+/// Section order is DISCOVERY-FIRST: Chợ Phiên lên đầu (nội dung thời
+/// hạn, tự ẩn khi chợ đóng) → Đọc tiếp → Truyện ngẫu nhiên → Mới cập
+/// nhật → Top flop → Đang hot → Truyện VIP — tối ưu cho việc độc giả
+/// tiếp cận nội dung mới thay vì chỉ xem lại truyện phổ biến.
 ///
 /// Mobile-first UX: the hero highlights offline reading/listening (with
 /// a live downloaded-chapter count), quick actions (Tủ truyện / Đã tải
@@ -141,7 +147,15 @@ class _HomeContent extends ConsumerWidget {
         home.completed.isNotEmpty ||
         home.picks.isNotEmpty ||
         home.random.isNotEmpty ||
-        home.flop.isNotEmpty;
+        home.flop.isNotEmpty ||
+        home.vip.isNotEmpty;
+    // Thứ tự section theo nguyên tắc DISCOVERY-FIRST: Chợ Phiên lên ĐẦU
+    // (nội dung thời hạn — chỉ mở đôi khi, phải thấy được khi đang diễn
+    // ra; tự ẩn khi chợ đóng). Sau đó là các rail truyện để độc giả mở
+    // app là thấy ngay nội dung để tiếp cận — Đọc tiếp (cá nhân) →
+    // Truyện ngẫu nhiên (gieo xúc xắc) → Mới cập nhật → Top flop (truyện
+    // bị lãng quên) → trước Đang hot (đã phổ biến, dễ tìm lại), rồi mới
+    // tới Truyện VIP + Hoàn thành + Tuyển chọn.
     return ListView(
       children: [
         const HomeHero(),
@@ -168,35 +182,30 @@ class _HomeContent extends ConsumerWidget {
                 ),
             ],
           ),
-        if (home.hot.isNotEmpty)
+        if (home.random.isNotEmpty)
           StorySection(
-            title: 'Đang hot',
-            icon: Icons.local_fire_department,
-            trailing: '${home.hot.length} truyện',
+            title: 'Truyện ngẫu nhiên',
+            icon: Icons.casino,
+            trailing: '${home.random.length} truyện',
+            onReload: () =>
+                ref.read(homeProvider.notifier).refreshSection('random'),
+            // Giống nút "Gieo xúc xắc" trên web — mỗi lần bấm là seed mới.
+            reloadIcon: Icons.casino,
+            reloadTooltip: 'Gieo xúc xắc — đổi truyện ngẫu nhiên',
             items: [
-              for (final s in home.hot)
+              for (final s in home.random)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
         if (home.fresh.isNotEmpty)
           StorySection(
-            title: 'Truyện mới',
-            icon: Icons.fiber_new,
+            title: 'Mới cập nhật',
+            icon: Icons.update,
             trailing: '${home.fresh.length} truyện',
+            onReload: () =>
+                ref.read(homeProvider.notifier).refreshSection('fresh'),
             items: [
               for (final s in home.fresh)
-                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
-            ],
-          ),
-        if (home.completed.isNotEmpty)
-          StorySection(
-            title: 'Hoàn thành',
-            icon: Icons.task_alt,
-            trailing: '${home.completed.length} truyện',
-            onReload: () =>
-                ref.read(homeProvider.notifier).refreshSection('completed'),
-            items: [
-              for (final s in home.completed)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
@@ -214,18 +223,39 @@ class _HomeContent extends ConsumerWidget {
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
-        if (home.random.isNotEmpty)
+        if (home.hot.isNotEmpty)
           StorySection(
-            title: 'Truyện ngẫu nhiên',
-            icon: Icons.casino,
-            trailing: '${home.random.length} truyện',
-            onReload: () =>
-                ref.read(homeProvider.notifier).refreshSection('random'),
-            // Giống nút "Gieo xúc xắc" trên web — mỗi lần bấm là seed mới.
-            reloadIcon: Icons.casino,
-            reloadTooltip: 'Gieo xúc xắc — đổi truyện ngẫu nhiên',
+            title: 'Đang hot',
+            icon: Icons.local_fire_department,
+            trailing: '${home.hot.length} truyện',
             items: [
-              for (final s in home.random)
+              for (final s in home.hot)
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
+            ],
+          ),
+        if (home.vip.isNotEmpty)
+          StorySection(
+            // Truyện VIP — BXH riêng (ranking/vip), đặt ngay sau Đang
+            // hot: nội dung premium dễ thấy mà không lấn át discovery.
+            // Không có nút reload — server cache 10 phút, bấm reload
+            // trả cùng dữ liệu chỉ gây hiểu lầm.
+            title: 'Truyện VIP',
+            icon: Icons.diamond_outlined,
+            trailing: '${home.vip.length} truyện',
+            items: [
+              for (final s in home.vip)
+                StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
+            ],
+          ),
+        if (home.completed.isNotEmpty)
+          StorySection(
+            title: 'Hoàn thành',
+            icon: Icons.task_alt,
+            trailing: '${home.completed.length} truyện',
+            onReload: () =>
+                ref.read(homeProvider.notifier).refreshSection('completed'),
+            items: [
+              for (final s in home.completed)
                 StoryCard(story: s, onTap: () => _openStory(context, s.slug)),
             ],
           ),
@@ -417,53 +447,115 @@ class _LoadingList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final placeholder = Theme.of(context).colorScheme.surfaceContainerHighest;
-    return ListView(
-      children: [
-        const SizedBox(height: 12),
-        // Hero skeleton
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Container(
-            height: 110,
-            decoration: BoxDecoration(
-              color: placeholder,
-              borderRadius: BorderRadius.circular(16),
+    final scheme = Theme.of(context).colorScheme;
+    // Skeleton có hiệu ứng shimmer (package shimmer đã có sẵn trong
+    // deps) — cảm giác "đang tải" rõ hơn khối xám tĩnh, không thêm dep.
+    return Shimmer.fromColors(
+      baseColor: scheme.surfaceContainerHighest,
+      highlightColor: scheme.surfaceContainerLow,
+      child: ListView(
+        children: [
+          const SizedBox(height: 12),
+          // Hero skeleton
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Container(
+              height: 110,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
           ),
-        ),
-        for (var i = 0; i < 4; i++)
+          const SizedBox(height: 16),
+          // Shortcut row skeleton (4 ô vuông tròn như _DiscoverShortcuts).
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(
               children: [
-                Container(
-                  width: 60,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: placeholder,
-                    borderRadius: BorderRadius.circular(8),
+                for (var i = 0; i < 4; i++) ...[
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: scheme.surfaceContainerHighest,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          height: 10,
+                          width: 40,
+                          decoration: BoxDecoration(
+                            color: scheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        height: 16,
-                        width: double.infinity,
-                        color: placeholder,
-                      ),
-                      const SizedBox(height: 8),
-                      Container(height: 12, width: 120, color: placeholder),
-                    ],
-                  ),
-                ),
+                  if (i < 3) const SizedBox(width: 8),
+                ],
               ],
             ),
           ),
-      ],
+          // Story rail skeletons
+          for (var s = 0; s < 2; s++)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 14,
+                    width: 140,
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 200,
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < 3; i++) ...[
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                AspectRatio(
+                                  aspectRatio: 2 / 3,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color:
+                                          scheme.surfaceContainerHighest,
+                                      borderRadius:
+                                          BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Container(
+                                  height: 10,
+                                  color: scheme.surfaceContainerHighest,
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (i < 2) const SizedBox(width: 12),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -479,6 +571,7 @@ class HomeFeed {
     required this.picks,
     required this.random,
     required this.flop,
+    required this.vip,
     required this.continueReading,
   });
   final List<StorySummary> hot;
@@ -492,6 +585,11 @@ class HomeFeed {
 
   /// "📉 Top flop" — ít lượt đọc nhất (mirror web home least_viewed).
   final List<StorySummary> flop;
+
+  /// Truyện VIP — BXH riêng cho truyện VIP (`GET /mobile/ranking/vip`,
+  /// server cache 10 phút). Rỗng khi endpoint lỗi / chưa có truyện VIP
+  /// → section tự ẩn.
+  final List<StorySummary> vip;
   final List<ContinueReadingItem> continueReading;
 
   /// Trả bản copy với riêng section [sort] được thay bằng [stories] —
@@ -501,6 +599,7 @@ class HomeFeed {
     return switch (sort) {
       'hot' => HomeFeed(
           hot: stories,
+          vip: vip,
           fresh: fresh,
           completed: completed,
           picks: picks,
@@ -511,6 +610,7 @@ class HomeFeed {
       'fresh' => HomeFeed(
           hot: hot,
           fresh: stories,
+          vip: vip,
           completed: completed,
           picks: picks,
           random: random,
@@ -521,6 +621,7 @@ class HomeFeed {
           hot: hot,
           fresh: fresh,
           completed: stories,
+          vip: vip,
           picks: picks,
           random: random,
           flop: flop,
@@ -531,6 +632,7 @@ class HomeFeed {
           fresh: fresh,
           completed: completed,
           picks: stories,
+          vip: vip,
           random: random,
           flop: flop,
           continueReading: continueReading,
@@ -541,6 +643,7 @@ class HomeFeed {
           completed: completed,
           picks: picks,
           random: stories,
+          vip: vip,
           flop: flop,
           continueReading: continueReading,
         ),
@@ -551,6 +654,17 @@ class HomeFeed {
           picks: picks,
           random: random,
           flop: stories,
+          vip: vip,
+          continueReading: continueReading,
+        ),
+      'vip' => HomeFeed(
+          hot: hot,
+          fresh: fresh,
+          completed: completed,
+          picks: picks,
+          random: random,
+          flop: flop,
+          vip: stories,
           continueReading: continueReading,
         ),
       _ => this,
@@ -588,6 +702,12 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
         ),
         // "📉 Top flop" — ít lượt đọc nhất, mirror web home.
         repo.listStories(sort: 'flop', perPage: 15),
+        // Truyện VIP — BXH riêng (server cache 10 phút). catchError:
+        // endpoint lỗi không được làm chết cả home feed.
+        repo
+            .fetchRankingVip()
+            .then((list) => list.take(15).toList())
+            .catchError((_) => <StorySummary>[]),
         repo.fetchContinueReading().catchError((_) => <ContinueReadingItem>[]),
       ]);
       state = AsyncValue.data(HomeFeed(
@@ -597,7 +717,8 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
         picks: (results[3] as PaginatedStories).stories,
         random: (results[4] as PaginatedStories).stories,
         flop: (results[5] as PaginatedStories).stories,
-        continueReading: results[6] as List<ContinueReadingItem>,
+        vip: results[6] as List<StorySummary>,
+        continueReading: results[7] as List<ContinueReadingItem>,
       ));
     } catch (e, s) {
       state = AsyncValue.error(e, s);

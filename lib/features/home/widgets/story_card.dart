@@ -39,6 +39,23 @@ class StoryCard extends ConsumerWidget {
     );
   }
 
+  /// Chip định dạng nội dung cho bìa — chỉ khi truyện KHÔNG phải text
+  /// thuần (manga/chat/video). Discovery UX: độc giả biết định dạng
+  /// trước khi bấm mà không cần vào chi tiết.
+  static (IconData, String)? _typeChip(List<String> contentTypes) {
+    for (final t in contentTypes) {
+      switch (t) {
+        case 'manga':
+          return (Icons.image_outlined, 'Manga');
+        case 'chat':
+          return (Icons.chat_bubble_outline, 'Chat');
+        case 'video':
+          return (Icons.play_circle_outline, 'Video');
+      }
+    }
+    return null;
+  }
+
   final StorySummary story;
   final VoidCallback? onTap;
   final String? badge;
@@ -52,6 +69,7 @@ class StoryCard extends ConsumerWidget {
     final isDownloaded = ref.watch(
       downloadedStoryIdsProvider.select((ids) => ids.contains(story.id)),
     );
+    final typeChip = _typeChip(story.contentTypes);
 
     return Material(
       color: Colors.transparent,
@@ -142,6 +160,40 @@ class StoryCard extends ConsumerWidget {
                           Icons.download_done,
                           size: 14,
                           color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  // Content-type chip — bottom-left (các góc trên đã
+                  // dùng cho badge chương + downloaded + VIP).
+                  if (typeChip != null)
+                    Positioned(
+                      bottom: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.65),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              typeChip.$1,
+                              size: 10,
+                              color: Colors.white.withValues(alpha: 0.9),
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              typeChip.$2,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),

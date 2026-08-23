@@ -9,6 +9,9 @@ import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
+import '../downloads/offline_library_screen.dart'
+    show downloadedChaptersCountProvider;
+import '../home/widgets/home_hero.dart' show homeHeroHiddenProvider;
 
 /// Profile tab. Plan §5.7.
 ///
@@ -76,6 +79,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final userAsync = ref.watch(currentUserProvider);
+    // Thẻ hero "Đọc & nghe offline" trên Home bị ẩn bằng nút X → thông
+    // tin chuyển về đây (nguồn duy nhất: homeHeroHiddenProvider). Khi
+    // hero còn hiện, quick action "Đã tải" trên Home đã đủ → ẩn tile
+    // này để không lặp đường vào.
+    final heroHidden = ref.watch(homeHeroHiddenProvider).value ?? false;
+    final downloadedChapters =
+        heroHidden ? ref.watch(downloadedChaptersCountProvider).value : null;
     return Scaffold(
       appBar: AppBar(title: const Text('Cá nhân')),
       body: ListView(
@@ -95,6 +105,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
           ),
           const Divider(),
+          // Đọc & nghe offline — chỉ khi thẻ hero trên Home đã bị ẩn.
+          if (heroHidden)
+            ListTile(
+              leading: const Icon(Icons.headphones_outlined),
+              title: const Text('Đọc & nghe offline'),
+              subtitle: Text(
+                downloadedChapters != null && downloadedChapters > 0
+                    ? 'Đã lưu $downloadedChapters chương về máy'
+                    : 'Tải truyện để đọc/nghe không cần mạng',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/offline-library'),
+            ),
           // "Tủ truyện" đã có tab riêng trên bottom nav → không lặp lại
           // ở đây (trước đây 2 đường vào cùng /bookshelf gây thừa).
           // "Thông báo" là dữ liệu theo tài khoản → chỉ hiện khi đã đăng
