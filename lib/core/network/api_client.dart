@@ -13,9 +13,9 @@ import '../observability/app_logger.dart';
 ///
 /// The flavor is baked into the binary at build time via the
 /// `--dart-define=APP_ENV=demo|prod` flag (see `.github/workflows/ci.yml`).
-/// End-users can also override at runtime via the env switcher in
-/// Settings → Môi trường (useful for QA to swap between demo/prod
-/// without reinstalling).
+/// There is NO runtime override — each flavor is a separate binary with a
+/// fixed environment (the old Settings env switcher was removed; see
+/// README "Kiến trúc").
 enum AppEnv { demo, prod }
 
 extension AppEnvX on AppEnv {
@@ -75,21 +75,20 @@ class ApiClient {
   String get baseUrl => env.baseUrl;
 
   static const _kJwt = 'jwt';
-  static const _kEnv = 'app_env';
 
-  /// Build the singleton. The base URL is resolved from:
-  ///   1. `--dart-define=APP_ENV` (set at build time by CI/CD), then
-  ///   2. `flutter_secure_storage` (runtime override from Settings), then
-  ///   3. `AppEnv.prod` as the default.
+  /// Build the singleton. The base URL comes ONLY from
+  /// `--dart-define=APP_ENV` (set at build time by CI/CD, default prod).
+  /// Never read an env choice from storage here: a stale value saved by an
+  /// old build with the runtime switcher would silently redirect this
+  /// binary to the other server.
   static Future<ApiClient> create() async {
     const storage = FlutterSecureStorage();
-    final savedEnvName = await storage.read(key: _kEnv);
     final compileTimeEnv = const String.fromEnvironment(
       'APP_ENV',
       defaultValue: 'prod',
     );
     final env = AppEnv.values.firstWhere(
-      (e) => e.name == (savedEnvName ?? compileTimeEnv),
+      (e) => e.name == compileTimeEnv,
       orElse: () => AppEnv.prod,
     );
 
@@ -294,15 +293,6 @@ class ApiClient {
 
   /// Are we authenticated (i.e. is there a JWT in secure storage)?
   Future<bool> isAuthenticated() async => (await readJwt()) != null;
-
-  /// Switch the active environment at runtime. Persists to secure storage
-  /// so the choice survives across app launches. The caller is expected
-  /// to trigger an app restart (or a full Riverpod container reset)
-  /// after this returns so the new baseUrl takes effect.
-  Future<void> setEnv(AppEnv newEnv) async {
-    await _storage.write(key: _kEnv, value: newEnv.name);
-    AppLogger.info('AppEnv switched to ${newEnv.name}');
-  }
 }
 
 /// Mutable holder for the in-memory JWT mirror (see [ApiClient._jwt]).
@@ -318,8 +308,10 @@ final apiClientProvider = FutureProvider<ApiClient>((ref) async {
   return client;
 });
 
-/// Currently active environment — exposed as a separate provider so the
-/// Settings screen can `ref.watch` it without re-creating the ApiClient.
+/// Currently active environment — mirrored from [ApiClient.env] on boot
+/// (see app.dart) so widgets can `ref.watch` it without touching the
+/// ApiClient FutureProvider. Read-only since the runtime switcher was
+/// removed: the env is fixed by the build flavor.
 final appEnvProvider = StateProvider<AppEnv>((ref) {
   // The FutureProvider below will overwrite this on boot, but we need a
   // sensible default for the first frame.
