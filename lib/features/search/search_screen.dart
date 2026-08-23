@@ -109,6 +109,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ref.listen(randomStoriesProvider, (prev, next) {
       next.whenOrNull(error: (e, _) => _maybeRedirectOffline(e));
     });
+    // Tap lại tab Tìm kiếm trên bottom nav → làm mới: đang có query thì
+    // chạy lại query đó (kết quả mới nhất), không thì kéo bộ truyện
+    // ngẫu nhiên mới (seed mới mỗi lần load).
+    ref.listen(searchRefreshIntentProvider, (prev, next) {
+      if (prev == next) return;
+      final q = _controller.text.trim();
+      if (_searched && q.isNotEmpty) {
+        _runSearch(q);
+      } else {
+        ref.read(randomStoriesProvider.notifier).load();
+      }
+    });
     return Scaffold(
       appBar: AppBar(title: const Text('Tìm kiếm')),
       body: Padding(
@@ -743,6 +755,12 @@ final randomStoriesProvider = StateNotifierProvider<
     RandomStoriesNotifier, AsyncValue<List<StorySummary>>>((ref) {
   return RandomStoriesNotifier(ref);
 });
+
+/// Intent "làm mới" từ bottom nav — tap lại tab Tìm kiếm khi đang ở
+/// đó thì counter tăng lên, màn hình lắng nghe và tự chạy lại query
+/// hiện tại (nếu có) hoặc kéo bộ truyện ngẫu nhiên mới. Pattern giống
+/// bookshelfTabIntentProvider: nav không đụng thẳng vào state màn hình.
+final searchRefreshIntentProvider = StateProvider<int>((ref) => 0);
 
 class RandomStoriesNotifier
     extends StateNotifier<AsyncValue<List<StorySummary>>> {
