@@ -2,9 +2,9 @@
 
 Ứng dụng đọc truyện mobile cho [khongdich.com](https://khongdich.com). Android-first, xây dựng theo `docs/plan-flutter-app.md` (v4) trong repo backend.
 
-## Trạng thái hiện tại (v0.5.0)
+## Trạng thái hiện tại (v0.6.0)
 
-**Build:** `flutter analyze` → 0 lỗi · ~206 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases.
+**Build:** `flutter analyze` → 0 lỗi · 206 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases.
 
 ### Kiến trúc
 
@@ -44,13 +44,17 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 | **Bookshelf tab "Tất cả"** (gộp bookmark + đã tải, dedupe) | ✅ |
 | **Bookshelf auto-fallback offline** (bấm truyện đã tải → offline detail) | ✅ |
 | **Story-level downloaded badge** (hiện trên bìa mọi screen) | ✅ |
+| **Content-type chip trên bìa** (Manga/Chat/Video ở góc dưới bìa card) | ✅ |
+| **Home discovery-first**: Chợ Phiên → Đọc tiếp → Ngẫu nhiên → Mới cập nhật → Top flop → Đang hot | ✅ |
+| **Thẻ hero Home ẩn được** (nút X, persist) — info chuyển về Cá nhân, bật lại trong Cài đặt | ✅ |
+| **Skeleton loading shimmer** trên Home | ✅ |
 | **Bottom nav trên story detail** (cả online + offline) | ✅ |
 | On-device TTS (`audio_service` + `flutter_tts`) | ✅ |
 | **TTS engine selector** (chọn `com.google.android.tts` / Samsung / ...) | ✅ |
 | **TTS voice dropdown** (hiện cả locale: `vi-vn-language (vi-VN)`) | ✅ |
 | TTS control panel (play/pause/speed/voice/engine/progress) | ✅ |
 | TTS text highlighting (bôi đoạn đang đọc) | ✅ |
-| Drift on-disk SQLite store (7 bảng, schema v7) | ✅ |
+| Drift on-disk SQLite store (8 bảng, schema v8) | ✅ |
 | Batch sync (`POST /api/v1/mobile/sync`) | ✅ |
 | FCM push (`firebase_messaging`) | ❌ đã bỏ — dùng in-app notifications |
 | In-app notifications (GET /api/v1/mobile/notifications) | ✅ |
@@ -82,64 +86,72 @@ lib/
 ├── app.dart                             # MaterialApp.router + splash khi ApiClient loading
 ├── core/
 │   ├── auth/auth_service.dart           # Google Sign-In → server JWT (single source of truth)
-│   ├── database/app_database.dart       # Drift schema (7 bảng, v7)
+│   ├── database/app_database.dart       # Drift schema (8 bảng, v8)
 │   ├── markdown/                        # AST + parser + renderer + TTS preprocessor
-│   ├── network/api_client.dart          # Dio + Bearer JWT + env từ dart-define
+│   │                                    #   (ast/parser/renderer/plain_to_markdown/preprocessor_tts)
+│   ├── network/
+│   │   ├── api_client.dart              # Dio + Bearer JWT; env cố định theo flavor (--dart-define)
+│   │   └── app_image_cache.dart         # Cache ảnh dùng chung cho ảnh CDN immutable
 │   ├── observability/app_logger.dart
-│   ├── router/app_router.dart           # go_router + OfflineChapterReader (dùng ReaderBody)
+│   ├── router/app_router.dart           # go_router thuần routing: 4-tab shell + route table
 │   ├── shell/main_shell.dart            # bottom-nav shell + AppBottomNav
 │   ├── theme/app_theme.dart             # M3 theme + ThemeModeNotifier
-│   └── widgets/
-│       ├── app_bottom_nav.dart          # Reusable bottom nav (MainShell + detail screens)
-│       ├── emoji_text.dart              # Render :name: → ảnh (parse content_html server)
-│       ├── emoji_picker_sheet.dart      # Emoji picker (dùng /api/v1/mobile/emojis)
-│       └── share_story_sheet.dart       # Copy link + mã QR cho story detail
+│   ├── utils/{format, notification_permission}.dart
+│   └── widgets/                         # app_bottom_nav, emoji_text/picker, share_story_sheet,
+│                                        # follow_button, report_sheet, app_retry_view/snack_bar
 ├── features/
 │   ├── auth/auth_screen.dart            # google_sign_in → /mobile/auth/token
+│   ├── author/author_screen.dart        # Trang tác giả công khai (/author/:username)
 │   ├── bookshelf/bookshelf_screen.dart  # 6-tab: Tất cả / Đang đọc / Đã đọc xong / Sẽ đọc / Yêu thích / Đã tải
+│   ├── comments/
+│   │   ├── comments_screen.dart         # Bình luận chương/truyện
+│   │   └── segment_composer_sheet.dart  # Bình luận đoạn / góp ý tác giả (long-press paragraph)
+│   ├── discover/{explore_screen, ranking_screen, browse_screens}.dart  # BXH, thể loại, tag
 │   ├── downloads/
 │   │   ├── downloads_screen.dart        # TabBar: Đang tải + Đã tải (real-time Drift streams)
 │   │   ├── offline_library_screen.dart  # StreamProvider + downloadedStoryIdsProvider
 │   │   └── offline_story_detail_screen.dart   # + bottom nav
-│   ├── home/{home_screen.dart, widgets/}
-│   │   ├── widgets/story_card.dart      # ConsumerWidget — auto green downloaded badge
-│   │   └── widgets/market_section.dart  # Chợ Phiên section (status + story rail + chat preview)
-│   ├── market/
-│   │   └── market_screen.dart           # Họp Chợ realtime (SSE) + emoji picker
-│   ├── notifications/notifications_screen.dart
+│   ├── home/
+│   │   ├── home_screen.dart             # + publish_web_sheet.dart
+│   │   └── widgets/                     # story_card (badge đã tải), market_section, hero...
+│   ├── market/market_screen.dart        # Họp Chợ realtime (SSE) + emoji picker
+│   ├── notifications/
+│   │   ├── notifications_screen.dart    # + unread_badge_provider.dart
 │   ├── profile/profile_screen.dart
 │   ├── reader/
 │   │   ├── chapter_reader_screen.dart   # Online reader — thin wrapper gọi ReaderBody
-│   │   ├── chapter_provider.dart
-│   │   ├── reader_settings_provider.dart
+│   │   ├── offline_chapter_reader.dart  # Hybrid reader (DB trước → fallback API) — tách khỏi router
+│   │   ├── chapter_provider.dart        # + chapter_tts_support, reader_settings_provider
 │   │   ├── services/reading_progress_service.dart
-│   │   ├── views/                       # text/manga/chat/video views
+│   │   ├── views/                       # text/manga/chat/video/visual views
 │   │   └── widgets/
 │   │       ├── reader_body.dart         # SHARED reader body (online + offline)
 │   │       ├── reader_helpers.dart      # resolveReaderTheme, buildChapterContent, swipe/page wrappers
 │   │       ├── chapter_list_sheet.dart  # SHARED chapter list bottom sheet
 │   │       ├── reader_bar.dart          # App bar + TTS + chapter list + settings
-│   │       └── reader_settings_sheet.dart
+│   │       └── reader_settings_sheet.dart     # + tts_switch_banner.dart
 │   ├── search/search_screen.dart        # + offline fallback → bookshelf tab Đã tải
 │   ├── settings/settings_screen.dart    # Theme app + reader settings (đã bỏ env switcher)
-│   ├── story/story_detail_screen.dart   # 3:4 cover + download button + realtime + bottom nav
+│   ├── story/
+│   │   ├── story_detail_screen.dart     # 3:4 cover + download button + realtime + bottom nav
+│   │   └── story_reviews_screen.dart    # Đánh giá truyện
 │   └── tts/
-│       ├── tts_audio_handler.dart       # engine + voice + speed + chunk chaining
+│       ├── tts_audio_handler.dart       # State machine TTS (bug #1–#11 khóa bằng test riêng)
 │       ├── tts_control_panel.dart       # Bottom sheet: play/pause/speed/voice/engine/progress
-│       └── tts_mini_player.dart
-├── models/{chapter_content,story,comment,market}.dart
-├── repositories/story_repository.dart    # JSON client cho mọi /api/v1/mobile endpoints
-├── repositories/market_repository.dart   # Chợ Phiên section/history/post/SSE stream
+│       ├── tts_mini_player.dart         # + tts_now_playing_bar, tts_bar_state
+│       └── tts_audio_exporter.dart      # TTS → WAV → lưu/chia sẻ (tác giả)
+├── models/
+│   ├── chapter_content.dart             # Sealed ChapterContent: text/manga/chat/video (+visual)
+│   ├── story.dart                       # + comment.dart, market.dart, review.dart
+├── repositories/
+│   ├── story_repository.dart            # JSON client cho mọi /api/v1/mobile endpoints
+│   ├── story_dtos.dart                  # DTO của mobile API (re-export từ story_repository)
+│   └── market_repository.dart           # Chợ Phiên section/history/post/SSE stream
 └── services/
-    ├── download_manager.dart             # Serial queue + batch + manga image fetch
-    ├── emoji_service.dart                # Emoji feed + resolve :name: → image URL
-    └── manga_image_downloader.dart       # Download manga images → local files
-
-android/
-└── app/
-    ├── build.gradle.kts                  # demo + prod flavors, signing, desugaring
-    └── src/{main,demo,prod,debug,profile}/
-        └── res/values/strings.xml        # app_name override per flavor
+    ├── download_manager.dart            # Serial queue + batch + manga image fetch
+    ├── chapter_cache_service.dart       # memory → Drift auto_cache (LRU) → API + prefetch
+    ├── emoji_service.dart               # Emoji feed + resolve :name: → image URL
+    └── manga_image_downloader.dart      # Download manga images → local files
 ```
 
 ## Chạy local
@@ -161,7 +173,7 @@ flutter run --flavor=prod --dart-define=APP_ENV=prod
 
 `.github/workflows/ci.yml` (3 job, tối ưu cache):
 
-1. **Analyze** + **Test** — 2 job chạy song song trên mọi push (main, tag) và PR. Fail nếu có issue (146 tests).
+1. **Analyze** + **Test** — 2 job chạy song song trên mọi push (main, tag) và PR. Fail nếu có issue (206 tests).
 2. **Build Android (prod)** — chỉ chạy khi push **tag `v*`** (sau khi 2 job trên xanh): build APK + AAB với cache Gradle (`gradle/actions/setup-gradle`) + daemon bật để tái dùng giữa 2 build → validate tag khớp `version` trong pubspec.yaml → tạo GitHub Release chính thức kèm artifacts.
 
 Push main **không** tạo release (trước đây spam `dev-*-<sha>` prerelease). Push mới hủy run cũ của cùng ref (concurrency).
