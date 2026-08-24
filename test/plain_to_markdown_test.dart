@@ -53,10 +53,17 @@ void main() {
       expect(out, 'Đoạn 1 dòng 1  \nĐoạn 1 dòng 2  \n\n---\n\n# Tiêu đề\n\nCuối  ');
     });
 
-    test('render qua parser: hard break xuống dòng, paragraph tách', () {
+    test('render qua parser: 1 Enter = 1 paragraph (WYSIWYG như web)',
+        () {
       final md = plainTextToMarkdown('Dòng A\nDòng B\n\nĐoạn 2');
       final blocks = MarkdownParser().parse(md);
-      expect(blocks.length, 2); // 2 paragraphs
+      // Quyết định 2026-08: giữ WYSIWYG — hard break KHÔNG tách block.
+      // "Dòng A\nDòng B" là MỘT Paragraph (line break trong RichText),
+      // đơn vị highlight/anchor bình luận = đúng đoạn tác giả soạn.
+      expect(blocks.length, 2);
+      expect((blocks[0] as Paragraph).plainText, contains('Dòng A'));
+      expect((blocks[0] as Paragraph).plainText, contains('Dòng B'));
+      expect(blocks[1], isA<Paragraph>());
     });
   });
 }

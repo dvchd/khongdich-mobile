@@ -2,6 +2,11 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 /// Cache manager dùng chung cho toàn bộ ảnh trong app.
 ///
+/// BẮT BUỘC mix [ImageCacheManager]: mọi chỗ truyền `memCacheWidth`/
+/// `maxWidthDiskCache` cho `CachedNetworkImage` sẽ fail assertion
+/// ("cacheManager is ImageCacheManager") nếu manager thường → ảnh không
+/// bao giờ render, chỉ hiện errorWidget (bug ảnh chương chữ 2026-08).
+///
 /// Ảnh được serve từ CDN với URL **immutable** — mỗi ảnh có UUID riêng,
 /// ảnh mới = URL mới, ảnh cũ không bao giờ đổi nội dung (xem
 /// `api/upload.rs` backend: key dạng `uploads/<tháng>/<userId>/<uuid>`).
@@ -16,14 +21,14 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 ///     Cài đặt để giải phóng thủ công).
 ///
 /// Có thể nâng/giảm giới hạn tuỳ nhu cầu thực tế.
-class AppImageCache {
-  AppImageCache._();
+class AppImageCache extends CacheManager with ImageCacheManager {
+  AppImageCache._() : super(_config);
 
-  static final CacheManager instance = CacheManager(
-    Config(
-      'khongdichImageCache',
-      stalePeriod: const Duration(days: 3650),
-      maxNrOfCacheObjects: 20000,
-    ),
+  static final Config _config = Config(
+    'khongdichImageCache',
+    stalePeriod: const Duration(days: 3650),
+    maxNrOfCacheObjects: 20000,
   );
+
+  static final AppImageCache instance = AppImageCache._();
 }

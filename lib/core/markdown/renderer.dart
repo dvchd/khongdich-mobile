@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../network/app_image_cache.dart';
+import '../../core/observability/app_logger.dart';
 import 'ast.dart';
 
 /// Reader typography + palette. Plan §14.1 design system; runtime
@@ -380,19 +381,28 @@ class _MarkdownRendererState extends State<MarkdownRenderer> {
               fit: BoxFit.fitWidth,
               memCacheWidth: 1200,
               maxWidthDiskCache: 1200,
-              errorWidget: (_, __, ___) => Container(
-                height: 120,
-                color: t.blockBackground,
-                alignment: Alignment.center,
-                child: Text(alt ?? '[image]', style: t.bodyStyle),
-              ),
+              errorWidget: (_, __, err) {
+                // Log vĩnh viễn — lỗi ảnh trước đây im lặng (chỉ hiện
+                // errorWidget) nên bug ImageCacheManager không ai phát hiện.
+                AppLogger.warning('MarkdownRenderer: ảnh tải lỗi', err);
+                return Container(
+                  height: 120,
+                  color: t.blockBackground,
+                  alignment: Alignment.center,
+                  child: Text(alt ?? '[image]', style: t.bodyStyle),
+                );
+              },
             ),
           ),
-          if (caption != null || alt != null)
+          // CHỈ hiện caption tường minh (cú pháp `![alt](url "caption")`).
+          // KHÔNG fallback sang alt: alt thường là tên file tác giả dán
+          // vào ("3310.webp", "image.png"...) — vô nghĩa với người đọc,
+          // và web cũng không bao giờ hiển thị nó dưới ảnh.
+          if (caption != null)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                caption ?? alt!,
+                caption,
                 textAlign: TextAlign.center,
                 style: t.bodyStyle.copyWith(
                   fontSize: 13,

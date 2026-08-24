@@ -56,7 +56,10 @@ class TtsMarkdownPreprocessor {
 
     for (var i = 0; i < blocks.length; i++) {
       final block = blocks[i];
-      if (block is CodeBlock) continue;
+      // Code blocks are skipped entirely. Ảnh đứng riêng dòng cũng vậy:
+      // đọc alt text ("ảnh bìa chương 1...") thành lời là nhiễu — web
+      // TTS cũng strip image syntax (khongdich chapter_to_tts_text).
+      if (block is CodeBlock || block is ImageBlock) continue;
       var raw = block.plainText.trim();
       if (raw.isEmpty) continue;
       if (block is Heading) {
@@ -68,7 +71,7 @@ class TtsMarkdownPreprocessor {
         pushCurrent(current);
         current = [];
         currentLen = 0;
-        for (final piece in _splitSentences(raw, 500)) {
+        for (final piece in splitSentences(raw, 500)) {
           chunks.add(TtsChunk(text: piece, blocks: [
             TtsChunkBlock(blockIndex: i, text: piece),
           ]));
@@ -90,9 +93,11 @@ class TtsMarkdownPreprocessor {
   /// Split a long paragraph into <= [maxLen]-char pieces on sentence
   /// boundaries (`. `, `! `, `? `). Falls back to hard slicing if a single
   /// sentence exceeds [maxLen].
+  ///
+  /// Public: [TtsAudioExporter] tái dùng để chẻ cue phụ đề SRT theo câu.
   static final RegExp _sentenceEndRegExp = RegExp(r'(?<=[.!?])\s+');
 
-  static List<String> _splitSentences(String text, int maxLen) {
+  static List<String> splitSentences(String text, int maxLen) {
     final result = <String>[];
     final sentences = text.split(_sentenceEndRegExp);
     var buf = StringBuffer();

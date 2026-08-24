@@ -94,8 +94,9 @@ class MarkdownParser {
         continue;
       }
 
-      // Default: paragraph.
-      blocks.add(_parseParagraph(ctx));
+      // Default: paragraph (có thể tách thành các ImageBlock nếu cả đoạn
+      /// là ảnh đứng riêng dòng — xem [_parseParagraph]).
+      blocks.addAll(_parseParagraph(ctx));
     }
     return blocks;
   }
@@ -246,7 +247,18 @@ class MarkdownParser {
     return CodeBlock(null, trimmed);
   }
 
-  Paragraph _parseParagraph(_ParseContext ctx) {
+  /// Parse a run of non-blank lines into blocks.
+  ///
+  /// WYSIWYG theo web (quyết định 2026-08): 1 Enter = line break trong
+  /// CÙNG paragraph, 2 Enter = tách paragraph — KHÔNG chẻ hard break
+  /// thành nhiều Paragraph. Đơn vị anchor bình luận đoạn / highlight /
+  /// phân trang = đúng "đoạn" tác giả soạn.
+  ///
+  /// Ngoại lệ duy nhất: **ảnh đứng riêng dòng** `![alt](url)` emit
+  /// [ImageBlock] để renderer vẽ ảnh thật — trước đây ảnh bị thay bằng
+  /// text `[alt]` nên chương chữ không bao giờ hiển thị được ảnh. Ảnh
+  /// trộn lẫn text trên cùng dòng vẫn fallback text `[alt]`.
+  List<Block> _parseParagraph(_ParseContext ctx) {
     final buf = StringBuffer();
     while (!ctx.isAtEnd && !ctx.currentIsBlank) {
       final line = ctx.current;
@@ -263,7 +275,44 @@ class MarkdownParser {
       buf.write(line);
       ctx.advance();
     }
-    return Paragraph(_parseInline(buf.toString()));
+    return _paragraphTextToBlocks(buf.toString());
+  }
+
+  /// Chuyển text paragraph thô thành block: cả đoạn chỉ gồm ảnh đứng
+  /// riêng dòng → các [ImageBlock]; ngược lại [Paragraph] như cũ.
+  List<Block> _paragraphTextToBlocks(String text) {
+    if (text.isEmpty) return const [];
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return const [];
+    final lines = trimmed
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    final images = <ImageBlock>[];
+    for (final line in lines) {
+      final img = _parseStandaloneImage(line);
+      if (img == null) return [Paragraph(_parseInline(trimmed))];
+      images.add(img);
+    }
+    return images;
+  }
+
+  /// Match TOÀN BỘ dòng là một ảnh markdown → ImageBlock. URL không
+  /// an toàn (không http/https/mailto//) → null (fallback text `[alt]`
+  /// như behavior cũ, không bao giờ fetch scheme lạ).
+  ImageBlock? _parseStandaloneImage(String line) {
+    final m = _imageRegExp.matchAsPrefix(line, 0);
+    if (m == null || m.end != line.length) return null;
+    final url = m.group(2) ?? '';
+    if (!_isSafeUrl(url)) return null;
+    final alt = (m.group(1) ?? '').trim();
+    final title = m.group(3)?.trim();
+    return ImageBlock(
+      url,
+      alt: alt.isEmpty ? null : alt,
+      caption: (title != null && title.isEmpty) ? null : title,
+    );
   }
 
   // ---- Inline parsing ----
@@ -482,7 +531,7 @@ class MarkdownParser {
     r'\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
   );
   static final RegExp _imageRegExp = RegExp(
-    r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
+    r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)',
   );
   static final RegExp _bulletItemRegExp = RegExp(r'^\s{0,3}([-*+])\s+');
 
