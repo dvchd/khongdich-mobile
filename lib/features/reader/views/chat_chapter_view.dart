@@ -345,7 +345,13 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       child: Column(
         children: [
           Expanded(
-            child: ListView.builder(
+            // SafeArea đáy cho TOÀN BỘ luồng cuốn: hint đang gõ/chạm/Gửi
+            // lẫn khối "— hết chương —" + nút điều hướng đều nhô lên trên
+            // gesture bar hệ thống khi nội dung dài đẩy xuống đáy (trước
+            // đây chỉ thanh input được nâng).
+            child: SafeArea(
+              top: false,
+              child: ListView.builder(
               controller: _controller,
               padding: const EdgeInsets.symmetric(
                   vertical: 12, horizontal: 8),
@@ -431,6 +437,7 @@ class _ChatChapterViewState extends State<ChatChapterView> {
                 }
                 return const SizedBox.shrink();
               },
+              ),
             ),
           ),
           // Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
