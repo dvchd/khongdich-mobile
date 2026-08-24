@@ -159,6 +159,10 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     setState(() {});
     _timer = Timer(Duration(milliseconds: delayMs), () {
       if (!mounted) return;
+      // Nhả slot timer TRƯỚC khi reveal — nếu không, _timer giữ object
+      // đã fire khiến điều kiện "idle" ở _handleTap sai mãi → tap để
+      // sang tin kế bị vô hiệu.
+      _timer = null;
       _typingCharName = null;
       _revealCurrent();
     });
@@ -171,7 +175,9 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     _afterMessageRevealed();
   }
 
-  /// Mirror web `afterMessageRevealed` + chuỗi tự nối sau khi "gửi".
+  /// Mirror web `afterMessageRevealed`: KHÔNG tự nối chuỗi vô hạn —
+  /// sau mỗi tin chỉ "mở sẵn input" nếu tin kế là của "Bạn"; còn lại
+  /// dừng, đợi người đọc chạm (web: prefillNextMe).
   void _afterMessageRevealed() {
     if (!_hasMore) {
       _fireAllRevealed();
@@ -181,16 +187,15 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       });
       return;
     }
-    // Chuỗi tự nối: tin kế tiếp là của "Bạn" → mở input gõ luôn
-    // (web: prefillNextMe); không phải dialogue → trễ ngắn 150ms;
-    // dialogue thường → trễ 400ms "suy nghĩ" rồi hiện đang gõ.
+    _prefillNextMe();
+  }
+
+  /// Mirror web `prefillNextMe`: tin kế là dialogue của "Bạn" → mở giả
+  /// thanh input gõ dần luôn.
+  void _prefillNextMe() {
     final next = widget.messages[_revealed];
     if (next.messageType == 'dialogue' && _isMe(next)) {
       _startInputTypewriter(next);
-    } else if (next.messageType != 'dialogue') {
-      _timer = Timer(const Duration(milliseconds: 150), _startNext);
-    } else {
-      _timer = Timer(const Duration(milliseconds: 400), _startNext);
     }
   }
 
@@ -232,6 +237,15 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     _inputTyping = false;
     _inputText = '';
     _revealCurrent();
+    // Mirror web `sendInput`: sau khi "gửi", tự chơi đúng MỘT tin kế
+    // (150ms nếu non-dialogue, 400ms nếu dialogue) rồi dừng chờ chạm.
+    if (_hasMore) {
+      final next = widget.messages[_revealed];
+      final delayMs = next.messageType != 'dialogue' ? 150 : 400;
+      _timer = Timer(Duration(milliseconds: delayMs), () {
+        if (mounted) _startNext();
+      });
+    }
   }
 
   // ─── Tap handling ─────────────────────────────────────────────────

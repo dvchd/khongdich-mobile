@@ -63,6 +63,26 @@ void main() {
     expect(find.byIcon(Icons.send), findsNothing);
   });
 
+  testWidgets('không tự nối chuỗi vô hạn — dừng chờ chạm giữa các tin',
+      (tester) async {
+    await pumpChat(tester, [
+      dialogue('c1', 'Tin một.'),
+      dialogue('c1', 'Tin hai.'),
+    ]);
+    // Tin đầu tự chơi (chỉ báo đang gõ 400ms) rồi DỰNG.
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Tin một.'), findsOneWidget);
+    expect(find.text('Tin hai.'), findsNothing);
+
+    // Chạm → tin hai chơi (đang gõ rồi hiện).
+    await tester.tap(find.byType(ChatChapterView));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('đang gõ'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('Tin hai.'), findsOneWidget);
+    expect(find.text('— hết chương —'), findsOneWidget);
+  });
+
   testWidgets('action/narration/system hiển thị đúng kiểu (nghiêng/giữa)',
       (tester) async {
     await pumpChat(tester, const [
@@ -70,14 +90,17 @@ void main() {
       ChatMessage(id: 'm2', characterId: null, content: 'Bầu trời tối sầm.', messageType: 'narration'),
       ChatMessage(id: 'm3', characterId: null, content: 'Hệ thống đã online', messageType: 'system'),
     ]);
-    // Chuỗi tự nối: m1 hiện ngay → timer 150ms → m2 → 150ms → m3.
-    await tester.pump(const Duration(milliseconds: 200));
-    await tester.pump(const Duration(milliseconds: 200));
-    await tester.pump(const Duration(milliseconds: 200));
-
+    // Chuỗi KHÔNG tự nối: mỗi tin cần một chạm (mirror web).
+    await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('✦ hít một hơi sâu'), findsOneWidget);
+
+    await tester.tap(find.byType(ChatChapterView));
+    await tester.pump(const Duration(milliseconds: 200));
     final narration = tester.widget<Text>(find.text('Bầu trời tối sầm.'));
     expect(narration.style?.fontStyle, FontStyle.italic);
+
+    await tester.tap(find.byType(ChatChapterView));
+    await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Hệ thống đã online'), findsOneWidget);
   });
 
@@ -90,7 +113,9 @@ void main() {
     // c1: chỉ báo đang gõ clamp(4*25=100→400ms).
     await tester.pump(const Duration(milliseconds: 450));
     expect(find.text('Một.'), findsOneWidget);
-    // "Bạn": prefill 350ms → gõ 4 ký tự * 35ms → trễ gửi 450ms → commit.
+    // Chạm để sang tin "Bạn" → input gõ dần: prefill 350ms + 4 ký tự
+    // * 35ms + trễ gửi 450ms → commit.
+    await tester.tap(find.byType(ChatChapterView));
     await tester.pump(const Duration(milliseconds: 360));
     await tester.pump(const Duration(milliseconds: 40));
     await tester.pump(const Duration(milliseconds: 40));
@@ -102,7 +127,7 @@ void main() {
     // Nav cuối chương xuất hiện sau delay 1200ms của web-mirror.
     expect(find.text('Sau'), findsNothing);
     await tester.pump(const Duration(milliseconds: 1300));
-    await tester.pump(); // flush frame cho setState trong timer callback
+    await tester.pump();
     expect(find.text('Sau'), findsOneWidget);
   });
 }
