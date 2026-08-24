@@ -1,18 +1,22 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/network/app_image_cache.dart';
 import '../../../models/chapter_content.dart';
 
-/// Chat chapter view — Messenger-style bubbles with progressive reveal.
+/// Chat chapter view — mô phỏng cơ chế `chatFullReader()` của web:
 ///
-/// Matches the web's `chatFullReader()` mechanism:
-///   - Messages are revealed one-by-one on tap (progressive reveal).
-///   - "Me" character (named "bạn"/"ban"/"tôi"/"toi"/"ta") → right side.
-///   - Other characters → left side with avatar + colored name.
-///   - Message types: dialogue (left/right), action (✦ italic),
-///     narration (centered), system (small muted).
-///   - When all messages are revealed, show end-of-chapter navigation.
+///   - Reveal tuần tự với hiệu ứng giả lập app chat:
+///       · Tin của nhân vật khác → chỉ báo "X đang gõ..." (25ms/ký tự,
+///         kẹp 400–1500ms) rồi bubble mới hiện.
+///       · Tin của "Bạn" → giả thanh input gõ dần từng ký tự (35ms/ký tự)
+///         rồi mới "gửi" sang bubble phải.
+///       · action/narration/system → hiện ngay.
+///   - Chạm khi đang animate = bỏ qua hiệu ứng, hiện ngay kết quả.
+///   - "Me" character: tên "bạn"/"ban"/"tôi"/"toi"/"ta" → bên phải.
+///   - Hết chương: nav hiện sau 1.2s như web.
 class ChatChapterView extends StatefulWidget {
   const ChatChapterView({
     super.key,
@@ -40,27 +44,56 @@ class ChatChapterView extends StatefulWidget {
 }
 
 class _ChatChapterViewState extends State<ChatChapterView> {
+  /// Số tin đã hiển thị (giống `revealed` bên web).
   int _revealed = 0;
-  final _fallbackScrollController = ScrollController();
+
+  /// Tên nhân vật đang hiện chỉ báo "đang gõ..." (null = không có).
+  String? _typingCharName;
+
+  /// Đang mô phỏng thanh input gõ dần cho tin của "Bạn".
+  bool _inputTyping = false;
+  String _inputText = '';
+
+  /// Nav cuối chương đã hiện chưa (web: trễ 1200ms).
+  bool _showEndNav = false;
   bool _allRevealedFired = false;
+
+  Timer? _timer;
+  final _fallbackScrollController = ScrollController();
 
   ScrollController get _controller =>
       widget.scrollController ?? _fallbackScrollController;
 
+  bool get _animating => _typingCharName != null || _inputTyping;
+  bool get _hasMore => _revealed < widget.messages.length;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startNext());
+  }
+
   @override
   void didUpdateWidget(covariant ChatChapterView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reset the progressive reveal when the chapter changes — without
-    // this the new chapter opens with the old chapter's reveal count
-    // (messages already visible, or even stuck at "hết chương").
+    // Reset toàn bộ khi đổi chương — hủy timer trước để không leak callback
+    // trỏ vào danh sách message cũ.
     if (oldWidget.messages != widget.messages) {
+      _timer?.cancel();
+      _timer = null;
       _revealed = 0;
+      _typingCharName = null;
+      _inputTyping = false;
+      _inputText = '';
+      _showEndNav = false;
       _allRevealedFired = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startNext());
     }
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
     _fallbackScrollController.dispose();
     super.dispose();
   }
@@ -69,12 +102,16 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     return widget.participants.cast<ChatParticipant?>().firstWhere((p) {
       if (p == null) return false;
       final name = p.name.toLowerCase().trim();
-      return name == 'bạn' ||
-          name == 'ban' ||
-          name == 'tôi' ||
-          name == 'toi' ||
-          name == 'ta';
+      return _isMeName(name);
     }, orElse: () => null);
+  }
+
+  static bool _isMeName(String lowerName) {
+    return lowerName == 'bạn' ||
+        lowerName == 'ban' ||
+        lowerName == 'tôi' ||
+        lowerName == 'toi' ||
+        lowerName == 'ta';
   }
 
   bool _isMe(ChatMessage msg) {
@@ -83,47 +120,161 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     if (meChar != null && msg.characterId == meChar.id) return true;
     final byId = {for (final p in widget.participants) p.id: p};
     final char = byId[msg.characterId];
-    if (char != null) {
-      final name = char.name.toLowerCase().trim();
-      return name == 'bạn' ||
-          name == 'ban' ||
-          name == 'tôi' ||
-          name == 'toi' ||
-          name == 'ta';
-    }
+    if (char != null) return _isMeName(char.name.toLowerCase().trim());
     return false;
   }
 
-  void _revealNext() {
-    if (_revealed < widget.messages.length) {
-      setState(() {
-        _revealed++;
-        if (_revealed >= widget.messages.length) {
-          _allRevealedFired = true;
-        }
+  // ─── Core reveal logic (mirror chatFullReader.revealMessage) ──────
+
+  void _startNext() {
+    if (!mounted || !_hasMore) return;
+    final msg = widget.messages[_revealed];
+
+    // "Me" dialogue → giả thanh input gõ dần (web: startInputTypewriter).
+    if (msg.messageType == 'dialogue' && _isMe(msg)) {
+      _startInputTypewriter(msg);
+      return;
+    }
+
+    // Non-dialogue types hiện ngay — không chỉ báo gõ.
+    if (msg.messageType != 'dialogue') {
+      _revealCurrent();
+      return;
+    }
+
+    // Nhân vật khác → "đang gõ..." với delay theo độ dài tin.
+    final text = msg.content;
+    _typingCharName =
+        widget.participants
+            .cast<ChatParticipant?>()
+            .firstWhere(
+              (p) => p != null && p.id == msg.characterId,
+              orElse: () => null,
+            )
+            ?.name ??
+        '';
+    final delayMs = text.isEmpty
+        ? 300
+        : (text.length * 25).clamp(400, 1500);
+    setState(() {});
+    _timer = Timer(Duration(milliseconds: delayMs), () {
+      if (!mounted) return;
+      _typingCharName = null;
+      _revealCurrent();
+    });
+  }
+
+  void _revealCurrent() {
+    if (!mounted) return;
+    setState(() => _revealed++);
+    _scrollToBottom();
+    _afterMessageRevealed();
+  }
+
+  /// Mirror web `afterMessageRevealed` + chuỗi tự nối sau khi "gửi".
+  void _afterMessageRevealed() {
+    if (!_hasMore) {
+      _fireAllRevealed();
+      // Web: nav cuối chương hiện sau 1200ms.
+      _timer = Timer(const Duration(milliseconds: 1200), () {
+        if (mounted) setState(() => _showEndNav = true);
       });
-      if (_allRevealedFired) {
-        widget.onAllRevealed?.call();
-      }
-      // Auto-scroll to the new message
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_controller.hasClients) {
-          _controller.animateTo(
-            _controller.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
+      return;
+    }
+    // Chuỗi tự nối: tin kế tiếp là của "Bạn" → mở input gõ luôn
+    // (web: prefillNextMe); không phải dialogue → trễ ngắn 150ms;
+    // dialogue thường → trễ 400ms "suy nghĩ" rồi hiện đang gõ.
+    final next = widget.messages[_revealed];
+    if (next.messageType == 'dialogue' && _isMe(next)) {
+      _startInputTypewriter(next);
+    } else if (next.messageType != 'dialogue') {
+      _timer = Timer(const Duration(milliseconds: 150), _startNext);
+    } else {
+      _timer = Timer(const Duration(milliseconds: 400), _startNext);
     }
   }
 
+  // ─── Fake input bar typewriter cho tin của "Bạn" ──────────────────
+
+  void _startInputTypewriter(ChatMessage msg) {
+    _inputTyping = true;
+    _inputText = '';
+    setState(() {});
+    _scrollToBottom();
+
+    final text = msg.content;
+    if (text.isEmpty) {
+      _commitInput();
+      return;
+    }
+    var idx = 0;
+    void tick() {
+      if (!mounted || !_inputTyping) return;
+      idx++;
+      setState(() => _inputText = text.substring(0, idx));
+      _scrollToBottom();
+      if (idx >= text.length) {
+        // Gõ xong — nghỉ một nhịp rồi tự "gửi".
+        _timer = Timer(const Duration(milliseconds: 450), () {
+          if (mounted && _inputTyping) _commitInput();
+        });
+      } else {
+        _timer = Timer(const Duration(milliseconds: 35), tick);
+      }
+    }
+
+    _timer = Timer(const Duration(milliseconds: 350), tick);
+  }
+
+  void _commitInput() {
+    _timer?.cancel();
+    _timer = null;
+    _inputTyping = false;
+    _inputText = '';
+    _revealCurrent();
+  }
+
+  // ─── Tap handling ─────────────────────────────────────────────────
+
+  /// Chạm khi đang animate → bỏ qua hiệu ứng, hiện ngay kết quả (mobile
+  /// nicety; web thì bỏ qua tap giữa chừng). Idle → bắt đầu bước kế tiếp
+  /// nếu chuỗi tự nối chưa chạy (luôn chạy nên chủ yếu là fast-forward).
+  void _handleTap() {
+    if (_animating) {
+      final wasInput = _inputTyping;
+      final hadTypingChar = _typingCharName != null;
+      if (hadTypingChar) {
+        _timer?.cancel();
+        _typingCharName = null;
+        _revealCurrent();
+      } else if (wasInput) {
+        _commitInput();
+      }
+      return;
+    }
+    // Không animate mà vẫn còn tin (sau fast-forward liên tiếp) → chạy nốt.
+    if (_hasMore && _timer == null) _startNext();
+  }
+
   void _revealAll() {
-    setState(() {
-      _revealed = widget.messages.length;
-      _allRevealedFired = true;
-    });
+    _timer?.cancel();
+    _timer = null;
+    _typingCharName = null;
+    _inputTyping = false;
+    _inputText = '';
+    setState(() => _revealed = widget.messages.length);
+    _scrollToBottom();
+    _fireAllRevealed();
+    setState(() => _showEndNav = true);
+  }
+
+  void _fireAllRevealed() {
+    if (_allRevealedFired) return;
+    _allRevealedFired = true;
     widget.onAllRevealed?.call();
+  }
+
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_controller.hasClients) {
         _controller.animateTo(
@@ -135,92 +286,118 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     });
   }
 
+  // ─── Build ────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final byId = {for (final p in widget.participants) p.id: p};
     final visibleMessages = widget.messages.take(_revealed).toList();
-    final hasMore = _revealed < widget.messages.length;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
-      onTap: _revealNext,
+      onTap: _handleTap,
       behavior: HitTestBehavior.translucent,
-      child: Stack(
+      child: Column(
         children: [
-          ListView.builder(
-            controller: _controller,
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-            itemCount: visibleMessages.length + (hasMore ? 0 : 1),
-            itemBuilder: (_, i) {
-              if (i == visibleMessages.length) {
-                // End of chapter
-                return _EndOfChapter(
-                  onReplay: () {
-                    setState(() => _revealed = 0);
-                  },
-                  onNext: widget.onNext,
-                  onPrev: widget.onPrev,
-                );
-              }
-              final msg = visibleMessages[i];
-              final character = msg.characterId == null
-                  ? null
-                  : byId[msg.characterId];
+          Expanded(
+            child: Stack(
+              children: [
+                ListView.builder(
+                  controller: _controller,
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 12, horizontal: 8),
+                  // Mirror web: text "— hết chương —" hiện NGAY khi hết tin,
+                  // chỉ các NÚT điều hướng mới trễ 1200ms (_showEndNav).
+                  itemCount: visibleMessages.length +
+                      (!_hasMore && widget.messages.isNotEmpty ? 1 : 0),
+                  itemBuilder: (_, i) {
+                    if (i == visibleMessages.length) {
+                      return _EndOfChapter(
+                        showNav: _showEndNav,
+                        onReplay: () {
+                          setState(() {
+                            _revealed = 0;
+                            _showEndNav = false;
+                            _allRevealedFired = false;
+                          });
+                          WidgetsBinding.instance.addPostFrameCallback(
+                              (_) => _startNext());
+                        },
+                        onNext: widget.onNext,
+                        onPrev: widget.onPrev,
+                      );
+                    }
+                    final msg = visibleMessages[i];
+                    final character = msg.characterId == null
+                        ? null
+                        : byId[msg.characterId];
 
-              switch (msg.messageType) {
-                case 'action':
-                  return _ActionMessage(content: msg.content);
-                case 'narration':
-                  return _NarrationMessage(content: msg.content);
-                case 'system':
-                  return _SystemMessage(content: msg.content);
-                default:
-                  final isMe = _isMe(msg);
-                  if (isMe) {
-                    return _RightBubble(
-                      character: character,
-                      content: msg.content,
-                      imageUrl: msg.imageUrl,
-                    );
-                  } else {
-                    return _LeftBubble(
-                      character: character,
-                      content: msg.content,
-                      imageUrl: msg.imageUrl,
-                    );
-                  }
-              }
-            },
-          ),
-          // "Tap to continue" hint at the bottom
-          if (hasMore)
-            Positioned(
-              bottom: 12,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: GestureDetector(
-                  onTap: _revealAll,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'Chạm để xem tiếp ($_revealed/${widget.messages.length})',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withValues(alpha: 0.7),
+                    switch (msg.messageType) {
+                      case 'action':
+                        return _ActionMessage(content: msg.content);
+                      case 'narration':
+                        return _NarrationMessage(content: msg.content);
+                      case 'system':
+                        return _SystemMessage(content: msg.content);
+                      default:
+                        final isMe = _isMe(msg);
+                        return isMe
+                            ? _RightBubble(
+                                character: character,
+                                content: msg.content,
+                                imageUrl: msg.imageUrl,
+                                isDark: isDark,
+                              )
+                            : _LeftBubble(
+                                character: character,
+                                content: msg.content,
+                                imageUrl: msg.imageUrl,
+                                isDark: isDark,
+                              );
+                    }
+                  },
+                ),
+                // Chỉ báo "X đang gõ..." — mirror .chat-fs-typing-hint.
+                if (_typingCharName != null)
+                  Positioned(
+                    bottom: 8,
+                    left: 0,
+                    right: 0,
+                    child: _TypingHint(name: _typingCharName!),
+                  ),
+                // Gợi ý chạm — mirror .chat-fs-tap-hint.
+                if (_typingCharName == null &&
+                    !_inputTyping &&
+                    _hasMore &&
+                    !_showEndNav)
+                  const Positioned(
+                    bottom: 8,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Text(
+                        'Chạm để tiếp ↓',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ),
                   ),
+              ],
+            ),
+          ),
+          // Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
+          if (_inputTyping) _FakeInputBar(text: _inputText, isDark: isDark),
+          // Nút xem nhanh toàn bộ — tiện nghi mobile (web tap từng nhịp).
+          if ((_hasMore || _animating) &&
+              _typingCharName == null &&
+              !_inputTyping)
+            Align(
+              alignment: Alignment.bottomRight,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12, bottom: 4),
+                child: TextButton.icon(
+                  onPressed: _revealAll,
+                  icon: const Icon(Icons.fast_forward, size: 16),
+                  label: const Text('Xem tất cả', style: TextStyle(fontSize: 12)),
                 ),
               ),
             ),
@@ -236,33 +413,40 @@ class _LeftBubble extends StatelessWidget {
   const _LeftBubble({
     required this.character,
     required this.content,
+    required this.isDark,
     this.imageUrl,
   });
   final ChatParticipant? character;
   final String content;
   final String? imageUrl;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
     final color = _parseColor(character?.color) ?? Colors.grey.shade600;
+    // Mirror .chat-fs-text: #E8E8E8 sáng / #2C2C2E tối, đuôi bubble ở
+    // dưới-trái (radius 18 18 18 4).
+    final bubbleColor = isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE8E8E8);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           _Avatar(character: character, fallbackColor: color),
           const SizedBox(width: 8),
           Flexible(
             child: Container(
-              constraints: BoxConstraints.loose(const Size.fromWidth(280)),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              constraints:
+                  BoxConstraints.loose(const Size.fromWidth(280)),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                color: bubbleColor,
                 borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(4),
-                  topRight: Radius.circular(12),
-                  bottomLeft: Radius.circular(12),
-                  bottomRight: Radius.circular(12),
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
+                  bottomLeft: Radius.circular(4),
+                  bottomRight: Radius.circular(18),
                 ),
               ),
               child: Column(
@@ -273,7 +457,7 @@ class _LeftBubble extends StatelessWidget {
                     Text(
                       character!.name.isEmpty ? 'Không tên' : character!.name,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: color,
                       ),
@@ -283,11 +467,15 @@ class _LeftBubble extends StatelessWidget {
                   if (imageUrl != null) ...[
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: imageUrl!,
-                        cacheManager: AppImageCache.instance,
-                        fit: BoxFit.cover,
-                        errorWidget: (_, _, _) => const SizedBox.shrink(),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                            maxWidth: 220, maxHeight: 220),
+                        child: CachedNetworkImage(
+                          imageUrl: imageUrl!,
+                          cacheManager: AppImageCache.instance,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, _, _) => const SizedBox.shrink(),
+                        ),
                       ),
                     ),
                     if (content.isNotEmpty) const SizedBox(height: 4),
@@ -295,7 +483,11 @@ class _LeftBubble extends StatelessWidget {
                   if (content.isNotEmpty)
                     Text(
                       content,
-                      style: Theme.of(context).textTheme.bodyMedium,
+                      style: TextStyle(
+                        fontSize: 16,
+                        height: 1.4,
+                        color: isDark ? const Color(0xFFE8E8E8) : null,
+                      ),
                     ),
                 ],
               ),
@@ -311,31 +503,38 @@ class _RightBubble extends StatelessWidget {
   const _RightBubble({
     required this.character,
     required this.content,
+    required this.isDark,
     this.imageUrl,
   });
   final ChatParticipant? character;
   final String content;
   final String? imageUrl;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
+    // Mirror .chat-fs-text-me: #0084FF sáng / #0A7AFF tối, đuôi dưới-phải.
+    final bubbleColor =
+        isDark ? const Color(0xFF0A7AFF) : const Color(0xFF0084FF);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Flexible(
             child: Container(
-              constraints: BoxConstraints.loose(const Size.fromWidth(280)),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: const BoxDecoration(
-                color: Color(0xFF0084FF),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(12),
-                  topRight: Radius.circular(4),
-                  bottomLeft: Radius.circular(12),
-                  bottomRight: Radius.circular(12),
+              constraints:
+                  BoxConstraints.loose(const Size.fromWidth(280)),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
+                  bottomRight: Radius.circular(4),
                 ),
               ),
               child: Column(
@@ -345,17 +544,25 @@ class _RightBubble extends StatelessWidget {
                   if (imageUrl != null) ...[
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: imageUrl!,
-                        cacheManager: AppImageCache.instance,
-                        fit: BoxFit.cover,
-                        errorWidget: (_, _, _) => const SizedBox.shrink(),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                            maxWidth: 220, maxHeight: 220),
+                        child: CachedNetworkImage(
+                          imageUrl: imageUrl!,
+                          cacheManager: AppImageCache.instance,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, _, _) => const SizedBox.shrink(),
+                        ),
                       ),
                     ),
                     if (content.isNotEmpty) const SizedBox(height: 4),
                   ],
                   if (content.isNotEmpty)
-                    Text(content, style: const TextStyle(color: Colors.white)),
+                    Text(
+                      content,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 16, height: 1.4),
+                    ),
                 ],
               ),
             ),
@@ -363,7 +570,7 @@ class _RightBubble extends StatelessWidget {
           const SizedBox(width: 8),
           _Avatar(
             character: character,
-            fallbackColor: const Color(0xFF0084FF),
+            fallbackColor: bubbleColor,
             isMe: true,
           ),
         ],
@@ -384,15 +591,16 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (character == null) return const SizedBox(width: 36, height: 36);
+    // Mirror .chat-fs-avatar: 32px tròn.
+    if (character == null) return const SizedBox(width: 32, height: 32);
     if (character!.avatarUrl != null) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         child: CachedNetworkImage(
           imageUrl: character!.avatarUrl!,
           cacheManager: AppImageCache.instance,
-          width: 36,
-          height: 36,
+          width: 32,
+          height: 32,
           fit: BoxFit.cover,
           errorWidget: (_, _, _) => _fallback(),
         ),
@@ -405,19 +613,19 @@ class _Avatar extends StatelessWidget {
     final name = character?.name ?? '?';
     final displayName = isMe ? 'Bạn' : name;
     return Container(
-      width: 36,
-      height: 36,
+      width: 32,
+      height: 32,
       decoration: BoxDecoration(
         color: fallbackColor,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Center(
         child: Text(
           displayName.isEmpty ? '?' : displayName[0].toUpperCase(),
           style: const TextStyle(
             color: Colors.white,
-            fontWeight: FontWeight.w600,
-            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            fontSize: 12,
           ),
         ),
       ),
@@ -431,17 +639,16 @@ class _ActionMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (content.isEmpty) return const SizedBox.shrink();
+    // Mirror .chat-fs-action: giữa, nghiêng, xám, cỡ .85em.
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
       child: Center(
         child: Text(
           '✦ $content',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontStyle: FontStyle.italic,
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.6),
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
             fontSize: 14,
           ),
         ),
@@ -456,17 +663,20 @@ class _NarrationMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (content.isEmpty) return const SizedBox.shrink();
+    // Mirror .chat-fs-narration: giữa, IN NGHIÊNG, opacity .75.
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
       child: Center(
         child: Text(
           content,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.7),
-            fontSize: 14,
+            fontStyle: FontStyle.italic,
+            color: Theme.of(context)
+                .colorScheme
+                .onSurface
+                .withValues(alpha: 0.75),
+            fontSize: 15,
           ),
         ),
       ),
@@ -487,9 +697,8 @@ class _SystemMessage extends StatelessWidget {
           content,
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.4),
+            color:
+                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4),
             fontSize: 12,
           ),
         ),
@@ -498,8 +707,175 @@ class _SystemMessage extends StatelessWidget {
   }
 }
 
+/// Chỉ báo "X đang gõ..." với 3 chấm nhấp nháy — mirror .chat-fs-typing-hint.
+class _TypingHint extends StatefulWidget {
+  const _TypingHint({required this.name});
+  final String name;
+
+  @override
+  State<_TypingHint> createState() => _TypingHintState();
+}
+
+class _TypingHintState extends State<_TypingHint>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label =
+        widget.name.isEmpty ? 'đang gõ...' : '${widget.name} đang gõ...';
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedBuilder(
+              animation: _c,
+              builder: (_, _) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < 3; i++)
+                      Opacity(
+                        opacity:
+                            (((_c.value * 3) - i).clamp(0.0, 1.0)),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 1.5),
+                          child: Icon(Icons.circle, size: 6),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(width: 6),
+            Text(label, style: const TextStyle(fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
+class _FakeInputBar extends StatelessWidget {
+  const _FakeInputBar({required this.text, required this.isDark});
+  final String text;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final wrapColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0F0F0);
+    final hasContent = text.trim().isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+          top: BorderSide(
+            color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE6E6E0),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: wrapColor,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Text.rich(
+                TextSpan(
+                  text: text,
+                  children: const [
+                    WidgetSpan(
+                      alignment: PlaceholderAlignment.middle,
+                      child: _BlinkingCaret(),
+                    ),
+                  ],
+                ),
+                style: TextStyle(
+                  fontSize: 16,
+                  height: 1.4,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+                maxLines: 4,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            Icons.send,
+            size: 22,
+            color: hasContent
+                ? (isDark ? const Color(0xFF0A7AFF) : const Color(0xFF0084FF))
+                : Colors.grey,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BlinkingCaret extends StatefulWidget {
+  const _BlinkingCaret();
+
+  @override
+  State<_BlinkingCaret> createState() => _BlinkingCaretState();
+}
+
+class _BlinkingCaretState extends State<_BlinkingCaret>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 500),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _c,
+      child: Container(
+        width: 2,
+        height: 18,
+        margin: const EdgeInsets.only(left: 1),
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+      ),
+    );
+  }
+}
+
 class _EndOfChapter extends StatelessWidget {
-  const _EndOfChapter({this.onReplay, this.onNext, this.onPrev});
+  const _EndOfChapter({
+    this.showNav = true,
+    this.onReplay,
+    this.onNext,
+    this.onPrev,
+  });
+  final bool showNav;
   final VoidCallback? onReplay;
   final VoidCallback? onNext;
   final VoidCallback? onPrev;
@@ -514,31 +890,33 @@ class _EndOfChapter extends StatelessWidget {
             '— hết chương —',
             style: TextStyle(color: Colors.grey, fontSize: 14),
           ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              if (onPrev != null)
+          if (showNav) ...[
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                if (onPrev != null)
+                  OutlinedButton.icon(
+                    onPressed: onPrev,
+                    icon: const Icon(Icons.chevron_left),
+                    label: const Text('Trước'),
+                  ),
                 OutlinedButton.icon(
-                  onPressed: onPrev,
-                  icon: const Icon(Icons.chevron_left),
-                  label: const Text('Trước'),
+                  onPressed: onReplay,
+                  icon: const Icon(Icons.replay),
+                  label: const Text('Xem lại'),
                 ),
-              OutlinedButton.icon(
-                onPressed: onReplay,
-                icon: const Icon(Icons.replay),
-                label: const Text('Xem lại'),
-              ),
-              if (onNext != null)
-                FilledButton.icon(
-                  onPressed: onNext,
-                  icon: const Icon(Icons.chevron_right),
-                  label: const Text('Sau'),
-                ),
-            ],
-          ),
+                if (onNext != null)
+                  FilledButton.icon(
+                    onPressed: onNext,
+                    icon: const Icon(Icons.chevron_right),
+                    label: const Text('Sau'),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
