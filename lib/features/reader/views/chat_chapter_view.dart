@@ -403,12 +403,17 @@ class _ChatChapterViewState extends State<ChatChapterView> {
             ),
           ),
           // Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
+          // SafeArea đáy: nhô lên trên thanh điều hướng/gesture pill của
+          // hệ thống như các menu khác (trước đây dính sát mép màn).
           if (_inputTyping)
-            _FakeInputBar(
-              text: _inputText,
-              isDark: isDark,
-              ready: _inputReady,
-              onSend: _onSendPressed,
+            SafeArea(
+              top: false,
+              child: _FakeInputBar(
+                text: _inputText,
+                isDark: isDark,
+                ready: _inputReady,
+                onSend: _onSendPressed,
+              ),
             ),
         ],
       ),
