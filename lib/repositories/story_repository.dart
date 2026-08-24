@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/network/api_client.dart';
 import '../models/chapter_content.dart';
 import '../models/comment.dart';
+import '../models/my_story.dart';
 import '../models/review.dart';
 import '../models/story.dart';
 
@@ -74,6 +75,18 @@ class StoryRepository implements ChapterFetcher {
       perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
       totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
     );
+  }
+
+  /// Truyện CỦA user đang đăng nhập (gồm nháp/chờ duyệt) — mirror
+  /// dashboard web `/dang-truyen`.
+  /// Hits `GET /api/v1/mobile/me/stories` (Bearer JWT bắt buộc).
+  Future<List<MyStory>> fetchMyStories() async {
+    final r = await _dio.get('/api/v1/mobile/me/stories');
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final s in (data['stories'] as List? ?? const []))
+        MyStory.fromJson(s as Map<String, dynamic>),
+    ];
   }
 
   /// Story detail by id or slug.

@@ -124,6 +124,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           // nhập; chưa đăng nhập bấm vào cũng chỉ ra màn rỗng/vô nghĩa.
           if (userAsync.value != null) ...[
             ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: const Text('Truyện của tôi'),
+              subtitle: const Text('Quản lý truyện đã đăng — kể cả bản nháp'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/my-stories'),
+            ),
+            ListTile(
               leading: const Icon(Icons.notifications_outlined),
               title: const Text('Thông báo'),
               trailing: const Icon(Icons.chevron_right),

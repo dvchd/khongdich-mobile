@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/auth_screen.dart';
 import '../../features/author/author_screen.dart';
+import '../../features/author/my_stories_screen.dart';
 import '../../features/bookshelf/bookshelf_screen.dart';
 import '../../features/comments/comments_screen.dart';
 import '../../features/discover/browse_screens.dart';
@@ -212,6 +213,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/notifications',
         name: 'notifications',
         builder: (context, state) => const NotificationsScreen(),
+      ),
+      // Truyện của tôi — danh sách truyện CỦA tác giả đang đăng nhập
+      // (gồm nháp/chờ duyệt), mirror dashboard web /dang-truyen.
+      GoRoute(
+        path: '/my-stories',
+        name: 'my_stories',
+        builder: (context, state) => const MyStoriesScreen(),
       ),
       // Chợ Phiên — Họp Chợ realtime chat (mirrors the web home section).
       GoRoute(
