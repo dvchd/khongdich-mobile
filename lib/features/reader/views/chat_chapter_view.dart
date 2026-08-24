@@ -70,6 +70,15 @@ class _ChatChapterViewState extends State<ChatChapterView> {
 
   bool get _hasMore => _revealed < widget.messages.length;
 
+  /// Hint cuối luồng cuốn (mirror các phần tử cuối #chat-fs-messages):
+  /// 'typing' = chỉ báo đang gõ; 'send' = chờ bấm Gửi; 'tap' = chạm để tiếp.
+  String? get _trailingKind {
+    if (_typingCharName != null) return 'typing';
+    if (_inputTyping && _inputReady) return 'send';
+    if (_hasMore && !_showEndNav) return 'tap';
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -305,103 +314,92 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       child: Column(
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                ListView.builder(
-                  controller: _controller,
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 12, horizontal: 8),
-                  // Mirror web: text "— hết chương —" hiện NGAY khi hết tin,
-                  // chỉ các NÚT điều hướng mới trễ 1200ms (_showEndNav).
-                  itemCount: visibleMessages.length +
-                      (!_hasMore && widget.messages.isNotEmpty ? 1 : 0),
-                  itemBuilder: (_, i) {
-                    if (i == visibleMessages.length) {
-                      return _EndOfChapter(
-                        showNav: _showEndNav,
-                        onReplay: () {
-                          setState(() {
-                            _revealed = 0;
-                            _showEndNav = false;
-                            _allRevealedFired = false;
-                          });
-                          WidgetsBinding.instance.addPostFrameCallback(
-                              (_) => _startNext());
-                        },
-                        onNext: widget.onNext,
-                        onPrev: widget.onPrev,
-                      );
-                    }
-                    final msg = visibleMessages[i];
-                    final character = msg.characterId == null
-                        ? null
-                        : byId[msg.characterId];
+            child: ListView.builder(
+              controller: _controller,
+              padding: const EdgeInsets.symmetric(
+                  vertical: 12, horizontal: 8),
+              // Mirror web: các hint (đang gõ / chạm / gửi) là PHẦ TỬ TRONG
+              // luồng cuốn sau tin cuối — không phải overlay đè lên chữ;
+              // "— hết chương —" hiện NGAY khi hết tin, nav trễ 1200ms.
+              itemCount: visibleMessages.length +
+                  (_trailingKind != null ? 1 : 0) +
+                  (!_hasMore && widget.messages.isNotEmpty ? 1 : 0),
+              itemBuilder: (_, i) {
+                if (i < visibleMessages.length) {
+                  final msg = visibleMessages[i];
+                  final character = msg.characterId == null
+                      ? null
+                      : byId[msg.characterId];
 
-                    switch (msg.messageType) {
-                      case 'action':
-                        return _ActionMessage(content: msg.content);
-                      case 'narration':
-                        return _NarrationMessage(content: msg.content);
-                      case 'system':
-                        return _SystemMessage(content: msg.content);
-                      default:
-                        final isMe = _isMe(msg);
-                        return isMe
-                            ? _RightBubble(
-                                character: character,
-                                content: msg.content,
-                                imageUrl: msg.imageUrl,
-                                isDark: isDark,
-                              )
-                            : _LeftBubble(
-                                character: character,
-                                content: msg.content,
-                                imageUrl: msg.imageUrl,
-                                isDark: isDark,
-                              );
+                  switch (msg.messageType) {
+                    case 'action':
+                      return _ActionMessage(content: msg.content);
+                    case 'narration':
+                      return _NarrationMessage(content: msg.content);
+                    case 'system':
+                      return _SystemMessage(content: msg.content);
+                    default:
+                      final isMe = _isMe(msg);
+                      return isMe
+                          ? _RightBubble(
+                              character: character,
+                              content: msg.content,
+                              imageUrl: msg.imageUrl,
+                              isDark: isDark,
+                            )
+                          : _LeftBubble(
+                              character: character,
+                              content: msg.content,
+                              imageUrl: msg.imageUrl,
+                              isDark: isDark,
+                            );
+                  }
+                }
+                final j = i - visibleMessages.length;
+                if (_trailingKind != null) {
+                  if (j == 0) {
+                    switch (_trailingKind) {
+                      case 'typing':
+                        return _TypingHint(name: _typingCharName!);
+                      case 'send':
+                        return const _SendHint();
+                      case 'tap':
+                        return const _TapHint();
                     }
-                  },
-                ),
-                // Chỉ báo "X đang gõ..." — mirror .chat-fs-typing-hint.
-                if (_typingCharName != null)
-                  Positioned(
-                    bottom: 8,
-                    left: 0,
-                    right: 0,
-                    child: _TypingHint(name: _typingCharName!),
-                  ),
-                // Mirror .chat-fs-tap-hint: "Gửi để tiếp ↑" khi chờ gửi.
-                if (_inputTyping && _inputReady)
-                  const Positioned(
-                    bottom: 8,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: Text(
-                        'Gửi để tiếp ↑',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF0084FF)),
-                      ),
-                    ),
-                  )
-                else if (_typingCharName == null &&
-                    !_inputTyping &&
-                    _hasMore &&
-                    !_showEndNav)
-                  const Positioned(
-                    bottom: 8,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: Text(
-                        'Chạm để tiếp ↓',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ),
-                  ),
-              ],
+                  }
+                  return _EndOfChapter(
+                    showNav: _showEndNav,
+                    onReplay: () {
+                      setState(() {
+                        _revealed = 0;
+                        _showEndNav = false;
+                        _allRevealedFired = false;
+                      });
+                      WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => _startNext());
+                    },
+                    onNext: widget.onNext,
+                    onPrev: widget.onPrev,
+                  );
+                }
+                if (j == 0) {
+                  return _EndOfChapter(
+                    showNav: _showEndNav,
+                    onReplay: () {
+                      setState(() {
+                        _revealed = 0;
+                        _showEndNav = false;
+                        _allRevealedFired = false;
+                      });
+                      WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => _startNext());
+                    },
+                    onNext: widget.onNext,
+                    onPrev: widget.onPrev,
+                  );
+                }
+                return const SizedBox.shrink();
+              },
             ),
           ),
           // Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
@@ -718,7 +716,8 @@ class _SystemMessage extends StatelessWidget {
   }
 }
 
-/// Chỉ báo "X đang gõ..." với 3 chấm nhấp nháy — mirror .chat-fs-typing-hint.
+/// Chỉ báo "X đang gõ..." với 3 chấm — mirror .chat-fs-typing-hint
+/// (centered, xám .8rem, KHÔNG nền).
 class _TypingHint extends StatefulWidget {
   const _TypingHint({required this.name});
   final String name;
@@ -744,38 +743,108 @@ class _TypingHintState extends State<_TypingHint>
   Widget build(BuildContext context) {
     final label =
         widget.name.isEmpty ? 'đang gõ...' : '${widget.name} đang gõ...';
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimatedBuilder(
-              animation: _c,
-              builder: (_, _) {
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var i = 0; i < 3; i++)
-                      Opacity(
-                        opacity:
-                            (((_c.value * 3) - i).clamp(0.0, 1.0)),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 1.5),
-                          child: Icon(Icons.circle, size: 6),
-                        ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedBuilder(
+            animation: _c,
+            builder: (_, _) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < 3; i++)
+                    Opacity(
+                      opacity:
+                          (((_c.value * 3) - i).clamp(0.0, 1.0)),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 1.5),
+                        child: Icon(Icons.circle, size: 6),
                       ),
-                  ],
-                );
-              },
+                    ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(context)
+                .colorScheme
+                .onSurface
+                .withValues(alpha: 0.55),
+          )),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Chạm để tiếp ↓" — mirror .chat-fs-tap-hint (pulse 2s nhẹ nhàng).
+class _TapHint extends StatefulWidget {
+  const _TapHint();
+
+  @override
+  State<_TapHint> createState() => _TapHintState();
+}
+
+class _TapHintState extends State<_TapHint>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2000),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: FadeTransition(
+          opacity: Tween<double>(begin: 0.35, end: 0.9).animate(
+            CurvedAnimation(parent: _c, curve: Curves.easeInOut),
+          ),
+          child: Text(
+            'Chạm để tiếp ↓',
+            style: TextStyle(
+              fontSize: 13,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.9),
             ),
-            const SizedBox(width: 6),
-            Text(label, style: const TextStyle(fontSize: 12)),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Gửi để tiếp ↑" khi input của "Bạn" gõ xong — accent màu Messenger.
+class _SendHint extends StatelessWidget {
+  const _SendHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Text(
+          'Gửi để tiếp ↑',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF0A7AFF)
+                : const Color(0xFF0084FF),
+          ),
         ),
       ),
     );
