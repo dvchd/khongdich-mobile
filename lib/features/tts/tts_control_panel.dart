@@ -520,6 +520,21 @@ class _AuthorChapterDownloadButtonState
       _error = '';
     });
     try {
+      // QUAN TRỌNG: tạm dừng playback trước khi tổng hợp. Exporter dùng
+      // instance FlutterTts RIÊNG nhưng cả hai đều gọi cùng engine TTS
+      // của hệ điều hành — nếu speak() đang chạy, engine hủy ngầm
+      // synthesizeToFile kế tiếp và callback completion không bao giờ
+      // về → export treo vĩnh viễn ở "Đang tổng hợp..." (bug gặp thật
+      // trên emulator khi vừa nghe vừa tải).
+      if (widget.handler.playbackState.value.playing) {
+        await widget.handler.pause();
+        if (mounted) {
+          setState(() => _error = 'Đã tạm dừng nghe để tổng hợp...');
+        }
+        // Cho engine nhả hoàn toàn utterance đang chạy.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+
       final docDir = await getApplicationDocumentsDirectory();
       final stamp = DateTime.now().millisecondsSinceEpoch;
       final baseName =
