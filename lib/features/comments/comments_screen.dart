@@ -133,6 +133,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         _feed = PaginatedComments(
           comments: merged,
           total: next.total,
+          totalComments: next.totalComments,
           page: next.page,
           perPage: next.perPage,
           totalPages: next.totalPages,
@@ -328,15 +329,23 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         var feed = _feed;
         if (feed != null) {
           feed = _mapComment(feed, c.id, null);
-          _feed = feed == null
-              ? null
-              : PaginatedComments(
-                  comments: feed.comments,
-                  total: feed.total - 1,
-                  page: feed.page,
-                  perPage: feed.perPage,
-                  totalPages: feed.totalPages,
-                );
+          if (feed == null) {
+            _feed = null;
+          } else {
+            // `total` đếm entry gốc: chỉ giảm khi xoá một bình luận gốc.
+            // Xoá reply không đổi số entry (totalComments tự heals khi
+            // refresh). canModerate giữ nguyên qua copyWith thủ công.
+            final isRootDelete = c.parentId == null && !c.isSegment;
+            _feed = PaginatedComments(
+              comments: feed.comments,
+              total: isRootDelete ? feed.total - 1 : feed.total,
+              totalComments: feed.totalComments,
+              page: feed.page,
+              perPage: feed.perPage,
+              totalPages: feed.totalPages,
+              canModerate: feed.canModerate,
+            );
+          }
         }
       });
     } catch (_) {
@@ -516,6 +525,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     return PaginatedComments(
       comments: comments,
       total: feed.total,
+      totalComments: feed.totalComments,
       page: feed.page,
       perPage: feed.perPage,
       totalPages: feed.totalPages,

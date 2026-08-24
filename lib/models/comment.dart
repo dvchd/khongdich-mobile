@@ -99,6 +99,7 @@ class PaginatedComments {
   const PaginatedComments({
     required this.comments,
     required this.total,
+    this.totalComments,
     required this.page,
     required this.perPage,
     required this.totalPages,
@@ -106,7 +107,15 @@ class PaginatedComments {
   });
 
   final List<CommentItem> comments;
+
+  /// Số feed entry gốc (bình luận gốc + comment đoạn) — backend phân trang
+  /// theo entry gốc, mỗi gốc kèm toàn bộ cây reply. Dùng cho load-more.
   final int total;
+
+  /// Tổng số bình luận hiển thị GỒM CẢ reply (đếm phẳng) — dùng để hiển thị
+  /// "X bình luận". Nullable để tương thích response backend cũ.
+  final int? totalComments;
+
   final int page;
   final int perPage;
   final int totalPages;
@@ -122,6 +131,7 @@ class PaginatedComments {
             CommentItem.fromJson(c as Map<String, dynamic>),
         ],
         total: (json['total'] as num?)?.toInt() ?? 0,
+        totalComments: (json['total_comments'] as num?)?.toInt(),
         page: (json['page'] as num?)?.toInt() ?? 1,
         perPage: (json['per_page'] as num?)?.toInt() ?? 20,
         totalPages: (json['total_pages'] as num?)?.toInt() ?? 0,

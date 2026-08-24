@@ -1267,7 +1267,9 @@ class _StorySocialSectionState extends ConsumerState<_StorySocialSection> {
       setState(() {
         _rating = reviews.avgRating;
         _reviewCount = reviews.reviewCount;
-        _commentCount = comments.total;
+        // total_comments đếm phẳng gồm cả reply (khớp commentCount từ detail
+        // payload); `total` chỉ đếm entry gốc dùng cho phân trang.
+        _commentCount = comments.totalComments ?? comments.total;
       });
     } catch (_) {
       // Keep previous values; the next visit refetches everything anyway.
