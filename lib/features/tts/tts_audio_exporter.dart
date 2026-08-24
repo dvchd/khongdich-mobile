@@ -6,7 +6,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/observability/app_logger.dart';
 
-/// Xuất toàn bộ chương truyện thành **một file WAV** bằng TTS on-device.
+/// Xuất toàn bộ chương truyện thành **một file WAV** bằng TTS on-device,
+/// kèm **file phụ đề SRT** (timing thật đo từ header WAV từng chunk).
 ///
 /// Dùng `flutter_tts.synthesizeToFile()` (Android native
 /// `TextToSpeech.synthesizeToFile`) — xuất WAV/PCM, KHÔNG phải MP3
@@ -14,6 +15,11 @@ import '../../core/observability/app_logger.dart';
 /// (~500 ký tự, giống TTS playback) được tổng hợp ra 1 file WAV tạm
 /// rồi ghép thành 1 file duy nhất (cùng sample rate/bit depth/channels
 /// → nối thẳng data, giữ header file đầu).
+///
+/// Timing SRT: mỗi chunk có duration CHÍNH XÁC đọc từ header WAV tạm
+/// (`dataSize / byteRate`) trước khi xoá — ranh giới chunk chuẩn tuyệt
+/// đối. Bên trong chunk, text được chẻ theo câu và chia thời lượng tỷ
+ /// lệ số ký tự (sai số nhỏ, gTTS-sidecar bên web dùng cùng cách).
 ///
 /// Instance FlutterTts RIÊNG — không dùng chung với handler đang play
 /// để không phá trạng thái playback hiện tại.
@@ -136,12 +142,17 @@ class TtsAudioExporter {
   }
 
   /// Sinh WAV cho toàn bộ chunks, ghép thành 1 file tại [outputPath].
+  /// Đồng thời sinh phụ đề SRT cạnh đó (`{outputPath không .wav}.srt`)
+  /// từ timing thật của từng chunk — trả về trong [TtsExportResult.srt]
+  /// (null khi không đo được duration, vd header WAV dị dạng).
   ///
-  /// Trả về File đã ghép, hoặc throw `TtsExportException` khi thất bại.
-  Future<File> export(String outputPath) async {
+  /// Throw `TtsExportException` khi tổng hợp thất bại.
+  Future<TtsExportResult> export(String outputPath) async {
     await _configure();
     final tempDir = await getTemporaryDirectory();
     final parts = <File>[];
+    final durations = <double>[];
+    var durationKnown = true;
     try {
       for (var i = 0; i < chunks.length; i++) {
         final tmp = File(
@@ -154,6 +165,12 @@ class TtsAudioExporter {
               'Chunk ${i + 1}/${chunks.length} tổng hợp thất bại (engine TTS không xuất file).');
         }
         parts.add(tmp);
+        final dur = await wavDurationSeconds(tmp);
+        if (dur == null) {
+          durationKnown = false;
+        } else {
+          durations.add(dur);
+        }
         onProgress?.call(i + 1, chunks.length);
       }
       final merged = await mergeWavs(parts, File(outputPath));
@@ -161,7 +178,27 @@ class TtsAudioExporter {
         throw const TtsExportException(
             'Các đoạn audio không cùng định dạng — không ghép được.');
       }
-      return merged;
+
+      // SRT — chỉ sinh khi đủ duration cho mọi chunk.
+      File? srt;
+      if (durationKnown && durations.length == chunks.length) {
+        try {
+          final cues = buildCues(chunks, durations);
+          if (cues.isNotEmpty) {
+            final base =
+                outputPath.toLowerCase().endsWith('.wav')
+                    ? outputPath.substring(0, outputPath.length - 4)
+                    : outputPath;
+            srt = File('$base.srt');
+            await srt.writeAsString(buildSrt(cues), flush: true);
+          }
+        } catch (e, s) {
+          // SRT là tính năng kèm theo — lỗi format không được phá export.
+          AppLogger.warning('TtsAudioExporter: build SRT failed', e, s);
+          srt = null;
+        }
+      }
+      return TtsExportResult(wav: merged, srt: srt);
     } finally {
       // Dọn file tạm từng chunk — không đợi (best-effort).
       for (final p in parts) {
@@ -171,6 +208,120 @@ class TtsAudioExporter {
       }
     }
   }
+
+  /// Duration (giây) đọc từ header WAV: `dataSize / byteRate`. Trả null
+  /// khi header thiếu fmt chuẩn (byteRate=0 và không suy ra được từ
+  /// sampleRate × blockAlign).
+  static Future<double?> wavDurationSeconds(File wav) async {
+    final bytes = await wav.readAsBytes();
+    if (bytes.length < 44 || bytes[0] != 0x52 || bytes[1] != 0x49) {
+      return null;
+    }
+    final dataSize = _readU32(bytes, 40);
+    var byteRate = _readU32(bytes, 28);
+    if (byteRate <= 0) {
+      final sampleRate = _readU32(bytes, 24);
+      final blockAlign = bytes[32] | (bytes[33] << 8);
+      if (sampleRate > 0 && blockAlign > 0) byteRate = sampleRate * blockAlign;
+    }
+    if (byteRate <= 0 || dataSize <= 0) return null;
+    return dataSize / byteRate;
+  }
+
+  /// Cue phụ đề từ duration chunk đã đo. Bên trong mỗi chunk chẻ TỪNG
+  /// CÂU thành một cue (cue quá dài cắt cứng tại [maxCueLen] ký tự) rồi
+  /// chia thời lượng tỷ lệ số ký tự — ranh giới chunk vẫn chính xác
+  /// tuyệt đối vì mảnh cuối lấy phần dư, tổng con = đúng duration chunk.
+  static List<SrtCue> buildCues(
+    List<String> chunks,
+    List<double> durations, {
+    int maxCueLen = 160,
+  }) {
+    final out = <SrtCue>[];
+    var t = 0.0;
+    for (var i = 0; i < chunks.length; i++) {
+      final text = chunks[i].trim();
+      final dur = durations[i].clamp(0.0, double.maxFinite);
+      if (text.isNotEmpty && dur > 0) {
+        final sentences = _sentencesOf(text, maxLen: maxCueLen);
+        if (sentences.isEmpty) {
+          out.add(SrtCue(start: t, end: t + dur, text: text));
+        } else {
+          // Chia tỷ lệ số ký tự; mảnh CUỐI lấy phần dư để tổng con khớp
+          // chính xác duration chunk (không tích lũy sai số làm tròn).
+          final totalChars =
+              sentences.fold<int>(0, (sum, s) => sum + s.length);
+          var cursor = t;
+          for (var j = 0; j < sentences.length; j++) {
+            final isLast = j == sentences.length - 1;
+            final end = isLast || totalChars == 0
+                ? t + dur
+                : cursor + dur * sentences[j].length / totalChars;
+            out.add(SrtCue(
+              start: cursor,
+              end: end,
+              text: sentences[j].trim(),
+            ));
+            cursor = end;
+          }
+        }
+      }
+      t += dur;
+    }
+    return out;
+  }
+
+  /// Chẻ text thành câu (`. `, `! `, `? `) — mỗi câu một phần tử, KHÔNG
+  /// gộp câu ngắn (khác preprocessor TTS): phụ đề cần granularity câu.
+  /// Câu vượt [maxLen] bị cắt cứng.
+  static final RegExp _sentenceEndRegExp = RegExp(r'(?<=[.!?])\s+');
+
+  static List<String> _sentencesOf(String text, {required int maxLen}) {
+    final out = <String>[];
+    for (final raw in text.split(_sentenceEndRegExp)) {
+      final s = raw.trim();
+      if (s.isEmpty) continue;
+      if (s.length <= maxLen) {
+        out.add(s);
+        continue;
+      }
+      var start = 0;
+      while (start < s.length) {
+        final end = (start + maxLen).clamp(0, s.length);
+        final piece = s.substring(start, end).trim();
+        if (piece.isNotEmpty) out.add(piece);
+        start = end;
+      }
+    }
+    return out;
+  }
+
+  /// Serialize cues → chuỗi file `.srt` chuẩn
+  /// `hh:mm:ss,mmm --> hh:mm:ss,mmm`.
+  static String buildSrt(List<SrtCue> cues) {
+    final sb = StringBuffer();
+    for (var i = 0; i < cues.length; i++) {
+      sb
+        ..writeln(i + 1)
+        ..writeln(
+            '${formatSrtTime(cues[i].start)} --> ${formatSrtTime(cues[i].end)}')
+        ..writeln(cues[i].text)
+        ..writeln();
+    }
+    return sb.toString();
+  }
+
+  /// `02:03:04,005` — SRT dùng dấu phẩy trước mili-giây (khác WebVTT).
+  static String formatSrtTime(double seconds) {
+    final totalMs = (seconds < 0 ? 0 : seconds * 1000).round();
+    String two(int v) => v.toString().padLeft(2, '0');
+    String three(int v) => v.toString().padLeft(3, '0');
+    final h = totalMs ~/ 3600000;
+    final m = (totalMs % 3600000) ~/ 60000;
+    final s = (totalMs % 60000) ~/ 1000;
+    final ms = totalMs % 1000;
+    return '${two(h)}:${two(m)}:${two(s)},${three(ms)}';
+  }
 }
 
 /// Lỗi xuất audio với thông báo user-friendly.
@@ -179,4 +330,26 @@ class TtsExportException implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+/// Kết quả export: WAV chính + SRT kèm theo (null khi không đo được
+/// timing — WAV vẫn dùng được).
+class TtsExportResult {
+  const TtsExportResult({required this.wav, this.srt});
+
+  final File wav;
+  final File? srt;
+}
+
+/// Một cue phụ đề: `[start, end)` giây + text hiển thị.
+class SrtCue {
+  const SrtCue({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+
+  final double start;
+  final double end;
+  final String text;
 }

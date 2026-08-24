@@ -521,9 +521,10 @@ class _AuthorChapterDownloadButtonState
     });
     try {
       final docDir = await getApplicationDocumentsDirectory();
-      final fileName =
-          'chuong-${widget.handler.currentChapterNumber ?? '?'}-'
-          '${DateTime.now().millisecondsSinceEpoch}.wav';
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final baseName =
+          'chuong-${widget.handler.currentChapterNumber ?? '?'}-$stamp';
+      final fileName = '$baseName.wav';
       final outPath = '${docDir.path}/$fileName';
 
       final exporter = TtsAudioExporter(
@@ -535,20 +536,29 @@ class _AuthorChapterDownloadButtonState
           if (mounted) setState(() => _error = 'Đang tổng hợp $done/$total...');
         },
       );
-      final file = await exporter.export(outPath);
+      final result = await exporter.export(outPath);
       if (!mounted) return;
 
-      // Share sheet — tác giả chọn nơi lưu (Files/Drive/gửi...).
-      final result = await SharePlus.instance.share(
+      // Share sheet — tác giả chọn nơi lưu (Files/Drive/gửi...). SRT đi
+      // kèm để ghép phụ đề khi dựng video (timing khớp WAV).
+      final files = <XFile>[
+        XFile(result.wav.path, mimeType: 'audio/wav'),
+        if (result.srt != null)
+          XFile(result.srt!.path, mimeType: 'application/x-subrip'),
+      ];
+      final shareResult = await SharePlus.instance.share(
         ShareParams(
-          files: [XFile(file.path, mimeType: 'audio/wav')],
-          fileNameOverrides: [fileName],
+          files: files,
+          fileNameOverrides: [
+            fileName,
+            if (result.srt != null) '$baseName.srt',
+          ],
           subject: 'Audio chương truyện — Không Dịch',
         ),
       );
-      if (result.status == ShareResultStatus.dismissed && mounted) {
+      if (shareResult.status == ShareResultStatus.dismissed && mounted) {
         setState(() => _error = 'Đã huỷ chia sẻ — file vẫn lưu tại '
-            '${file.path}');
+            '${result.wav.path}');
       }
     } catch (e, s) {
       AppLogger.warning('Tải audio chương thất bại', e, s);
@@ -583,7 +593,7 @@ class _AuthorChapterDownloadButtonState
                     ? _error.isEmpty
                         ? 'Đang tổng hợp audio...'
                         : _error
-                    : 'Tải audio chương (WAV) — giọng đang chọn',
+                    : 'Tải audio chương (WAV + phụ đề SRT) — giọng đang chọn',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
