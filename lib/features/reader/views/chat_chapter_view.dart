@@ -54,6 +54,10 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   bool _inputTyping = false;
   String _inputText = '';
 
+  /// Gõ XONG, chờ người đọc bấm Gửi (mirror web: sendInput mới quyết
+  /// định đưa tin lên — không tự động gửi).
+  bool _inputReady = false;
+
   /// Nav cuối chương đã hiện chưa (web: trễ 1200ms).
   bool _showEndNav = false;
   bool _allRevealedFired = false;
@@ -84,6 +88,7 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       _revealed = 0;
       _typingCharName = null;
       _inputTyping = false;
+      _inputReady = false;
       _inputText = '';
       _showEndNav = false;
       _allRevealedFired = false;
@@ -203,12 +208,14 @@ class _ChatChapterViewState extends State<ChatChapterView> {
 
   void _startInputTypewriter(ChatMessage msg) {
     _inputTyping = true;
+    _inputReady = false;
     _inputText = '';
     setState(() {});
     _scrollToBottom();
 
     final text = msg.content;
     if (text.isEmpty) {
+      // Tin rỗng — không có gì để "gõ", tự thông qua như web.
       _commitInput();
       return;
     }
@@ -219,10 +226,9 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       setState(() => _inputText = text.substring(0, idx));
       _scrollToBottom();
       if (idx >= text.length) {
-        // Gõ xong — nghỉ một nhịp rồi tự "gửi".
-        _timer = Timer(const Duration(milliseconds: 450), () {
-          if (mounted && _inputTyping) _commitInput();
-        });
+        // Mirror web `afterInputTypewriterDone`: gõ XONG thì DỪNG —
+        // chờ người đọc bấm Gửi (_onSendPressed) mới đưa tin lên.
+        setState(() => _inputReady = true);
       } else {
         _timer = Timer(const Duration(milliseconds: 35), tick);
       }
@@ -231,14 +237,20 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     _timer = Timer(const Duration(milliseconds: 350), tick);
   }
 
+  /// Mirror web `sendInput`: chỉ nhận khi ĐÃ gõ xong; đưa tin lên rồi
+  /// tự chơi đúng MỘT tin kế (150ms non-dialogue / 400ms dialogue).
+  void _onSendPressed() {
+    if (!_inputReady) return;
+    _commitInput();
+  }
+
   void _commitInput() {
     _timer?.cancel();
     _timer = null;
     _inputTyping = false;
+    _inputReady = false;
     _inputText = '';
     _revealCurrent();
-    // Mirror web `sendInput`: sau khi "gửi", tự chơi đúng MỘT tin kế
-    // (150ms nếu non-dialogue, 400ms nếu dialogue) rồi dừng chờ chạm.
     if (_hasMore) {
       final next = widget.messages[_revealed];
       final delayMs = next.messageType != 'dialogue' ? 150 : 400;
@@ -250,24 +262,11 @@ class _ChatChapterViewState extends State<ChatChapterView> {
 
   // ─── Tap handling ─────────────────────────────────────────────────
 
-  /// Chạm khi đang animate → bỏ qua hiệu ứng, hiện ngay kết quả (mobile
-  /// nicety; web thì bỏ qua tap giữa chừng). Idle → bắt đầu bước kế tiếp
-  /// nếu chuỗi tự nối chưa chạy (luôn chạy nên chủ yếu là fast-forward).
+  /// Mirror web `revealNext`: đang chỉ báo gõ hoặc đang ở pha input thì
+  /// BỎ QUA tap — tiến duy nhất bằng nút Gửi. Idle → chơi tin kế.
   void _handleTap() {
-    if (_animating) {
-      final wasInput = _inputTyping;
-      final hadTypingChar = _typingCharName != null;
-      if (hadTypingChar) {
-        _timer?.cancel();
-        _typingCharName = null;
-        _revealCurrent();
-      } else if (wasInput) {
-        _commitInput();
-      }
-      return;
-    }
-    // Không animate mà vẫn còn tin (sau fast-forward liên tiếp) → chạy nốt.
-    if (_hasMore && _timer == null) _startNext();
+    if (_typingCharName != null || _inputTyping) return;
+    if (_hasMore && _timer == null && !_inputReady) _startNext();
   }
 
   void _revealAll() {
@@ -275,6 +274,7 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     _timer = null;
     _typingCharName = null;
     _inputTyping = false;
+    _inputReady = false;
     _inputText = '';
     setState(() => _revealed = widget.messages.length);
     _scrollToBottom();
@@ -379,8 +379,23 @@ class _ChatChapterViewState extends State<ChatChapterView> {
                     right: 0,
                     child: _TypingHint(name: _typingCharName!),
                   ),
-                // Gợi ý chạm — mirror .chat-fs-tap-hint.
-                if (_typingCharName == null &&
+                // Mirror .chat-fs-tap-hint: "Gửi để tiếp ↑" khi chờ gửi.
+                if (_inputTyping && _inputReady)
+                  const Positioned(
+                    bottom: 8,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Text(
+                        'Gửi để tiếp ↑',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF0084FF)),
+                      ),
+                    ),
+                  )
+                else if (_typingCharName == null &&
                     !_inputTyping &&
                     _hasMore &&
                     !_showEndNav)
@@ -399,7 +414,13 @@ class _ChatChapterViewState extends State<ChatChapterView> {
             ),
           ),
           // Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
-          if (_inputTyping) _FakeInputBar(text: _inputText, isDark: isDark),
+          if (_inputTyping)
+            _FakeInputBar(
+              text: _inputText,
+              isDark: isDark,
+              ready: _inputReady,
+              onSend: _onSendPressed,
+            ),
           // Nút xem nhanh toàn bộ — tiện nghi mobile (web tap từng nhịp).
           if ((_hasMore || _animating) &&
               _typingCharName == null &&
@@ -787,14 +808,25 @@ class _TypingHintState extends State<_TypingHint>
 
 /// Giả thanh input khi "Bạn" đang gõ — mirror .chat-fs-input-bar.
 class _FakeInputBar extends StatelessWidget {
-  const _FakeInputBar({required this.text, required this.isDark});
+  const _FakeInputBar({
+    required this.text,
+    required this.isDark,
+    required this.ready,
+    required this.onSend,
+  });
   final String text;
   final bool isDark;
+
+  /// Gõ xong, chờ bấm Gửi — mirror web sendInput.
+  final bool ready;
+  final VoidCallback onSend;
 
   @override
   Widget build(BuildContext context) {
     final wrapColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF0F0F0);
-    final hasContent = text.trim().isNotEmpty;
+    final sendColor = ready
+        ? (isDark ? const Color(0xFF0A7AFF) : const Color(0xFF0084FF))
+        : Colors.grey;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
       decoration: BoxDecoration(
@@ -835,12 +867,10 @@ class _FakeInputBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Icon(
-            Icons.send,
-            size: 22,
-            color: hasContent
-                ? (isDark ? const Color(0xFF0A7AFF) : const Color(0xFF0084FF))
-                : Colors.grey,
+          IconButton(
+            onPressed: ready ? onSend : null,
+            icon: Icon(Icons.send, size: 22, color: sendColor),
+            tooltip: 'Gửi',
           ),
         ],
       ),

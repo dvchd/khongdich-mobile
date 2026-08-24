@@ -41,25 +41,38 @@ void main() {
     expect(find.text('Lin Lan đang gõ...'), findsOneWidget);
     expect(find.text('Chào bạn!'), findsNothing);
 
-    // Tap = fast-forward qua hiệu ứng gõ.
+    // Mirror web revealNext: tap trong lúc "đang gõ" bị BỎ QUA —
+    // phải chờ hết delay indicator bubble mới hiện.
     await tester.tap(find.byType(ChatChapterView));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('Lin Lan đang gõ...'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Lin Lan đang gõ...'), findsNothing);
     expect(find.text('Chào bạn!'), findsOneWidget);
   });
 
-  testWidgets('tin của "Bạn": giả thanh input gõ dần rồi tự gửi sang phải',
+  testWidgets(
+      'tin của "Bạn": gõ dần xong DỪNG chờ Gửi — bấm Gửi mới hiện bubble',
       (tester) async {
     await pumpChat(tester, [dialogue('me', 'Xin chào nha')]);
 
-    // Đang ở trạng thái input typing — chưa có bubble.
+    // Đang gõ dần — chưa có bubble.
     expect(find.text('Xin chào nha'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 800));
+    // Gõ xong: text trong ô input + hint "Gửi để tiếp ↑", CHƯA reveal.
+    expect(find.textContaining('Xin chào nha', findRichText: true),
+        findsOneWidget);
+    expect(find.text('Gửi để tiếp ↑'), findsOneWidget);
+
+    // Chạm vùng chat khi chờ Gửi → KHÔNG tự tiến (mirror web).
+    await tester.tap(find.byType(ChatChapterView));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.byIcon(Icons.send), findsOneWidget);
 
-    // Chờ đủ lâu: 350ms delay + 11 ký tự * 35ms + 450ms trễ gửi.
+    // Bấm Gửi → bubble hiện, thanh input biến mất.
+    await tester.tap(find.byIcon(Icons.send));
     await tester.pumpAndSettle();
     expect(find.text('Xin chào nha'), findsOneWidget);
-    // Đã "gửi" — thanh input biến mất.
     expect(find.byIcon(Icons.send), findsNothing);
   });
 
@@ -122,7 +135,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 40));
     await tester.pump(const Duration(milliseconds: 40));
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('Hai.'), findsOneWidget);
+    expect(find.textContaining('Hai.', findRichText: true), findsOneWidget);
+    // Bấm Gửi → tin được đưa lên, tới hết chương.
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
     expect(find.text('— hết chương —'), findsOneWidget);
     // Nav cuối chương xuất hiện sau delay 1200ms của web-mirror.
     expect(find.text('Sau'), findsNothing);
