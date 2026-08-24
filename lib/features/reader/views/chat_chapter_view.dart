@@ -68,7 +68,6 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   ScrollController get _controller =>
       widget.scrollController ?? _fallbackScrollController;
 
-  bool get _animating => _typingCharName != null || _inputTyping;
   bool get _hasMore => _revealed < widget.messages.length;
 
   @override
@@ -188,7 +187,9 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       _fireAllRevealed();
       // Web: nav cuối chương hiện sau 1200ms.
       _timer = Timer(const Duration(milliseconds: 1200), () {
-        if (mounted) setState(() => _showEndNav = true);
+        if (!mounted) return;
+        _timer = null;
+        setState(() => _showEndNav = true);
       });
       return;
     }
@@ -255,7 +256,10 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       final next = widget.messages[_revealed];
       final delayMs = next.messageType != 'dialogue' ? 150 : 400;
       _timer = Timer(Duration(milliseconds: delayMs), () {
-        if (mounted) _startNext();
+        // Nhả slot trước khi chạy — giữ tham chiếu timer đã fire sẽ khiến
+        // _handleTap tưởng "đang bận" → tap để sang tin kế bị vô hiệu.
+        _timer = null;
+        _startNext();
       });
     }
   }
@@ -267,19 +271,6 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   void _handleTap() {
     if (_typingCharName != null || _inputTyping) return;
     if (_hasMore && _timer == null && !_inputReady) _startNext();
-  }
-
-  void _revealAll() {
-    _timer?.cancel();
-    _timer = null;
-    _typingCharName = null;
-    _inputTyping = false;
-    _inputReady = false;
-    _inputText = '';
-    setState(() => _revealed = widget.messages.length);
-    _scrollToBottom();
-    _fireAllRevealed();
-    setState(() => _showEndNav = true);
   }
 
   void _fireAllRevealed() {
@@ -420,21 +411,6 @@ class _ChatChapterViewState extends State<ChatChapterView> {
               isDark: isDark,
               ready: _inputReady,
               onSend: _onSendPressed,
-            ),
-          // Nút xem nhanh toàn bộ — tiện nghi mobile (web tap từng nhịp).
-          if ((_hasMore || _animating) &&
-              _typingCharName == null &&
-              !_inputTyping)
-            Align(
-              alignment: Alignment.bottomRight,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 12, bottom: 4),
-                child: TextButton.icon(
-                  onPressed: _revealAll,
-                  icon: const Icon(Icons.fast_forward, size: 16),
-                  label: const Text('Xem tất cả', style: TextStyle(fontSize: 12)),
-                ),
-              ),
             ),
         ],
       ),
