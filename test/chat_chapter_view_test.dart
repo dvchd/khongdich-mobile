@@ -146,4 +146,60 @@ void main() {
     await tester.pump();
     expect(find.text('Sau'), findsOneWidget);
   });
+
+  testWidgets(
+      'hai tin "Bạn" liên tiếp: prefill đơn luồng — không double-start, không hint tap khi đang gõ',
+      (tester) async {
+    await pumpChat(tester, [dialogue('me', 'AAAA'), dialogue('me', 'BBBB')]);
+
+    // Tin 1 gõ dần (delay 350ms + 35ms/ký tự). Trong lúc gõ: KHÔNG hint
+    // "Chạm để tiếp" (tap đang bị bỏ qua — hint cũ gây mâu thuẫn).
+    await tester.pump(const Duration(milliseconds: 360));
+    expect(find.text('Chạm để tiếp ↓'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+
+    // Tin 2 được prefill: ở t=400ms text phải là 2 ký tự đầu ('BB').
+    // Bug cũ: chain timer 400ms ghi đè _timer của typewriter → text bị
+    // reset về '' đúng lúc này (2 vòng tick song song, nhấp nháy).
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('BB', findRichText: true), findsOneWidget);
+    expect(find.text('Chạm để tiếp ↓'), findsNothing);
+
+    // Gõ xong → Gửi → hết chương.
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
+    expect(find.text('— hết chương —'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1300));
+    await tester.pump();
+  });
+
+  testWidgets('tin "Bạn" rỗng liên tiếp không skip tin kế — vẫn chờ chạm',
+      (tester) async {
+    await pumpChat(tester, const [
+      ChatMessage(id: 'e1', characterId: 'me', content: '', messageType: 'dialogue'),
+      ChatMessage(id: 'e2', characterId: 'me', content: '', messageType: 'dialogue'),
+      ChatMessage(id: 'x1', characterId: 'c1', content: 'X', messageType: 'dialogue'),
+      ChatMessage(id: 'y1', characterId: 'c1', content: 'Y', messageType: 'dialogue'),
+    ]);
+
+    // 2 tin rỗng tự thông qua; chuỗi tiếp tục chơi X (indicator 400ms +
+    // reveal 400ms). Y KHÔNG được tự hiện — bug cũ lịch N chain timer →
+    // Y bị reveal trắng không indicator lúc ~1200ms.
+    await tester.pump(const Duration(milliseconds: 900));
+    expect(find.text('X'), findsOneWidget);
+    expect(find.text('Y'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Y'), findsNothing);
+
+    // Chạm → Y chơi bình thường → hết chương.
+    await tester.tap(find.byType(ChatChapterView));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('Y'), findsOneWidget);
+    expect(find.text('— hết chương —'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1300));
+    await tester.pump();
+  });
 }

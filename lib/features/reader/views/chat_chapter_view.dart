@@ -65,6 +65,12 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   Timer? _timer;
   final _fallbackScrollController = ScrollController();
 
+  /// Đã chạy lần `_startNext` đầu tiên cho chương hiện tại chưa — chống
+  /// double-start khi cả `initState` lẫn `didUpdateWidget` cùng lịch
+  /// post-frame callback (đổi chương trước frame đầu tiên → 2 callback
+  /// cùng chạy trên chương mới, reveal/skip tin đầu 2 lần).
+  bool _started = false;
+
   ScrollController get _controller =>
       widget.scrollController ?? _fallbackScrollController;
 
@@ -75,6 +81,9 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   String? get _trailingKind {
     if (_typingCharName != null) return 'typing';
     if (_inputTyping && _inputReady) return 'send';
+    // Đang gõ giả thanh input cho tin "Bạn": thanh input chính là focus —
+    // không hiện hint 'tap' (tap đang bị bỏ qua, hiện sẽ gây mâu thuẫn).
+    if (_inputTyping) return null;
     if (_hasMore && !_showEndNav) return 'tap';
     return null;
   }
@@ -82,7 +91,7 @@ class _ChatChapterViewState extends State<ChatChapterView> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startNext());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startInitial());
   }
 
   @override
@@ -94,14 +103,22 @@ class _ChatChapterViewState extends State<ChatChapterView> {
       _timer?.cancel();
       _timer = null;
       _revealed = 0;
+      _started = false;
       _typingCharName = null;
       _inputTyping = false;
       _inputReady = false;
       _inputText = '';
       _showEndNav = false;
       _allRevealedFired = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _startNext());
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startInitial());
     }
+  }
+
+  /// Lần chạy đầu tiên của mỗi chương — idempotent (xem [_started]).
+  void _startInitial() {
+    if (!mounted || _started) return;
+    _started = true;
+    _startNext();
   }
 
   @override
@@ -260,17 +277,31 @@ class _ChatChapterViewState extends State<ChatChapterView> {
     _inputTyping = false;
     _inputReady = false;
     _inputText = '';
+    // Chốt tin kế TRƯỚC khi reveal: _revealCurrent → _prefillNextMe có
+    // thể đệ quy qua _commitInput (tin "Bạn" rỗng liên tiếp) làm
+    // _revealed tiến tiếp — đọc messages[_revealed] sau reveal sẽ lấy
+    // nhầm tin xa hơn và lịch chain TRÙNG với chain bên trong (N chain
+    // fire cùng lúc → double-start, skip tin). Lúc này _revealed còn
+    // trỏ vào CHÍNH tin đang commit → tin kế là _revealed + 1.
+    final nextIndex = _revealed + 1;
+    final next = nextIndex < widget.messages.length
+        ? widget.messages[nextIndex]
+        : null;
     _revealCurrent();
-    if (_hasMore) {
-      final next = widget.messages[_revealed];
-      final delayMs = next.messageType != 'dialogue' ? 150 : 400;
-      _timer = Timer(Duration(milliseconds: delayMs), () {
-        // Nhả slot trước khi chạy — giữ tham chiếu timer đã fire sẽ khiến
-        // _handleTap tưởng "đang bận" → tap để sang tin kế bị vô hiệu.
-        _timer = null;
-        _startNext();
-      });
-    }
+    if (next == null) return;
+    // Tin kế là của "Bạn": _prefillNextMe đã mở sẵn typewriter cho nó
+    // (timer 350ms đang chạy trong _timer). Schedule chain ở đây sẽ GHI
+    // ĐÈ _timer đó → 2 vòng tick song song, text bị xoá gõ lại/nhấp
+    // nháy giữa 2 prefix — chỉ schedule chain khi tin kế do chain/tap
+    // tự chơi (không thuộc prefill).
+    if (next.messageType == 'dialogue' && _isMe(next)) return;
+    final delayMs = next.messageType != 'dialogue' ? 150 : 400;
+    _timer = Timer(Duration(milliseconds: delayMs), () {
+      // Nhả slot trước khi chạy — giữ tham chiếu timer đã fire sẽ khiến
+      // _handleTap tưởng "đang bận" → tap để sang tin kế bị vô hiệu.
+      _timer = null;
+      _startNext();
+    });
   }
 
   // ─── Tap handling ─────────────────────────────────────────────────
