@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/observability/app_logger.dart';
@@ -47,6 +49,12 @@ final appUpdateServiceProvider = Provider<AppUpdateService>(
 /// mỗi phiên. Không poll — một IPC tới Play mỗi lần mở app là đủ, và
 /// `availableVersionCode` chỉ đổi sau khi CI upload AAB mới lên track.
 class AppUpdateNotifier extends Notifier<AppUpdateState> {
+  /// Plugin `in_app_update` 5.0.0 không resolve `completeFlexibleUpdate`
+  /// (handler native không gọi `result.success`) — future treo vô hạn.
+  /// Timeout này là lưới an toàn khi app vẫn sống sau khi Play cài xong
+  /// mà không restart — xem [installDownloaded].
+  static const Duration installTimeout = Duration(seconds: 30);
+
   @override
   AppUpdateState build() => const AppUpdateState();
 
@@ -62,7 +70,15 @@ class AppUpdateNotifier extends Notifier<AppUpdateState> {
         'AppUpdate: có bản mới trên CH Play '
         '(build ${result.versionCode ?? '?'})',
       );
-      state = state.copyWith(phase: AppUpdatePhase.available);
+      // Bản mới đã tải xong từ phiên trước (user tải rồi tắt app chưa
+      // cài) → nhảy thẳng "Cài ngay", không mời tải lại — gọi lại
+      // startFlexibleUpdate lúc này có thể treo vì Play không phát lại
+      // sự kiện DOWNLOADED khi đã ở trạng thái đó.
+      state = state.copyWith(
+        phase: result.installStatus == AppInstallStatus.downloaded
+            ? AppUpdatePhase.readyToInstall
+            : AppUpdatePhase.available,
+      );
     } catch (e, s) {
       AppLogger.info('AppUpdate: bỏ qua check (không phải bản cài Play)', e, s);
     }
@@ -89,12 +105,22 @@ class AppUpdateNotifier extends Notifier<AppUpdateState> {
     }
   }
 
-  /// "Cài ngay" — Play cài đặt và restart app. Lỗi cài là hiếm; giữ
-  /// readyToInstall để user thử lại.
+  /// "Cài ngay" — Play cài đặt và restart app. Future này thường không
+  /// bao giờ resolve (xem [installTimeout]) — timeout xong vẫn giữ
+  /// readyToInstall để user thử lại; Play tự restart app khi cài thành
+  /// công nên await hiếm khi quay về.
   Future<void> installDownloaded() async {
     if (state.phase != AppUpdatePhase.readyToInstall) return;
     try {
-      await ref.read(appUpdateServiceProvider).completeInstall();
+      await ref
+          .read(appUpdateServiceProvider)
+          .completeInstall()
+          .timeout(installTimeout);
+    } on TimeoutException {
+      AppLogger.info(
+        'AppUpdate: plugin không xác nhận kết quả cài (đã biết, bug '
+        'in_app_update 5.0.0) — Play tự restart app nếu cài thành công',
+      );
     } catch (e, s) {
       AppLogger.warning('AppUpdate: cài thất bại', e, s);
     }

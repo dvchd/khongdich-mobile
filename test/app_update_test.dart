@@ -16,6 +16,7 @@ class _FakeService implements AppUpdateService {
     this.downloadCompleter,
     this.downloadError,
     this.installError,
+    this.installCompleter,
   });
 
   final AppUpdateCheck? checkResult;
@@ -23,6 +24,7 @@ class _FakeService implements AppUpdateService {
   final Completer<void>? downloadCompleter;
   final Object? downloadError;
   final Object? installError;
+  final Completer<void>? installCompleter;
   int installCount = 0;
 
   @override
@@ -44,6 +46,7 @@ class _FakeService implements AppUpdateService {
     installCount++;
     final error = installError;
     if (error != null) throw error;
+    await installCompleter?.future;
   }
 }
 
@@ -164,6 +167,59 @@ void main() {
       await notifier.checkOnce();
       await notifier.startDownload();
       await notifier.installDownloaded();
+      expect(container.read(appUpdateProvider).phase,
+          AppUpdatePhase.readyToInstall);
+    });
+
+    test('Check báo đã tải sẵn từ phiên trước → nhảy thẳng readyToInstall',
+        () async {
+      // User tải xong rồi tắt app chưa cài: Play vẫn báo updateAvailable
+      // với installStatus = downloaded — không được mời tải lại (gọi
+      // startFlexibleUpdate lúc này có thể treo vì không phát lại sự kiện
+      // DOWNLOADED), phải đưa thẳng nút "Cài ngay".
+      final container = _makeContainer(
+        _FakeService(
+          checkResult: const AppUpdateCheck(
+            available: true,
+            versionCode: 16,
+            installStatus: AppInstallStatus.downloaded,
+          ),
+        ),
+      );
+      await container.read(appUpdateProvider.notifier).checkOnce();
+      expect(
+        container.read(appUpdateProvider).phase,
+        AppUpdatePhase.readyToInstall,
+      );
+    });
+
+    testWidgets(
+        'completeInstall treo (plugin không resolve) → timeout, '
+        'giữ readyToInstall', (tester) async {
+      // testWidgets chạy trong FakeAsync — pump(duration) trôi đồng hồ
+      // giả để kích hoạt .timeout() thay vì đợi 30s thật.
+      final container = _makeContainer(
+        _FakeService(
+          checkResult: const AppUpdateCheck(available: true),
+          installCompleter: Completer<void>(), // không bao giờ complete
+        ),
+      );
+      final notifier = container.read(appUpdateProvider.notifier);
+      await notifier.checkOnce();
+      await notifier.startDownload();
+      expect(container.read(appUpdateProvider).phase,
+          AppUpdatePhase.readyToInstall);
+
+      final pending = notifier.installDownloaded();
+      await tester.pump();
+      expect(container.read(appUpdateProvider).phase,
+          AppUpdatePhase.readyToInstall);
+
+      await tester.pump(
+        AppUpdateNotifier.installTimeout + const Duration(seconds: 1),
+      );
+      await pending;
+      // Hết timeout mà không crash — vẫn readyToInstall để user thử lại.
       expect(container.read(appUpdateProvider).phase,
           AppUpdatePhase.readyToInstall);
     });
