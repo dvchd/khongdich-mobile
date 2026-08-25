@@ -80,10 +80,12 @@ class MarketRepository {
 
     // Reconnect với exponential backoff (1s → 30s tối đa) thay vì cố định
     // 3s mãi mãi — server down lâu thì không spam request + drain pin.
-    var retryDelay = const Duration(seconds: 1);
-    const maxRetryDelay = Duration(seconds: 30);
+    var retryDelay = _initialRetryDelay;
 
     Future<void> connect() async {
+      // Thời điểm kết nối được thiết lập (response nhận được) — dùng để
+      // đo uptime khi stream kết thúc, xem [nextReconnectDelay].
+      DateTime connectedAt = DateTime.now();
       try {
         final response = await _dio.get<ResponseBody>(
           '/api/v1/mobile/market/stream',
@@ -95,6 +97,7 @@ class MarketRepository {
           cancelToken: cancelToken,
         );
         if (controller.isClosed) return;
+        connectedAt = DateTime.now();
         // Catch-up: EventSource does not replay messages sent while the
         // connection was down — pull the latest history on every connect.
         try {
@@ -152,10 +155,16 @@ class MarketRepository {
           }
         }
         // Server closed the stream cleanly — reconnect after a pause.
+        // Delay kế tiếp phụ thuộc uptime: kết nối sống lâu (thực sự
+        // healthy) mới được reset về 1s; kết nối chết nhanh liên tục
+        // (server/proxy flap) phải nhân đôi như failure — nếu không sẽ
+        // reconnect mỗi ~1s vô hạn (bug reconnect-storm).
         if (!controller.isClosed) {
-          retryDelay = const Duration(seconds: 1);
+          retryDelay = nextReconnectDelay(
+            healthyFor: DateTime.now().difference(connectedAt),
+            currentDelay: retryDelay,
+          );
           await Future.delayed(retryDelay);
-          retryDelay = _nextDelay(retryDelay, maxRetryDelay);
           if (!controller.isClosed) unawaited(connect());
         }
       } catch (e, s) {
@@ -165,7 +174,7 @@ class MarketRepository {
             s);
         if (!controller.isClosed) {
           await Future.delayed(retryDelay);
-          retryDelay = _nextDelay(retryDelay, maxRetryDelay);
+          retryDelay = _nextDelay(retryDelay, _maxRetryDelay);
           if (!controller.isClosed) unawaited(connect());
         }
       }
@@ -177,10 +186,34 @@ class MarketRepository {
 }
 
 /// Exponential backoff cho SSE reconnect — nhân đôi mỗi lần, chặn ở
-/// [maxDelay] (1s → 2s → 4s → … → 30s).
+/// [_maxRetryDelay] (1s → 2s → 4s → … → 30s).
+const _initialRetryDelay = Duration(seconds: 1);
+const _maxRetryDelay = Duration(seconds: 30);
+
 Duration _nextDelay(Duration current, Duration maxDelay) {
   final next = current * 2;
   return next > maxDelay ? maxDelay : next;
+}
+
+/// Kết nối phải sống tối thiểu [_healthyResetThreshold] mới được coi là
+/// "ổn định" và reset backoff về ban đầu. Dưới ngưỡng này coi là flap.
+const _healthyResetThreshold = Duration(seconds: 60);
+
+/// Delay chờ trước lần reconnect kế tiếp sau khi stream SSE kết thúc.
+///
+/// Kết nối vừa rồi sống ≥ [_healthyResetThreshold] (mất mạng thật, server
+/// restart...) → reset về [_initialRetryDelay]. Ngược lại (flap: server
+/// chấp nhận kết nối rồi đóng gần như ngay lập tức) → nhân đôi tiếp như
+/// một lần failure. Trước đây clean-close LUÔN reset về 1s → server flap
+/// gây reconnect-storm ~1s/lần vô hạn, đánh bại toàn bộ backoff.
+///
+/// Public + thuần để unit test (test/market_reconnect_test.dart).
+Duration nextReconnectDelay({
+  required Duration healthyFor,
+  required Duration currentDelay,
+}) {
+  if (healthyFor >= _healthyResetThreshold) return _initialRetryDelay;
+  return _nextDelay(currentDelay, _maxRetryDelay);
 }
 
 /// Result of posting a chat message.
