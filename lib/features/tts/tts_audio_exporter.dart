@@ -5,6 +5,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/observability/app_logger.dart';
+import 'tts_speed.dart';
 
 /// Xuất toàn bộ chương truyện thành **một file WAV** bằng TTS on-device,
 /// kèm **file phụ đề SRT** (timing thật đo từ header WAV từng chunk).
@@ -106,38 +107,44 @@ class TtsAudioExporter {
 
   /// Cấu hình TTS giống handler playback (engine/voice/ngôn ngữ Việt).
   Future<void> _configure() async {
-    if (_initialized) return;
-    _initialized = true;
-    if (engine != null) {
-      try {
-        await _tts.setEngine(engine!);
-      } catch (e) {
-        AppLogger.warning('TtsAudioExporter: setEngine failed', e);
-      }
-    }
-    // Thử các format ngôn ngữ Việt — giống handler (vi-VN → vi_VN → vi).
-    for (final lang in const ['vi-VN', 'vi_VN', 'vi']) {
-      final raw = await _tts.setLanguage(lang);
-      final r = (raw is int) ? raw : int.tryParse('$raw') ?? -2;
-      if (r == 0 || r == 1) break;
-    }
-    if (voiceName != null) {
-      try {
-        final voices = await _tts.getVoices;
-        if (voices != null) {
-          final voice = (voices as List)
-              .map((v) => Map<String, String>.from(v as Map))
-              .where((v) => v['name'] == voiceName)
-              .firstOrNull;
-          if (voice != null) await _tts.setVoice(voice);
+    if (!_initialized) {
+      _initialized = true;
+      if (engine != null) {
+        try {
+          await _tts.setEngine(engine!);
+        } catch (e) {
+          AppLogger.warning('TtsAudioExporter: setEngine failed', e);
         }
-      } catch (e) {
-        AppLogger.warning('TtsAudioExporter: setVoice failed', e);
+      }
+      // Thử các format ngôn ngữ Việt — giống handler (vi-VN → vi_VN → vi).
+      for (final lang in const ['vi-VN', 'vi_VN', 'vi']) {
+        final raw = await _tts.setLanguage(lang);
+        final r = (raw is int) ? raw : int.tryParse('$raw') ?? -2;
+        if (r == 0 || r == 1) break;
+      }
+      if (voiceName != null) {
+        try {
+          final voices = await _tts.getVoices;
+          if (voices != null) {
+            final voice = (voices as List)
+                .map((v) => Map<String, String>.from(v as Map))
+                .where((v) => v['name'] == voiceName)
+                .firstOrNull;
+            if (voice != null) await _tts.setVoice(voice);
+          }
+        } catch (e) {
+          AppLogger.warning('TtsAudioExporter: setVoice failed', e);
+        }
       }
     }
+    // Pitch/volume/rate áp MỖI LẦN export (không nằm trong guard init):
+    // lần export thứ hai với tốc độ khác phải ghi đè rate cũ.
     await _tts.setPitch(1.0);
     await _tts.setVolume(1.0);
-    await _tts.setSpeechRate(speed.clamp(0.1, 2.0));
+    // Cùng công thức mapping với playback (tts_speed.dart) — truyền
+    // thẳng user speed vào đây từng làm file xuất ra nhanh GẤP ĐÔI
+    // tốc độ đang nghe (nghe 2.5x → file ×4 thực tế).
+    await _tts.setSpeechRate(ttsRateForUserSpeed(speed));
     await _tts.awaitSynthCompletion(true);
   }
 

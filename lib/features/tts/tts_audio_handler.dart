@@ -18,6 +18,7 @@ import '../../models/chapter_content.dart';
 import '../../services/chapter_cache_service.dart';
 import '../reader/chapter_tts_support.dart';
 import '../reader/services/reading_progress_service.dart';
+import 'tts_speed.dart';
 
 /// Foreground-service-backed TTS player for Không Dịch.
 ///
@@ -654,9 +655,9 @@ class TtsAudioHandler extends BaseAudioHandler with QueueHandler {
   }
 
   Future<void> _applySpeed() async {
-    // flutter_tts Android: 0.0 = slowest, 1.0 = normal.
-    // Map user-facing 0.5–2.5 → 0.0–1.0.
-    final rate = ((_speed - 0.5) / 2.0).clamp(0.0, 1.0);
+    // Công thức mapping dùng chung với exporter (tts_speed.dart) — nếu
+    // lệch nhau, file tải xuống nhanh/chậm khác tốc độ đang nghe.
+    final rate = ttsRateForUserSpeed(_speed);
     await _tts.setSpeechRate(rate);
     AppLogger.info('TTS: setSpeechRate($rate) for user speed $_speed');
   }
