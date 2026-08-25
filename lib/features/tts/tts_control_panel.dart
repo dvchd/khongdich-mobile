@@ -12,6 +12,7 @@ import '../profile/profile_screen.dart' show currentUserProvider;
 import 'tts_audio_exporter.dart';
 import 'tts_audio_handler.dart';
 import 'tts_bar_state.dart';
+import 'tts_voice_guide_sheet.dart';
 
 /// Mở [TtsControlPanel] dạng bottom sheet từ MỌI nơi (bar, reader, offline
 /// reader). Việc ẩn now-playing bar khi panel mở do [TtsBarRouteObserver]
@@ -129,6 +130,20 @@ class _PanelContentState extends State<_PanelContent> {
     _selectedEngine = widget.handler.selectedEngine;
     _voices = widget.handler.availableVoices;
     _engines = widget.handler.availableEngines;
+  }
+
+  /// Mở sheet hướng dẫn cập nhật giọng đọc. Khi đóng, nạp lại danh sách
+  /// engine/voice từ handler (user có thể đã cập nhật engine hoặc tải
+  /// voice data mới trong lúc sheet mở).
+  Future<void> _openVoiceGuide() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => VoiceUpdateGuideSheet(handler: widget.handler),
+    );
+    if (!mounted) return;
+    setState(_refreshFromHandler);
   }
 
   @override
@@ -404,6 +419,19 @@ class _PanelContentState extends State<_PanelContent> {
                             ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 12),
+                // Hướng dẫn cập nhật giọng đọc — giọng đến từ engine TTS
+                // của máy (Google/Samsung...), app không tự cập nhật được.
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _openVoiceGuide,
+                    icon: const Icon(Icons.help_outline, size: 16),
+                    label: const Text(
+                      'Giọng đọc cũ hoặc muốn giọng hay hơn? Xem hướng dẫn',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 // Speed selector

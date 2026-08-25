@@ -1,8 +1,11 @@
 package com.khongdich.khongdich_mobile
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -18,6 +21,7 @@ import io.flutter.plugin.common.MethodChannel
 /// release).
 class MainActivity : AudioServiceActivity() {
     private val notificationsChannel = "khongdich/notifications"
+    private val ttsSettingsChannel = "khongdich/tts_settings"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -30,6 +34,42 @@ class MainActivity : AudioServiceActivity() {
                 "hasPermission" -> result.success(hasNotificationPermission())
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            ttsSettingsChannel,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "openTtsSettings" -> result.success(openTtsSettings())
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /// Mở màn "Text-to-speech output" của hệ thống — nơi user cập nhật
+    /// engine, tải dữ liệu giọng (voice data) tiếng Việt. Intent
+    /// `com.android.settings.TTS_SETTINGS` không nằm trong public API
+    /// nhưng hỗ trợ rộng rãi trên Android gốc và phần lớn OEM. Máy không
+    /// hỗ trợ → fallback về Cài đặt chung (user tự vào Accessibility →
+    /// Text-to-speech output). Trả false khi cả hai đều không mở được.
+    private fun openTtsSettings(): Boolean {
+        val ttsIntent = Intent("com.android.settings.TTS_SETTINGS")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(ttsIntent)
+            true
+        } catch (e: ActivityNotFoundException) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                true
+            } catch (e2: Exception) {
+                false
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 

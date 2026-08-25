@@ -53,6 +53,7 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 | **TTS engine selector** (chọn `com.google.android.tts` / Samsung / ...) | ✅ |
 | **TTS voice dropdown** (hiện cả locale: `vi-vn-language (vi-VN)`) | ✅ |
 | TTS control panel (play/pause/speed/voice/engine/progress) | ✅ |
+| **Hướng dẫn cập nhật giọng đọc** (mở CH Play/cài đặt TTS/Galaxy Store + nạp lại giọng) | ✅ |
 | TTS text highlighting (bôi đoạn đang đọc) | ✅ |
 | Drift on-disk SQLite store (8 bảng, schema v8) | ✅ |
 | Batch sync (`POST /api/v1/mobile/sync`) | ✅ |
@@ -139,7 +140,9 @@ lib/
 │       ├── tts_audio_handler.dart       # State machine TTS (bug #1–#11 khóa bằng test riêng)
 │       ├── tts_control_panel.dart       # Bottom sheet: play/pause/speed/voice/engine/progress
 │       ├── tts_mini_player.dart         # + tts_now_playing_bar, tts_bar_state
-│       └── tts_audio_exporter.dart      # TTS → WAV → lưu/chia sẻ (tác giả)
+│       ├── tts_audio_exporter.dart      # TTS → WAV → lưu/chia sẻ (tác giả)
+│       ├── tts_voice_guide_sheet.dart    # Hướng dẫn cập nhật/tải giọng đọc chất lượng cao
+│       └── tts_settings_launcher.dart    # Mở cài đặt TTS hệ thống (MainActivity channel)
 ├── models/
 │   ├── chapter_content.dart             # Sealed ChapterContent: text/manga/chat/video (+visual)
 │   ├── story.dart                       # + comment.dart, market.dart, review.dart
