@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../observability/app_logger.dart';
 
@@ -82,6 +83,14 @@ class ApiClient {
   /// old build with the runtime switcher would silently redirect this
   /// binary to the other server.
   static Future<ApiClient> create() async {
+    // Version cho User-Agent — đọc từ pubspec (package_info). Fallback
+    // 'dev' khi plugin chưa sẵn sàng (unit test) để không bao giờ chặn
+    // việc tạo client.
+    String uaVersion = 'dev';
+    try {
+      uaVersion = (await PackageInfo.fromPlatform()).version;
+    } catch (_) {}
+
     const storage = FlutterSecureStorage();
     final compileTimeEnv = const String.fromEnvironment(
       'APP_ENV',
@@ -100,7 +109,7 @@ class ApiClient {
         sendTimeout: const Duration(seconds: 15),
         headers: {
           'Accept': 'application/json',
-          'User-Agent': 'KhongDichMobile/0.3 (+https://khongdich.com)',
+          'User-Agent': 'KhongDichMobile/$uaVersion (+https://khongdich.com)',
         },
         responseType: ResponseType.json,
         validateStatus: (s) => s != null && s >= 200 && s < 300,
