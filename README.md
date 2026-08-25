@@ -2,9 +2,9 @@
 
 Ứng dụng đọc truyện mobile cho [khongdich.com](https://khongdich.com). Android-first, xây dựng theo `docs/plan-flutter-app.md` (v4) trong repo backend.
 
-## Trạng thái hiện tại (v0.8.0)
+## Trạng thái hiện tại (v0.9.0)
 
-**Build:** `flutter analyze` → 0 lỗi · 252 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases + tự upload AAB lên Play Console (track Closed Testing).
+**Build:** `flutter analyze` → 0 lỗi · 261 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases + tự upload AAB lên Play Console (track Closed Testing).
 
 ### Kiến trúc
 
