@@ -58,6 +58,11 @@ dependencies:
   # cho TTS. Khi cần FCM push: re-add firebase_core + firebase_messaging +
   # google-services.json + backend push_devices.
 
+  # Update check qua Google Play In-App Updates — chỉ hoạt động khi app
+  # được cài từ CH Play (build debug/sideload APK sẽ throw → bắt lỗi im lặng).
+  # Không dùng Firebase/FCM cho việc này (đã loại bỏ có chủ ý, xem trên đầu).
+  in_app_update: ^5.0.0
+
   # Utils
   logger: ^2.4.0
   url_launcher: ^6.3.0

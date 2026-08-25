@@ -12,6 +12,8 @@ import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
 import '../notifications/unread_badge_provider.dart';
 import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
+import '../update/app_update_provider.dart';
+import '../update/update_banner.dart';
 import 'publish_web_sheet.dart';
 import 'widgets/home_hero.dart';
 import 'widgets/market_section.dart';
@@ -47,6 +49,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     Future.microtask(() => ref.read(homeProvider.notifier).refresh());
+    // Check CH Play có bản mới không — mỗi phiên đúng một lần, lỗi im lặng.
+    Future.microtask(() => ref.read(appUpdateProvider.notifier).checkOnce());
   }
 
   Future<void> _maybeRedirectOffline(Object error) async {
@@ -149,6 +153,18 @@ class _HomeContent extends ConsumerWidget {
         home.random.isNotEmpty ||
         home.flop.isNotEmpty ||
         home.vip.isNotEmpty;
+    // Tải xong bản cập nhật → snackbar nhắc cài (banner ở đầu list có thể
+    // đã bị cuộn khuất). ref.listen trong build — pattern như homeProvider.
+    ref.listen(appUpdateProvider, (prev, next) {
+      if (next.phase == AppUpdatePhase.readyToInstall &&
+          prev?.phase != AppUpdatePhase.readyToInstall) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã tải xong bản cập nhật — chạm Cài ngay để cài.'),
+          ),
+        );
+      }
+    });
     // Thứ tự section theo nguyên tắc DISCOVERY-FIRST: Chợ Phiên lên ĐẦU
     // (nội dung thời hạn — chỉ mở đôi khi, phải thấy được khi đang diễn
     // ra; tự ẩn khi chợ đóng). Sau đó là các rail truyện để độc giả mở
@@ -158,6 +174,8 @@ class _HomeContent extends ConsumerWidget {
     // tới Truyện VIP + Hoàn thành + Tuyển chọn.
     return ListView(
       children: [
+        // Banner cập nhật CH Play (ẩn khi không có bản mới / đã "Để sau").
+        const AppUpdateBanner(),
         const HomeHero(),
         // Khám phá nhanh: BXH / Thể loại / Tag / Khám phá (lọc).
         const _DiscoverShortcuts(),
