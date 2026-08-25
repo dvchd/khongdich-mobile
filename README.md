@@ -2,9 +2,9 @@
 
 Ứng dụng đọc truyện mobile cho [khongdich.com](https://khongdich.com). Android-first, xây dựng theo `docs/plan-flutter-app.md` (v4) trong repo backend.
 
-## Trạng thái hiện tại (v0.7.0)
+## Trạng thái hiện tại (v0.8.0)
 
-**Build:** `flutter analyze` → 0 lỗi · 206 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases.
+**Build:** `flutter analyze` → 0 lỗi · 252 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases + tự upload AAB lên Play Console (track Closed Testing).
 
 ### Kiến trúc
 
@@ -173,20 +173,19 @@ flutter run --flavor=prod --dart-define=APP_ENV=prod
 
 `.github/workflows/ci.yml` (3 job, tối ưu cache):
 
-1. **Analyze** + **Test** — 2 job chạy song song trên mọi push (main, tag) và PR. Fail nếu có issue (206 tests).
-2. **Build Android (prod)** — chỉ chạy khi push **tag `v*`** (sau khi 2 job trên xanh): build APK + AAB với cache Gradle (`gradle/actions/setup-gradle`) + daemon bật để tái dùng giữa 2 build → validate tag khớp `version` trong pubspec.yaml → tạo GitHub Release chính thức kèm artifacts.
+1. **Analyze** + **Test** — 2 job chạy song song trên mọi push (main, tag) và PR. Fail nếu có issue (252 tests).
+2. **Build Android (prod)** — chỉ chạy khi push **tag `v*`** (sau khi 2 job trên xanh): build APK + AAB với cache Gradle (`gradle/actions/setup-gradle`) + daemon bật để tái dùng giữa 2 build → validate tag khớp `version` trong pubspec.yaml → tạo GitHub Release chính thức kèm artifacts → **tự upload AAB lên Google Play Console track Closed Testing** qua `r0adkll/upload-google-play` (service account `play-release@khongdich-play`, secret `PLAY_SERVICE_ACCOUNT_JSON`).
 
 Push main **không** tạo release (trước đây spam `dev-*-<sha>` prerelease). Push mới hủy run cũ của cùng ref (concurrency).
 
 ### Quy trình phát hành
 
 ```bash
-scripts/bump_version.sh 0.3.4+9     # check branch main + tree sạch + versionCode tăng → bump pubspec, commit, push main + tag v0.3.4
-# chờ CI xanh (Actions) →
-scripts/download_aab.sh              # tải AAB từ release mới nhất về ./release/
+scripts/bump_version.sh 0.8.0+16    # check branch main + tree sạch + versionCode tăng → bump pubspec, commit, push main + tag v0.8.0
+# chờ CI xanh → GitHub Release + AAB lên track Closed Testing tự động
 ```
 
-Sau đó upload AAB lên Google Play Console (track closed testing). Có thể dùng
+Upload tay chỉ là fallback khi service account chưa cấu hình: dùng
 `scripts/playstore/inject_file.py aab <file.aab>` (kèm `local_serve.py`, qua
 opencli) để inject thẳng AAB vào Play Console; `inject_file.py store` để thay
 ảnh store listing. Quy trình chi tiết nằm trong skill `android-release`.
