@@ -18,6 +18,11 @@ import 'parser.dart';
 class TtsMarkdownPreprocessor {
   TtsMarkdownPreprocessor._();
 
+  /// Cú pháp ảnh `![alt](url)` / `![alt] (url)` sót lại trong text (xem
+  /// processWithBlocks) — bỏ cả alt lẫn link vì đọc ảnh thành lời là nhiễu.
+  static final RegExp _ttsImageSyntaxRegExp =
+      RegExp(r'!\[[^\]]*\]\s*\([^)]*\)');
+
   /// Convert [markdown] into a list of plain-text chunks roughly <= 500
   /// characters each, broken on paragraph boundaries.
   static List<String> process(String markdown) {
@@ -61,6 +66,11 @@ class TtsMarkdownPreprocessor {
       // TTS cũng strip image syntax (khongdich chapter_to_tts_text).
       if (block is CodeBlock || block is ImageBlock) continue;
       var raw = block.plainText.trim();
+      if (raw.isEmpty) continue;
+      // Lưới an toàn: cú pháp ảnh không được parser nhận diện (URL có ký
+      // tự lạ, ngoặc thiếu...) vẫn còn nằm trong text — bỏ nốt để TTS
+      // không bao giờ đọc link ảnh.
+      raw = raw.replaceAll(_ttsImageSyntaxRegExp, '').trim();
       if (raw.isEmpty) continue;
       if (block is Heading) {
         // Heading markers are gone — add the trailing pause the regex

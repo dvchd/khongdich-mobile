@@ -184,6 +184,23 @@ class CodeRun extends Inline {
   Map<String, dynamic> toJson() => {'type': 'code', 'code': code};
 }
 
+/// Ảnh `![alt](url)` TRỘN LẪN text trong một đoạn (ảnh đứng riêng dòng đã
+/// thành [ImageBlock] ở tầng block). Renderer hiển thị fallback `[alt]`;
+/// TTS/plainText thì BỎ QUA hoàn toàn — đọc link/file ảnh thành lời là
+/// nhiễu (web TTS cũng strip ảnh tương tự trong chapter_to_tts_text).
+class InlineImage extends Inline {
+  final String alt;
+  final String url;
+  const InlineImage({required this.alt, required this.url});
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'type': 'inline_image',
+    'alt': alt,
+    'url': url,
+  };
+}
+
 class LineBreak extends Inline {
   final bool hard; // true = <br>, false = soft break (rendered as space)
   const LineBreak(this.hard);
@@ -237,6 +254,9 @@ extension InlinePlainText on Inline {
       LinkRun(:final children) => children.map((i) => i.plainText).join(),
       CodeRun(:final code) => code,
       LineBreak(:final hard) => hard ? '\n' : ' ',
+      // Ảnh inline không góp text cho TTS/copy/đếm chữ — renderer vẫn vẽ
+      // fallback `[alt]` nhưng không bao giờ đọc link/file ảnh thành lời.
+      InlineImage() => '',
     };
   }
 }

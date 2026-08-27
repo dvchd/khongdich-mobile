@@ -395,17 +395,12 @@ class MarkdownParser {
         final match = _imageRegExp.matchAsPrefix(text, i);
         if (match != null) {
           flushText();
-          final alt = match.group(1) ?? '';
+          final alt = (match.group(1) ?? '').trim();
           final url = match.group(2) ?? '';
-          if (_isSafeUrl(url)) {
-            // We don't emit inline image as Inline (per plan §4.3 — image
-            // is a Block). Convert to text alt + url so reader still has
-            // access; dedicated ImageBlock rendering happens for standalone
-            // image-only paragraphs.
-            spans.add(TextRun('[$alt]'));
-          } else {
-            spans.add(TextRun('[$alt]'));
-          }
+          // Emit InlineImage (không phải TextRun('[$alt]') như trước):
+          // renderer vẫn hiện fallback `[alt]`, nhưng TTS/plainText bỏ qua
+          // hoàn toàn nên không bao giờ đọc link ảnh.
+          spans.add(InlineImage(alt: alt, url: url));
           i = match.end;
           continue;
         }
@@ -530,8 +525,11 @@ class MarkdownParser {
   static final RegExp _linkRegExp = RegExp(
     r'\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
   );
+  // `\s*` giữa `]` và `(`: chịu được cách viết `![alt] (url)` mà tác giả
+  // hay dùng — trước đây không khớp → nguyên cú pháp kể cả link ảnh bị
+  // coi là text thô và TTS đọc to.
   static final RegExp _imageRegExp = RegExp(
-    r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)',
+    r'!\[([^\]]*)\]\s*\(([^)\s]+)(?:\s+"([^"]*)")?\)',
   );
   static final RegExp _bulletItemRegExp = RegExp(r'^\s{0,3}([-*+])\s+');
 

@@ -377,6 +377,14 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
       ),
       CodeRun(:final code) => TextSpan(text: code, style: t.codeStyle),
       LineBreak(:final hard) => TextSpan(text: hard ? '\n' : ' '),
+      // Ảnh inline — hiện fallback `[alt]` giống renderer chính.
+      InlineImage(:final alt) => TextSpan(
+        text: alt.isEmpty ? '[image]' : '[$alt]',
+        style: TextStyle(
+          color: (t.bodyStyle.color ?? Colors.grey).withValues(alpha: 0.65),
+          fontStyle: FontStyle.italic,
+        ),
+      ),
     };
   }
 
@@ -634,6 +642,7 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
               CodeRun(code.substring(offset)),
             ),
       LineBreak() => null, // length 1 — mọi offset hợp lệ đều ở biên.
+      InlineImage() => null, // plainText rỗng — không bao giờ chứa offset.
     };
   }
 

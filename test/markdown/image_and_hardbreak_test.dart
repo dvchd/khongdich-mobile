@@ -33,24 +33,33 @@ void main() {
       expect((blocks[1] as ImageBlock).url, 'https://x/2.png');
     });
 
-    test('ảnh trộn text cùng dòng → giữ behavior cũ (text [alt])', () {
+    test('ảnh trộn text cùng dòng → InlineImage (render [alt], TTS bỏ qua)', () {
       final blocks = MarkdownParser()
           .parse('Xem ![ảnh](https://x/i.png) này.');
       final para = blocks.single as Paragraph;
-      final texts = para.children.whereType<TextRun>().map((t) => t.text);
-      expect(texts.join(), contains('[ảnh]'));
+      final img = para.children.whereType<InlineImage>().single;
+      expect(img.alt, 'ảnh');
+      expect(img.url, 'https://x/i.png');
+      // plainText của cả đoạn KHÔNG chứa alt/link ảnh — TTS không đọc ảnh.
+      expect(para.plainText, isNot(contains('x/i.png')));
+      expect(para.plainText, isNot(contains('ảnh')));
     });
 
-    test('scheme không an toàn → KHÔNG tạo ImageBlock (fallback text)', () {
+    test('ảnh inline cách `] (` → vẫn nhận diện, không rò link vào TTS', () {
+      final blocks = MarkdownParser()
+          .parse('Trước ![tên.png] (https://x/j.png) sau.');
+      final para = blocks.single as Paragraph;
+      expect(para.children.whereType<InlineImage>(), hasLength(1));
+      expect(para.plainText, isNot(contains('x/j.png')));
+    });
+
+    test('scheme không an toàn → KHÔNG tạo ImageBlock (fallback [alt])', () {
       final blocks = MarkdownParser().parse('![x](javascript:alert(1))');
       expect(blocks.single, isA<Paragraph>());
+      // Inline ảnh không bao giờ mở URL (chỉ render text [alt]) — an toàn.
       expect(
-        (blocks.single as Paragraph)
-            .children
-            .whereType<TextRun>()
-            .map((t) => t.text)
-            .join(),
-        contains('[x]'),
+        (blocks.single as Paragraph).children.whereType<InlineImage>(),
+        hasLength(1),
       );
     });
 
@@ -105,6 +114,25 @@ void main() {
       expect(joined, contains('Trước.'));
       expect(joined, contains('Sau.'));
       expect(joined, isNot(contains('ảnh bìa')));
+    });
+
+    test('ảnh inline trong đoạn KHÔNG lọt link vào lời đọc', () {
+      final chunks = TtsMarkdownPreprocessor.process(
+          'Đây là minh họa ![3310.webp](https://x/img.png) giữa câu.');
+      final joined = chunks.join(' ');
+      expect(joined, contains('giữa câu'));
+      expect(joined, isNot(contains('x/img.png')));
+      expect(joined, isNot(contains('3310.webp')));
+    });
+
+    test('lưới an toàn: cú pháp ảnh hỏng cũng bị bỏ khỏi TTS', () {
+      // URL chứa khoảng trắng khiến parser KHÔNG nhận diện được ảnh —
+      // preprocessor vẫn phải gỡ để không đọc link ảnh.
+      final chunks = TtsMarkdownPreprocessor.process(
+          'Xem ![a](https://x/ảnh (1).png) ở đây.');
+      final joined = chunks.join(' ');
+      expect(joined, isNot(contains('ảnh (1).png')));
+      expect(joined, contains('ở đây'));
     });
   });
 

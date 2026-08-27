@@ -452,6 +452,15 @@ class _MarkdownRendererState extends State<MarkdownRenderer> {
         ),
       ),
       LineBreak(:final hard) => TextSpan(text: hard ? '\n' : ' '),
+      // Ảnh inline — hiển thị fallback `[alt]` (không fetch ảnh giữa đoạn),
+      // TTS thì bỏ qua nhờ InlinePlainText.plainText = ''.
+      InlineImage(:final alt) => TextSpan(
+        text: alt.isEmpty ? '[image]' : '[$alt]',
+        style: TextStyle(
+          color: (t.bodyStyle.color ?? Colors.grey).withValues(alpha: 0.65),
+          fontStyle: FontStyle.italic,
+        ),
+      ),
     };
   }
 
