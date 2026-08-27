@@ -100,12 +100,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Không Dịch'),
+        title: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/icons/ic_launcher.png',
+                width: 28,
+                height: 28,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Flexible + ellipsis: màn hẹp (test 420px / máy nhỏ) không
+            // bị overflow khi actions chiếm nhiều chỗ.
+            const Flexible(
+              child: Text(
+                'Không Dịch',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_note),
-            tooltip: 'Đăng truyện (web)',
+          // Nút chữ "Đăng truyện" thay cho icon trơ — dễ hình dung hơn là
+          // biểu tượng cây bút (vẫn mở sheet hướng dẫn đăng truyện trên web).
+          TextButton.icon(
             onPressed: () => showPublishWebSheet(context),
+            icon: const Icon(Icons.edit_note, size: 20),
+            label: const Text('Đăng truyện'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
           ),
           Consumer(
             builder: (context, ref, _) {
