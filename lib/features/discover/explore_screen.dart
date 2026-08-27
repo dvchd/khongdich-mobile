@@ -16,12 +16,16 @@ class ExploreScreen extends ConsumerStatefulWidget {
 }
 
 class _ExploreScreenState extends ConsumerState<ExploreScreen> {
+  // Sort giống web /kham-pha: fresh (Mới đăng) / hot (Đang hot) / views
+  // (Đọc nhiều) / rating (Đánh giá) / chapters (Dài nhất). Trước đây có
+  // 'completed' làm sort — trùng nghĩa với filter Trạng thái "Hoàn thành"
+  // nên đã bỏ.
   static const _sorts = [
     ('fresh', 'Mới nhất'),
     ('hot', 'Hot'),
     ('views', 'Lượt đọc'),
     ('rating', 'Đánh giá'),
-    ('completed', 'Hoàn thành'),
+    ('chapters', 'Dài nhất'),
   ];
 
   static const _statuses = [
