@@ -418,12 +418,12 @@ class _SearchFilterBar extends ConsumerWidget {
                 ? '🏷 Thể loại'
                 : '🏷 ${filters.categoryName}',
             active: filters.categorySlug.isNotEmpty,
-            onTap: () => _pickCategories(context, ref, filters, onChanged),
+            onTap: () => _pickCategories(context, filters, onChanged),
           ),
           chip(
             label: filters.tagSlug.isEmpty ? '# Tag' : '# ${filters.tagName}',
             active: filters.tagSlug.isNotEmpty,
-            onTap: () => _pickTags(context, ref, filters, onChanged),
+            onTap: () => _pickTags(context, filters, onChanged),
           ),
           // Nút xoá toàn bộ filter khi có filter đang chọn.
           if (selected)
@@ -481,91 +481,156 @@ Future<void> _pickOption(
 /// Bottom sheet chọn thể loại (danh sách từ API, có nút xoá chọn).
 Future<void> _pickCategories(
   BuildContext context,
-  WidgetRef ref,
   SearchFilters filters,
   Future<void> Function(SearchFilters) onChanged,
 ) async {
-  final categories = ref.read(categoriesProvider).value ?? [];
-  final chosen = await showModalBottomSheet<String>(
+  final chosen = await showModalBottomSheet<(String, String)>(
     context: context,
     showDragHandle: true,
-    builder: (sheetContext) => SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        children: [
-          if (filters.categorySlug.isNotEmpty)
-            ListTile(
-              leading: const Icon(Icons.close, color: Colors.red),
-              title: const Text('Bỏ chọn thể loại'),
-              onTap: () => Navigator.of(sheetContext).pop('__clear__'),
-            ),
-          for (final c in categories)
-            ListTile(
-              title: Text(c.name),
-              trailing: filters.categorySlug == c.slug
-                  ? const Icon(Icons.check, color: Color(0xFF2563EB))
-                  : null,
-              onTap: () => Navigator.of(sheetContext).pop(c.slug),
-            ),
-        ],
-      ),
-    ),
+    builder: (_) => _CategoryPickerSheet(selectedSlug: filters.categorySlug),
   );
   if (chosen == null) return;
-  if (chosen == '__clear__') {
+  if (chosen.$1 == '__clear__') {
     await onChanged(filters.copyWith(
       categorySlug: '',
       categoryName: '',
     ));
     return;
   }
-  final cat = categories.firstWhere((c) => c.slug == chosen);
   await onChanged(filters.copyWith(
-    categorySlug: cat.slug,
-    categoryName: cat.name,
+    categorySlug: chosen.$1,
+    categoryName: chosen.$2,
   ));
 }
 
 /// Bottom sheet chọn tag (danh sách từ API, có nút xoá chọn).
 Future<void> _pickTags(
   BuildContext context,
-  WidgetRef ref,
   SearchFilters filters,
   Future<void> Function(SearchFilters) onChanged,
 ) async {
-  final tags = ref.read(tagsProvider).value ?? [];
-  final chosen = await showModalBottomSheet<String>(
+  final chosen = await showModalBottomSheet<(String, String)>(
     context: context,
     showDragHandle: true,
-    builder: (sheetContext) => SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        children: [
-          if (filters.tagSlug.isNotEmpty)
-            ListTile(
-              leading: const Icon(Icons.close, color: Colors.red),
-              title: const Text('Bỏ chọn tag'),
-              onTap: () => Navigator.of(sheetContext).pop('__clear__'),
-            ),
-          for (final t in tags)
-            ListTile(
-              title: Text(t.name),
-              trailing: filters.tagSlug == t.slug
-                  ? const Icon(Icons.check, color: Color(0xFF2563EB))
-                  : null,
-              onTap: () => Navigator.of(sheetContext).pop(t.slug),
-            ),
-        ],
-      ),
-    ),
+    builder: (_) => _TagPickerSheet(selectedSlug: filters.tagSlug),
   );
   if (chosen == null) return;
-  if (chosen == '__clear__') {
+  if (chosen.$1 == '__clear__') {
     await onChanged(filters.copyWith(tagSlug: '', tagName: ''));
     return;
   }
-  final tag = tags.firstWhere((t) => t.slug == chosen);
-  await onChanged(filters.copyWith(tagSlug: tag.slug, tagName: tag.name));
+  await onChanged(filters.copyWith(tagSlug: chosen.$1, tagName: chosen.$2));
+}
+
+/// Nội dung sheet chọn thể loại — watch provider NGAY TRONG sheet (trước
+/// đây dùng `ref.read(...).value` ngoài sheet: provider chưa từng được
+/// fetch → value null → sheet trống không hiện gì).
+class _CategoryPickerSheet extends ConsumerWidget {
+  const _CategoryPickerSheet({required this.selectedSlug});
+
+  final String selectedSlug;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(categoriesProvider);
+    return SafeArea(
+      child: state.when(
+        loading: () => const SizedBox(
+          height: 200,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+        error: (e, _) => SizedBox(
+          height: 200,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Không tải được danh sách thể loại'),
+                TextButton(
+                  onPressed: () => ref.invalidate(categoriesProvider),
+                  child: const Text('Thử lại'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        data: (categories) => ListView(
+          shrinkWrap: true,
+          children: [
+            if (selectedSlug.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.close, color: Colors.red),
+                title: const Text('Bỏ chọn thể loại'),
+                onTap: () => Navigator.of(context).pop(('__clear__', '')),
+              ),
+            for (final c in categories)
+              ListTile(
+                title: Text(c.name),
+                trailing: selectedSlug == c.slug
+                    ? const Icon(Icons.check, color: Color(0xFF2563EB))
+                    : null,
+                onTap: () => Navigator.of(context).pop((c.slug, c.name)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Nội dung sheet chọn tag — watch provider ngay trong sheet (lý do như
+/// thể loại ở trên).
+class _TagPickerSheet extends ConsumerWidget {
+  const _TagPickerSheet({required this.selectedSlug});
+
+  final String selectedSlug;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(tagsProvider);
+    return SafeArea(
+      child: state.when(
+        loading: () => const SizedBox(
+          height: 200,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+        error: (e, _) => SizedBox(
+          height: 200,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Không tải được danh sách tag'),
+                TextButton(
+                  onPressed: () => ref.invalidate(tagsProvider),
+                  child: const Text('Thử lại'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        data: (tags) => ListView(
+          shrinkWrap: true,
+          children: [
+            if (selectedSlug.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.close, color: Colors.red),
+                title: const Text('Bỏ chọn tag'),
+                onTap: () => Navigator.of(context).pop(('__clear__', '')),
+              ),
+            for (final t in tags)
+              ListTile(
+                title: Text(t.name),
+                trailing: selectedSlug == t.slug
+                    ? const Icon(Icons.check, color: Color(0xFF2563EB))
+                    : null,
+                onTap: () => Navigator.of(context).pop((t.slug, t.name)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Search state ───────────────────────────────────────────────
