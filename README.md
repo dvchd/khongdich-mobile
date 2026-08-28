@@ -2,7 +2,7 @@
 
 Ứng dụng đọc truyện mobile cho [khongdich.com](https://khongdich.com). Android-first, xây dựng theo `docs/plan-flutter-app.md` (v4) trong repo backend.
 
-## Trạng thái hiện tại (v0.10.0)
+## Trạng thái hiện tại (v0.10.1)
 
 **Build:** `flutter analyze` → 0 lỗi · 264 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases + tự upload AAB lên Play Console (track Closed Testing).
 
@@ -73,6 +73,7 @@ Backend (`khongdich`) cung cấp JSON API tại `/api/v1/mobile/*` với Bearer 
 | **Emoji custom** — picker + render `:name:` thành ảnh trong bình luận & chat (mirror web) | ✅ |
 | **Chia sẻ truyện** — sao chép link + mã QR (story detail) | ✅ |
 | **Sao chép link trang cá nhân** (profile) | ✅ |
+| **Kênh tác giả trong kết quả tìm kiếm** (gõ tên/@username → mở trang kênh) | ✅ |
 
 ### Chưa hoàn thành / Trì hoãn
 
