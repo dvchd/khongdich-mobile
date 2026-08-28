@@ -369,7 +369,7 @@ class _AuthorResultTile extends StatelessWidget {
                   : null,
               child: author.avatarUrl == null
                   ? Text(
-                      author.name.isNotEmpty ? author.name[0] : '?',
+                      author.name.isNotEmpty ? author.name.characters.first : '?',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
