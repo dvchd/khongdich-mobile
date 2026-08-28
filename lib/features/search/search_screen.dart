@@ -1,10 +1,13 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/network/app_image_cache.dart';
 import '../../core/observability/app_logger.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/format.dart';
 import '../../core/widgets/app_retry_view.dart';
 import '../../models/story.dart';
@@ -182,17 +185,42 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           onRetry: () =>
               ref.read(searchProvider.notifier).run(_controller.text),
         ),
-      SearchSuccess(:final result) => result.stories.isEmpty
+      SearchSuccess(:final result) => result.stories.isEmpty &&
+              result.authors.isEmpty
           ? const _EmptyState(
               icon: Icons.inbox_outlined,
               message: 'Không có kết quả phù hợp.',
             )
           : CustomScrollView(
               slivers: [
+                // Kênh tác giả khớp tên — hiển thị trên đầu kết quả
+                // (user gõ @username hoặc tên hiển thị để tìm kênh).
+                if (result.authors.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            'Tác giả',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        for (final a in result.authors)
+                          _AuthorResultTile(author: a),
+                        if (result.stories.isNotEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 12),
+                            child: Divider(height: 1),
+                          ),
+                      ],
+                    ),
+                  ),
                 if (result.total > 0)
                   SliverToBoxAdapter(
                     child: Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.only(bottom: 8, top: 8),
                       child: Text(
                         '${formatCount(result.total)} truyện',
                         style: Theme.of(context).textTheme.bodySmall,
@@ -303,6 +331,88 @@ class _EmptyState extends StatelessWidget {
           const SizedBox(height: 8),
           Text(message, style: Theme.of(context).textTheme.bodyMedium),
         ],
+      ),
+    );
+  }
+}
+
+/// Hàng kênh tác giả trong kết quả tìm kiếm — avatar, tên, @username,
+/// số truyện + người theo dõi; tap mở trang tác giả (đối chiếu web
+/// /u/{username}).
+class _AuthorResultTile extends StatelessWidget {
+  const _AuthorResultTile({required this.author});
+
+  final AuthorSearchItem author;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final metaParts = <String>[
+      if (author.storyCount > 0) '${author.storyCount} truyện',
+      if (author.followerCount > 0)
+        '${formatCount(author.followerCount)} người theo dõi',
+    ];
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => context.push('/author/${author.username}'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 24,
+              backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+              backgroundImage: author.avatarUrl != null
+                  ? CachedNetworkImageProvider(author.avatarUrl!,
+                      cacheManager: AppImageCache.instance)
+                  : null,
+              child: author.avatarUrl == null
+                  ? Text(
+                      author.name.isNotEmpty ? author.name[0] : '?',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.primary,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    author.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    '@${author.username}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  if (metaParts.isNotEmpty)
+                    Text(
+                      metaParts.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 20),
+          ],
+        ),
       ),
     );
   }
@@ -796,9 +906,14 @@ class SearchNotifier extends StateNotifier<SearchState> {
   SearchResult _mergedPages() {
     final all = [for (final p in _pages) ...p.stories];
     final last = _pages.last;
+    // Tác giả chỉ lấy từ trang đầu (giá trị giống nhau mọi trang).
+    final authors = _pages.isEmpty
+        ? const <AuthorSearchItem>[]
+        : _pages.first.authors;
     return SearchResult(
       stories: all,
       posts: const [],
+      authors: authors,
       total: last.total,
       page: last.page,
       perPage: last.perPage,

@@ -333,6 +333,10 @@ class StoryRepository implements ChapterFetcher {
         for (final p in (data['posts'] as List? ?? const []))
           PostCard.fromJson(p as Map<String, dynamic>),
       ],
+      authors: [
+        for (final a in (data['authors'] as List? ?? const []))
+          AuthorSearchItem.fromJson(a as Map<String, dynamic>),
+      ],
       total: (data['total'] as num?)?.toInt() ?? 0,
       page: (data['page'] as num?)?.toInt() ?? page,
       perPage: (data['per_page'] as num?)?.toInt() ?? limit,

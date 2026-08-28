@@ -69,6 +69,7 @@ class SearchResult {
   const SearchResult({
     required this.stories,
     required this.posts,
+    this.authors = const [],
     this.total = 0,
     this.page = 1,
     this.perPage = 20,
@@ -77,12 +78,52 @@ class SearchResult {
   final List<StorySummary> stories;
   final List<PostCard> posts;
 
+  /// Kênh tác giả khớp username/display_name (backend `authors`) — hiển
+  /// thị trên đầu kết quả tìm kiếm, tap mở trang tác giả.
+  final List<AuthorSearchItem> authors;
+
   /// Tổng truyện khớp + phân trang (backend trả khi có bộ lọc) — cho
   /// nút "Xem thêm" ở màn tìm kiếm.
   final int total;
   final int page;
   final int perPage;
   final int totalPages;
+}
+
+/// Kênh tác giả trong kết quả tìm kiếm (backend `/api/v1/search` →
+/// mảng `authors`: id, username, display_name, bio, avatar_url,
+/// follower_count, story_count).
+class AuthorSearchItem {
+  const AuthorSearchItem({
+    required this.username,
+    required this.displayName,
+    this.avatarUrl,
+    this.bio = '',
+    this.followerCount = 0,
+    this.storyCount = 0,
+  });
+
+  final String username;
+  final String displayName;
+  final String? avatarUrl;
+  final String bio;
+  final int followerCount;
+  final int storyCount;
+
+  /// Tên hiển thị — fallback về username khi display_name trống.
+  String get name => displayName.isNotEmpty ? displayName : username;
+
+  factory AuthorSearchItem.fromJson(Map<String, dynamic> json) =>
+      AuthorSearchItem(
+        username: json['username'] as String? ?? '',
+        displayName: json['display_name'] as String? ?? '',
+        avatarUrl: (json['avatar_url'] as String?)?.isNotEmpty == true
+            ? json['avatar_url'] as String
+            : null,
+        bio: json['bio'] as String? ?? '',
+        followerCount: (json['follower_count'] as num?)?.toInt() ?? 0,
+        storyCount: (json['story_count'] as num?)?.toInt() ?? 0,
+      );
 }
 
 /// Một thể loại truyện (backend models::category::Category).
