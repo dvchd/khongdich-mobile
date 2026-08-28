@@ -351,7 +351,7 @@ class _AuthorResultTile extends StatelessWidget {
     final metaParts = <String>[
       if (author.storyCount > 0) '${author.storyCount} truyện',
       if (author.followerCount > 0)
-        '${formatCount(author.followerCount)} người theo dõi',
+        '${formatCount(author.followerCount)} theo dõi',
     ];
     return InkWell(
       borderRadius: BorderRadius.circular(12),
