@@ -86,6 +86,48 @@ class DanhInfo {
       );
 }
 
+/// Một danh hiệu + số truyện công khai (backend `/api/v1/mobile/danh`).
+class DanhSummary {
+  const DanhSummary({
+    required this.id,
+    required this.name,
+    required this.imageUrl,
+    this.storyCount = 0,
+  });
+
+  final int id;
+  final String name;
+  final String imageUrl;
+  final int storyCount;
+
+  factory DanhSummary.fromJson(Map<String, dynamic> json) => DanhSummary(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        name: json['name'] as String? ?? '',
+        imageUrl: json['image_url'] as String? ?? '',
+        storyCount: (json['story_count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Truyện mang danh hiệu (backend `/api/v1/mobile/danh/{id}`) — danh +
+/// danh sách truyện phân trang.
+class DanhStoriesPayload {
+  const DanhStoriesPayload({
+    required this.danh,
+    required this.stories,
+    this.total = 0,
+    this.page = 1,
+    this.perPage = 20,
+    this.totalPages = 0,
+  });
+
+  final DanhInfo danh;
+  final List<StorySummary> stories;
+  final int total;
+  final int page;
+  final int perPage;
+  final int totalPages;
+}
+
 class SearchResult {
   const SearchResult({
     required this.stories,

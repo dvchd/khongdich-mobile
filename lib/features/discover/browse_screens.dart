@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -252,6 +253,270 @@ class _CategoryStoriesScreenState extends ConsumerState<CategoryStoriesScreen> {
         final s = feed.stories[i];
         return StoryCard(story: s, onTap: () => context.push('/story/${s.slug}'));
       },
+    );
+  }
+}
+
+// ── Danh hiệu index ──────────────────────────────────────────────
+
+class DanhIndexScreen extends ConsumerWidget {
+  const DanhIndexScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(danhsProvider);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Danh')),
+      body: state.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_off, size: 48),
+                const SizedBox(height: 12),
+                const Text('Không tải được danh sách danh hiệu'),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => ref.invalidate(danhsProvider),
+                  child: const Text('Thử lại'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        data: (danhs) => danhs.isEmpty
+            ? const Center(child: Text('Chưa có danh hiệu nào.'))
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: danhs.length,
+                itemBuilder: (context, i) {
+                  final d = danhs[i];
+                  return ListTile(
+                    leading: d.imageUrl.isEmpty
+                        ? const Icon(Icons.workspace_premium_outlined)
+                        : ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: CachedNetworkImage(
+                              imageUrl: d.imageUrl,
+                              width: 44,
+                              height: 44,
+                              fit: BoxFit.cover,
+                              placeholder: (_, __) => const SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              errorWidget: (_, __, ___) => const Icon(
+                                Icons.workspace_premium_outlined,
+                                size: 28,
+                              ),
+                            ),
+                          ),
+                    title: Text(d.name),
+                    trailing: Text(
+                      '${d.storyCount}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    onTap: () => context.push('/danh/${d.id}'),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+final danhsProvider = FutureProvider.autoDispose<List<DanhSummary>>(
+  (ref) => ref.watch(storyRepositoryProvider).fetchDanhs(),
+);
+
+// ── Truyện theo danh hiệu ────────────────────────────────────────
+
+class DanhStoriesScreen extends ConsumerStatefulWidget {
+  const DanhStoriesScreen({super.key, required this.id});
+
+  final int id;
+
+  @override
+  ConsumerState<DanhStoriesScreen> createState() => _DanhStoriesScreenState();
+}
+
+class _DanhStoriesScreenState extends ConsumerState<DanhStoriesScreen> {
+  DanhStoriesPayload? _payload;
+  bool _loading = true;
+  String? _error;
+  bool _loadingMore = false;
+
+  StoryRepository get _repo => ref.read(storyRepositoryProvider);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final p = await _repo.fetchStoriesByDanh(widget.id);
+      if (!mounted) return;
+      setState(() {
+        _payload = p;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    final p = _payload;
+    if (p == null || _loadingMore) return;
+    if (p.page >= p.totalPages) return;
+    setState(() => _loadingMore = true);
+    try {
+      final next = await _repo.fetchStoriesByDanh(widget.id, page: p.page + 1);
+      if (!mounted) return;
+      setState(() {
+        final cur = _payload;
+        if (cur == null) return;
+        _payload = DanhStoriesPayload(
+          danh: cur.danh,
+          stories: [...cur.stories, ...next.stories],
+          total: next.total,
+          page: next.page,
+          perPage: next.perPage,
+          totalPages: next.totalPages,
+        );
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final danh = _payload?.danh;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          danh?.name.isNotEmpty == true ? danh!.name : 'Danh hiệu',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off, size: 48),
+              const SizedBox(height: 12),
+              const Text('Không tải được truyện'),
+              const SizedBox(height: 16),
+              FilledButton(onPressed: _load, child: const Text('Thử lại')),
+            ],
+          ),
+        ),
+      );
+    }
+    final p = _payload!;
+    final hasMore = p.page < p.totalPages;
+    return Column(
+      children: [
+        if (p.danh.imageUrl.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: CachedNetworkImage(
+              imageUrl: p.danh.imageUrl,
+              width: double.infinity,
+              height: 64,
+              fit: BoxFit.contain,
+              placeholder: (_, __) => const SizedBox(
+                height: 64,
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
+              errorWidget: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${p.total} truyện mang danh hiệu này',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ),
+        Expanded(
+          child: p.stories.isEmpty
+              ? const Center(child: Text('Chưa có truyện mang danh hiệu này.'))
+              : GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 14,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 0.46,
+                  ),
+                  itemCount: p.stories.length + (hasMore ? 1 : 0),
+                  itemBuilder: (context, i) {
+                    if (i >= p.stories.length) {
+                      return Center(
+                        child: _loadingMore
+                            ? const CircularProgressIndicator(strokeWidth: 2)
+                            : TextButton.icon(
+                                onPressed: _loadMore,
+                                icon: const Icon(Icons.expand_more),
+                                label: const Text('Xem thêm'),
+                              ),
+                      );
+                    }
+                    final s = p.stories[i];
+                    return StoryCard(
+                      story: s,
+                      onTap: () => context.push('/story/${s.slug}'),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }

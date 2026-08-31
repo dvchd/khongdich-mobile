@@ -297,26 +297,31 @@ class _StoryDetailBody extends ConsumerWidget {
                   // Danh hiệu truyện — ảnh tĩnh/động do hệ thống tạo,
                   // hiển thị dưới tên tác giả, trên badge thể loại (cùng
                   // vị trí web). Chiều cao ~1.7cm (64 logical px).
+                  // Tap → danh sách truyện cùng danh hiệu (như web /danh/{id}).
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Tooltip(
                       message: detail.danh!.name,
-                      child: CachedNetworkImage(
-                        imageUrl: detail.danh!.imageUrl,
-                        width: double.infinity,
-                        height: 64,
-                        fit: BoxFit.contain,
-                        placeholder: (_, __) => const SizedBox(
+                      child: GestureDetector(
+                        onTap: () =>
+                            context.push('/danh/${detail.danh!.id}'),
+                        child: CachedNetworkImage(
+                          imageUrl: detail.danh!.imageUrl,
+                          width: double.infinity,
                           height: 64,
-                          child: Center(
-                            child: SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                          fit: BoxFit.contain,
+                          placeholder: (_, __) => const SizedBox(
+                            height: 64,
+                            child: Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
                             ),
                           ),
+                          errorWidget: (_, __, ___) => const SizedBox.shrink(),
                         ),
-                        errorWidget: (_, __, ___) => const SizedBox.shrink(),
                       ),
                     ),
                   ),

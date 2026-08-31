@@ -134,6 +134,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
+        path: '/danh-index',
+        name: 'danh_index',
+        builder: (context, state) => const DanhIndexScreen(),
+      ),
+      GoRoute(
+        path: '/danh/:id',
+        name: 'danh',
+        builder: (context, state) => DanhStoriesScreen(
+          id: int.tryParse(state.pathParameters['id'] ?? '') ?? 0,
+        ),
+      ),
+      GoRoute(
         path: '/chapter/:ref',
         name: 'chapter_reader',
         builder: (context, state) {

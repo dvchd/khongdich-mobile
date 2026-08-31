@@ -708,6 +708,43 @@ class StoryRepository implements ChapterFetcher {
     ];
   }
 
+  /// Danh sách danh hiệu kèm số truyện công khai.
+  /// Hits `GET /api/v1/mobile/danh`.
+  Future<List<DanhSummary>> fetchDanhs() async {
+    final r = await _dio.get('/api/v1/mobile/danh');
+    final data = r.data as Map<String, dynamic>;
+    return [
+      for (final d in (data['danhs'] as List? ?? const []))
+        DanhSummary.fromJson(d as Map<String, dynamic>),
+    ];
+  }
+
+  /// Truyện mang danh hiệu (phân trang, sort newest như web).
+  /// Hits `GET /api/v1/mobile/danh/{id}`.
+  Future<DanhStoriesPayload> fetchStoriesByDanh(
+    int id, {
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    final r = await _dio.get(
+      '/api/v1/mobile/danh/$id',
+      queryParameters: {'page': page, 'per_page': perPage},
+    );
+    final data = r.data as Map<String, dynamic>;
+    final danh = (data['danh'] as Map<String, dynamic>?) ?? const {};
+    return DanhStoriesPayload(
+      danh: DanhInfo.fromJson(danh),
+      stories: [
+        for (final s in (data['stories'] as List? ?? const []))
+          StorySummary.fromStoryCardJson(s as Map<String, dynamic>),
+      ],
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      page: (data['page'] as num?)?.toInt() ?? 1,
+      perPage: (data['per_page'] as num?)?.toInt() ?? perPage,
+      totalPages: (data['total_pages'] as num?)?.toInt() ?? 0,
+    );
+  }
+
   /// Truyện theo thể loại (sort: newest|views|rating|chapters).
   /// Hits `GET /api/v1/mobile/stories/by-category/{slug}`.
   Future<PaginatedStories> fetchStoriesByCategory(

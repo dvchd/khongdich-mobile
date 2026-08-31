@@ -796,7 +796,7 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeFeed>> {
   }
 }
 
-/// Hàng phím tắt khám phá trên Home: BXH / Thể loại / Tag / Khám phá.
+/// Hàng phím tắt khám phá trên Home: BXH / Thể loại / Tag / Danh / Khám phá.
 class _DiscoverShortcuts extends StatelessWidget {
   const _DiscoverShortcuts();
 
@@ -804,6 +804,7 @@ class _DiscoverShortcuts extends StatelessWidget {
     (Icons.emoji_events_outlined, 'BXH', '/ranking'),
     (Icons.category_outlined, 'Thể loại', '/category-index'),
     (Icons.tag, 'Tag', '/tag-index'),
+    (Icons.workspace_premium_outlined, 'Danh', '/danh-index'),
     (Icons.explore_outlined, 'Khám phá', '/explore'),
   ];
 
