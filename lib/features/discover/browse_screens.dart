@@ -294,41 +294,88 @@ class DanhIndexScreen extends ConsumerWidget {
                 itemCount: danhs.length,
                 itemBuilder: (context, i) {
                   final d = danhs[i];
-                  return ListTile(
-                    leading: d.imageUrl.isEmpty
-                        ? const Icon(Icons.workspace_premium_outlined)
-                        : ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: CachedNetworkImage(
-                              imageUrl: d.imageUrl,
-                              width: 44,
-                              height: 44,
-                              fit: BoxFit.cover,
-                              placeholder: (_, __) => const SizedBox(
-                                width: 44,
-                                height: 44,
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                  // Ảnh danh hiệu là ảnh NGANG dài — hiển thị full width
+                  // như web, tên + số truyện nằm ở dòng dưới ảnh.
+                  return InkWell(
+                    onTap: () => context.push('/danh/${d.id}'),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (d.imageUrl.isEmpty)
+                            const SizedBox(
+                              height: 64,
+                              child: Center(
+                                child: Icon(
+                                  Icons.workspace_premium_outlined,
+                                  size: 28,
+                                ),
+                              ),
+                            )
+                          else
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: CachedNetworkImage(
+                                imageUrl: d.imageUrl,
+                                width: double.infinity,
+                                height: 64,
+                                fit: BoxFit.contain,
+                                placeholder: (_, __) => const SizedBox(
+                                  height: 64,
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                errorWidget: (_, __, ___) => const SizedBox(
+                                  height: 64,
+                                  child: Center(
+                                    child: Icon(
+                                      Icons.workspace_premium_outlined,
+                                      size: 28,
                                     ),
                                   ),
                                 ),
                               ),
-                              errorWidget: (_, __, ___) => const Icon(
-                                Icons.workspace_premium_outlined,
-                                size: 28,
-                              ),
+                            ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    d.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium,
+                                  ),
+                                ),
+                                Text(
+                                  '${d.storyCount} truyện',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
                             ),
                           ),
-                    title: Text(d.name),
-                    trailing: Text(
-                      '${d.storyCount}',
-                      style: Theme.of(context).textTheme.bodySmall,
+                          const Divider(height: 1),
+                        ],
+                      ),
                     ),
-                    onTap: () => context.push('/danh/${d.id}'),
                   );
                 },
               ),
