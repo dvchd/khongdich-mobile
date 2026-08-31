@@ -133,6 +133,9 @@ class StoryRepository implements ChapterFetcher {
       firstChapter: (data['first_chapter'] as num?)?.toInt(),
       bookmark: data['bookmark'] as String?,
       commentCount: (data['comment_count'] as num?)?.toInt() ?? 0,
+      danh: (data['danh'] as Map<String, dynamic>?) == null
+          ? null
+          : DanhInfo.fromJson(data['danh'] as Map<String, dynamic>),
     );
   }
 

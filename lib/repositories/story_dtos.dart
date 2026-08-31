@@ -44,6 +44,7 @@ class StoryDetailPayload {
     required this.firstChapter,
     required this.bookmark,
     this.commentCount = 0,
+    this.danh,
   });
   final StorySummary story;
   final String authorId;
@@ -63,6 +64,26 @@ class StoryDetailPayload {
   /// Number of visible comments on the story (same visibility rules as
   /// the feed — moderators/authors see all, users see their own hidden).
   final int commentCount;
+
+  /// Danh hiệu truyện (ảnh tĩnh/động do hệ thống tạo). Chỉ truyện tạo
+  /// mới sau khi tính năng ra mắt mới có; null = truyện không có danh.
+  final DanhInfo? danh;
+}
+
+/// Danh hiệu truyện — backend `models::danh::DanhInfo`
+/// (id, name, image_url). Hiển thị dưới tên tác giả, trên badge thể loại.
+class DanhInfo {
+  const DanhInfo({required this.id, required this.name, required this.imageUrl});
+
+  final int id;
+  final String name;
+  final String imageUrl;
+
+  factory DanhInfo.fromJson(Map<String, dynamic> json) => DanhInfo(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        name: json['name'] as String? ?? '',
+        imageUrl: json['image_url'] as String? ?? '',
+      );
 }
 
 class SearchResult {
