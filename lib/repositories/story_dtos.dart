@@ -72,39 +72,51 @@ class StoryDetailPayload {
 
 /// Danh hiệu truyện — backend `models::danh::DanhInfo`
 /// (id, name, image_url). Hiển thị dưới tên tác giả, trên badge thể loại.
+/// `revealed = false` + `imageUrl` rỗng → ảnh chưa được hé lộ (ẩn để gây tò mò).
 class DanhInfo {
-  const DanhInfo({required this.id, required this.name, required this.imageUrl});
+  const DanhInfo({
+    required this.id,
+    required this.name,
+    required this.imageUrl,
+    this.revealed = true,
+  });
 
   final int id;
   final String name;
   final String imageUrl;
+  final bool revealed;
 
   factory DanhInfo.fromJson(Map<String, dynamic> json) => DanhInfo(
         id: (json['id'] as num?)?.toInt() ?? 0,
         name: json['name'] as String? ?? '',
         imageUrl: json['image_url'] as String? ?? '',
+        revealed: json['revealed'] as bool? ?? true,
       );
 }
 
 /// Một danh hiệu + số truyện công khai (backend `/api/v1/mobile/danh`).
+/// `revealed = false` → ảnh chưa được hé lộ theo chế độ của hệ thống.
 class DanhSummary {
   const DanhSummary({
     required this.id,
     required this.name,
     required this.imageUrl,
     this.storyCount = 0,
+    this.revealed = true,
   });
 
   final int id;
   final String name;
   final String imageUrl;
   final int storyCount;
+  final bool revealed;
 
   factory DanhSummary.fromJson(Map<String, dynamic> json) => DanhSummary(
         id: (json['id'] as num?)?.toInt() ?? 0,
         name: json['name'] as String? ?? '',
         imageUrl: json['image_url'] as String? ?? '',
         storyCount: (json['story_count'] as num?)?.toInt() ?? 0,
+        revealed: json['revealed'] as bool? ?? true,
       );
 }
 

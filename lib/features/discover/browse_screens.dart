@@ -304,12 +304,19 @@ class DanhIndexScreen extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (d.imageUrl.isEmpty)
-                            const SizedBox(
+                            SizedBox(
                               height: 64,
                               child: Center(
                                 child: Icon(
-                                  Icons.workspace_premium_outlined,
+                                  d.revealed
+                                      ? Icons.workspace_premium_outlined
+                                      : Icons.lock_outline,
                                   size: 28,
+                                  color: d.revealed
+                                      ? null
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
                                 ),
                               ),
                             )
@@ -519,6 +526,28 @@ class _DanhStoriesScreenState extends ConsumerState<DanhStoriesScreen> {
                 ),
               ),
               errorWidget: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          )
+        else if (!p.danh.revealed)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Container(
+              height: 64,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.lock_outline,
+                  size: 28,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
           ),
         Padding(
