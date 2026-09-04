@@ -5,20 +5,63 @@ import 'package:go_router/go_router.dart';
 
 import '../../repositories/story_repository.dart';
 import '../home/widgets/story_card.dart';
+import '../search/search_screen.dart' show SearchFilters;
 
 /// Màn thể loại + tag chung: index + danh sách truyện theo thể loại/tag.
 /// Đối chiếu các trang web `/the-loai` + `/tag`.
 
 // ── Thể loại index ────────────────────────────────────────────────
 
-class CategoryIndexScreen extends ConsumerWidget {
+class CategoryIndexScreen extends ConsumerStatefulWidget {
   const CategoryIndexScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CategoryIndexScreen> createState() =>
+      _CategoryIndexScreenState();
+}
+
+class _CategoryIndexScreenState extends ConsumerState<CategoryIndexScreen> {
+  bool _selecting = false;
+  final Set<String> _sel = {};
+  final Map<String, String> _names = {};
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(categoriesProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Thể loại')),
+      appBar: AppBar(
+        title: const Text('Thể loại'),
+        actions: [
+          TextButton(
+            onPressed: () => setState(() {
+              _selecting = !_selecting;
+              _sel.clear();
+            }),
+            child: Text(_selecting ? 'Huỷ' : 'Chọn nhiều'),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _selecting && _sel.isNotEmpty
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: FilledButton(
+                  onPressed: () {
+                    final slugs = _sel.toList();
+                    context.push(
+                      '/search',
+                      extra: SearchFilters(
+                        categorySlugs: slugs,
+                        categoryNames:
+                            slugs.map((s) => _names[s] ?? s).toList(),
+                      ),
+                    );
+                  },
+                  child: Text('Xem truyện kết hợp (${_sel.length})'),
+                ),
+              ),
+            )
+          : null,
       body: state.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(
@@ -39,28 +82,71 @@ class CategoryIndexScreen extends ConsumerWidget {
             ),
           ),
         ),
-        data: (cats) => ListView.separated(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: cats.length,
-          separatorBuilder: (_, _) => const Divider(height: 1),
-          itemBuilder: (context, i) {
-            final c = cats[i];
-            return ListTile(
-              leading: const Icon(Icons.category_outlined),
-              title: Text(c.name),
-              subtitle: c.description.isNotEmpty
-                  ? Text(
-                      c.description,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : null,
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  context.push('/category/${c.slug}', extra: c.name),
-            );
-          },
-        ),
+        data: (cats) {
+          for (final c in cats) {
+            _names[c.slug] = c.name;
+          }
+          return Column(
+            children: [
+              if (_selecting)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    'Tick nhiều thể loại — chỉ hiện truyện thuộc TẤT CẢ.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: cats.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final c = cats[i];
+                    if (_selecting) {
+                      return CheckboxListTile(
+                        secondary:
+                            const Icon(Icons.category_outlined),
+                        title: Text(c.name),
+                        subtitle: c.description.isNotEmpty
+                            ? Text(
+                                c.description,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : null,
+                        value: _sel.contains(c.slug),
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _sel.add(c.slug);
+                          } else {
+                            _sel.remove(c.slug);
+                          }
+                        }),
+                      );
+                    }
+                    return ListTile(
+                      leading: const Icon(Icons.category_outlined),
+                      title: Text(c.name),
+                      subtitle: c.description.isNotEmpty
+                          ? Text(
+                              c.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : null,
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push(
+                        '/category/${c.slug}',
+                        extra: c.name,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -599,14 +685,54 @@ class _DanhStoriesScreenState extends ConsumerState<DanhStoriesScreen> {
 
 // ── Tag index ────────────────────────────────────────────────────
 
-class TagIndexScreen extends ConsumerWidget {
+class TagIndexScreen extends ConsumerStatefulWidget {
   const TagIndexScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TagIndexScreen> createState() => _TagIndexScreenState();
+}
+
+class _TagIndexScreenState extends ConsumerState<TagIndexScreen> {
+  bool _selecting = false;
+  final Set<String> _sel = {};
+  final Map<String, String> _names = {};
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(tagsProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Tag')),
+      appBar: AppBar(
+        title: const Text('Tag'),
+        actions: [
+          TextButton(
+            onPressed: () => setState(() {
+              _selecting = !_selecting;
+              _sel.clear();
+            }),
+            child: Text(_selecting ? 'Huỷ' : 'Chọn nhiều'),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _selecting && _sel.isNotEmpty
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: FilledButton(
+                  onPressed: () {
+                    final slugs = _sel.toList();
+                    context.push(
+                      '/search',
+                      extra: SearchFilters(
+                        tagSlugs: slugs,
+                        tagNames: slugs.map((s) => _names[s] ?? s).toList(),
+                      ),
+                    );
+                  },
+                  child: Text('Xem truyện kết hợp (${_sel.length})'),
+                ),
+              ),
+            )
+          : null,
       body: state.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(
@@ -627,25 +753,62 @@ class TagIndexScreen extends ConsumerWidget {
             ),
           ),
         ),
-        data: (tags) => tags.isEmpty
-            ? const Center(child: Text('Chưa có tag nào.'))
-            : ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: tags.length,
-                itemBuilder: (context, i) {
-                  final t = tags[i];
-                  return ListTile(
-                    leading: const Icon(Icons.tag, size: 20),
-                    title: Text('#${t.name}'),
-                    trailing: Text(
-                      '${t.storyCount}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    onTap: () =>
-                        context.push('/tag/${t.slug}', extra: t.name),
-                  );
-                },
+        data: (tags) {
+          if (tags.isEmpty) {
+            return const Center(child: Text('Chưa có tag nào.'));
+          }
+          for (final t in tags) {
+            _names[t.slug] = t.name;
+          }
+          return Column(
+            children: [
+              if (_selecting)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text(
+                    'Tick nhiều tag — chỉ hiện truyện có TẤT CẢ.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: tags.length,
+                  itemBuilder: (context, i) {
+                    final t = tags[i];
+                    if (_selecting) {
+                      return CheckboxListTile(
+                        secondary: const Icon(Icons.tag, size: 20),
+                        title: Text('#${t.name}'),
+                        subtitle: t.storyCount > 0
+                            ? Text('${t.storyCount} truyện')
+                            : null,
+                        value: _sel.contains(t.slug),
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _sel.add(t.slug);
+                          } else {
+                            _sel.remove(t.slug);
+                          }
+                        }),
+                      );
+                    }
+                    return ListTile(
+                      leading: const Icon(Icons.tag, size: 20),
+                      title: Text('#${t.name}'),
+                      trailing: Text(
+                        '${t.storyCount}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      onTap: () =>
+                          context.push('/tag/${t.slug}', extra: t.name),
+                    );
+                  },
+                ),
               ),
+            ],
+          );
+        },
       ),
     );
   }

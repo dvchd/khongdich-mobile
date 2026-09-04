@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../repositories/story_repository.dart';
 import '../home/widgets/story_card.dart';
+import 'browse_screens.dart' show categoriesProvider, tagsProvider;
 
 /// Khám phá — lọc truyện theo sort / trạng thái / thể loại nội dung
 /// (đối chiếu trang web `/kham-pha`). Dùng `GET /api/v1/mobile/stories`
@@ -47,6 +48,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   String _sort = 'fresh';
   String? _status;
   String? _contentType;
+  // Multi-filter AND (mirror web /kham-pha): truyện phải thuộc TẤT CẢ
+  // thể loại/tag đã chọn. Set giữ slug; thứ tự không quan trọng vì
+  // backend AND theo EXISTS.
+  final Set<String> _catSlugs = {};
+  final Set<String> _tagSlugs = {};
   PaginatedStories? _feed;
   bool _loading = true;
   String? _error;
@@ -73,6 +79,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         sort: _sort,
         status: _status,
         contentType: _contentType,
+        categories: _catSlugs.toList(),
+        tags: _tagSlugs.toList(),
       );
       if (!mounted || epoch != _epoch) return;
       setState(() {
@@ -99,6 +107,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         sort: _sort,
         status: _status,
         contentType: _contentType,
+        categories: _catSlugs.toList(),
+        tags: _tagSlugs.toList(),
         page: feed.page + 1,
       );
       if (!mounted || epoch != _epoch) return;
@@ -123,8 +133,26 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final catsAsync = ref.watch(categoriesProvider);
+    final tagsAsync = ref.watch(tagsProvider);
+    final hasMulti = _catSlugs.isNotEmpty || _tagSlugs.isNotEmpty;
     return Scaffold(
-      appBar: AppBar(title: const Text('Khám phá')),
+      appBar: AppBar(
+        title: const Text('Khám phá'),
+        actions: [
+          if (hasMulti)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _catSlugs.clear();
+                  _tagSlugs.clear();
+                });
+                _load();
+              },
+              child: const Text('Xoá lọc'),
+            ),
+        ],
+      ),
       body: Column(
         children: [
           _FilterRow(
@@ -151,6 +179,40 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
             selected: _contentType,
             onSelect: (v) {
               setState(() => _contentType = v);
+              _load();
+            },
+          ),
+          _MultiFilterRow(
+            title: 'Thể loại',
+            async: catsAsync,
+            getSlug: (c) => c.slug,
+            getLabel: (c) => c.name,
+            selected: _catSlugs,
+            onToggle: (slug, sel) {
+              setState(() {
+                if (sel) {
+                  _catSlugs.add(slug);
+                } else {
+                  _catSlugs.remove(slug);
+                }
+              });
+              _load();
+            },
+          ),
+          _MultiFilterRow(
+            title: 'Tag',
+            async: tagsAsync,
+            getSlug: (t) => t.slug,
+            getLabel: (t) => '#${t.name}',
+            selected: _tagSlugs,
+            onToggle: (slug, sel) {
+              setState(() {
+                if (sel) {
+                  _tagSlugs.add(slug);
+                } else {
+                  _tagSlugs.remove(slug);
+                }
+              });
               _load();
             },
           ),
@@ -218,6 +280,76 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 }
 
+/// Một hàng filter ĐA CHỌN (thể loại / tag, AND): mỗi chip toggle độc lập.
+/// Ẩn cả hàng khi danh sách lỗi/rỗng để không chiếm chỗ.
+class _MultiFilterRow<T> extends StatelessWidget {
+  const _MultiFilterRow({
+    required this.title,
+    required this.async,
+    required this.getSlug,
+    required this.getLabel,
+    required this.selected,
+    required this.onToggle,
+  });
+
+  final String title;
+  final AsyncValue<List<T>> async;
+  final String Function(T) getSlug;
+  final String Function(T) getLabel;
+  final Set<String> selected;
+  final void Function(String slug, bool sel) onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (items) {
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 0, 0),
+          child: Row(
+            children: [
+              Text(
+                title,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              if (selected.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: Text(
+                    '(${selected.length})',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SizedBox(
+                  height: 40,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: items.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, i) {
+                      final slug = getSlug(items[i]);
+                      final sel = selected.contains(slug);
+                      return FilterChip(
+                        label: Text(getLabel(items[i])),
+                        selected: sel,
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (v) => onToggle(slug, v),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
 /// Một hàng filter (tiêu đề + chips cuộn ngang). `T` là kiểu giá trị
 /// (String hoặc String? với null = "Tất cả").
 class _FilterRow<T> extends StatelessWidget {

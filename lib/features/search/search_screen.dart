@@ -30,7 +30,11 @@ import '../home/widgets/story_card.dart';
 /// "Đã tải" tab so the user lands on their offline library — same
 /// pattern as the home screen's offline fallback.
 class SearchScreen extends ConsumerStatefulWidget {
-  const SearchScreen({super.key});
+  const SearchScreen({super.key, this.initialFilters});
+
+  /// Filter preset khi điều hướng từ màn khác (vd chọn nhiều thể loại/tag
+  /// ở CategoryIndex/TagIndex → "Xem kết hợp"). Áp dụng 1 lần lúc mở màn.
+  final SearchFilters? initialFilters;
 
   @override
   ConsumerState<SearchScreen> createState() => _SearchScreenState();
@@ -40,11 +44,27 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   bool _searched = false;
   bool _redirected = false;
+  bool _appliedInitial = false;
 
   @override
   void initState() {
     super.initState();
     Future.microtask(() => ref.read(randomStoriesProvider.notifier).load());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Áp dụng preset 1 lần (didChangeDependencies chạy sau initState khi
+    // context/ref sẵn sàng; guard để không chạy lại mỗi rebuild).
+    final preset = widget.initialFilters;
+    if (!_appliedInitial && preset != null && !preset.isEmpty) {
+      _appliedInitial = true;
+      setState(() => _searched = true);
+      Future.microtask(
+        () => ref.read(searchProvider.notifier).updateFilter(preset),
+      );
+    }
   }
 
   @override
@@ -524,15 +544,13 @@ class _SearchFilterBar extends ConsumerWidget {
             ),
           ),
           chip(
-            label: filters.categorySlug.isEmpty
-                ? '🏷 Thể loại'
-                : '🏷 ${filters.categoryName}',
-            active: filters.categorySlug.isNotEmpty,
+            label: filters.categoryLabel,
+            active: filters.categorySlugs.isNotEmpty,
             onTap: () => _pickCategories(context, filters, onChanged),
           ),
           chip(
-            label: filters.tagSlug.isEmpty ? '# Tag' : '# ${filters.tagName}',
-            active: filters.tagSlug.isNotEmpty,
+            label: filters.tagLabel,
+            active: filters.tagSlugs.isNotEmpty,
             onTap: () => _pickTags(context, filters, onChanged),
           ),
           // Nút xoá toàn bộ filter khi có filter đang chọn.
@@ -588,60 +606,79 @@ Future<void> _pickOption(
   );
 }
 
-/// Bottom sheet chọn thể loại (danh sách từ API, có nút xoá chọn).
+/// Bottom sheet chọn NHIỀU thể loại (AND) — checkbox + nút Áp dụng.
+/// Trả về map slug→name đã chọn (rỗng = bỏ chọn hết).
 Future<void> _pickCategories(
   BuildContext context,
   SearchFilters filters,
   Future<void> Function(SearchFilters) onChanged,
 ) async {
-  final chosen = await showModalBottomSheet<(String, String)>(
+  final chosen = await showModalBottomSheet<Map<String, String>>(
     context: context,
     showDragHandle: true,
-    builder: (_) => _CategoryPickerSheet(selectedSlug: filters.categorySlug),
+    isScrollControlled: true,
+    builder: (_) => _CategoryPickerSheet(
+      selectedSlugs: filters.categorySlugs.toSet(),
+    ),
   );
   if (chosen == null) return;
-  if (chosen.$1 == '__clear__') {
-    await onChanged(filters.copyWith(
-      categorySlug: '',
-      categoryName: '',
-    ));
-    return;
-  }
+  final slugs = chosen.keys.toList();
+  // Giữ thứ tự theo danh sách API: map giữ insertion order từ sheet.
   await onChanged(filters.copyWith(
-    categorySlug: chosen.$1,
-    categoryName: chosen.$2,
+    categorySlugs: slugs,
+    categoryNames: slugs.map((s) => chosen[s] ?? s).toList(),
   ));
 }
 
-/// Bottom sheet chọn tag (danh sách từ API, có nút xoá chọn).
+/// Bottom sheet chọn NHIỀU tag (AND).
 Future<void> _pickTags(
   BuildContext context,
   SearchFilters filters,
   Future<void> Function(SearchFilters) onChanged,
 ) async {
-  final chosen = await showModalBottomSheet<(String, String)>(
+  final chosen = await showModalBottomSheet<Map<String, String>>(
     context: context,
     showDragHandle: true,
-    builder: (_) => _TagPickerSheet(selectedSlug: filters.tagSlug),
+    isScrollControlled: true,
+    builder: (_) => _TagPickerSheet(
+      selectedSlugs: filters.tagSlugs.toSet(),
+    ),
   );
   if (chosen == null) return;
-  if (chosen.$1 == '__clear__') {
-    await onChanged(filters.copyWith(tagSlug: '', tagName: ''));
-    return;
-  }
-  await onChanged(filters.copyWith(tagSlug: chosen.$1, tagName: chosen.$2));
+  final slugs = chosen.keys.toList();
+  await onChanged(filters.copyWith(
+    tagSlugs: slugs,
+    tagNames: slugs.map((s) => chosen[s] ?? s).toList(),
+  ));
 }
 
-/// Nội dung sheet chọn thể loại — watch provider NGAY TRONG sheet (trước
-/// đây dùng `ref.read(...).value` ngoài sheet: provider chưa từng được
-/// fetch → value null → sheet trống không hiện gì).
-class _CategoryPickerSheet extends ConsumerWidget {
-  const _CategoryPickerSheet({required this.selectedSlug});
+/// Nội dung sheet chọn thể loại (multi) — watch provider NGAY TRONG sheet
+/// (trước đây dùng `ref.read(...).value` ngoài sheet: provider chưa từng
+/// được fetch → value null → sheet trống không hiện gì).
+class _CategoryPickerSheet extends ConsumerStatefulWidget {
+  const _CategoryPickerSheet({required this.selectedSlugs});
 
-  final String selectedSlug;
+  final Set<String> selectedSlugs;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CategoryPickerSheet> createState() =>
+      _CategoryPickerSheetState();
+}
+
+class _CategoryPickerSheetState
+    extends ConsumerState<_CategoryPickerSheet> {
+  late Set<String> _sel;
+  late Map<String, String> _names;
+
+  @override
+  void initState() {
+    super.initState();
+    _sel = Set.of(widget.selectedSlugs);
+    _names = {};
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(categoriesProvider);
     return SafeArea(
       child: state.when(
@@ -664,39 +701,105 @@ class _CategoryPickerSheet extends ConsumerWidget {
             ),
           ),
         ),
-        data: (categories) => ListView(
-          shrinkWrap: true,
-          children: [
-            if (selectedSlug.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.close, color: Colors.red),
-                title: const Text('Bỏ chọn thể loại'),
-                onTap: () => Navigator.of(context).pop(('__clear__', '')),
+        data: (categories) {
+          for (final c in categories) {
+            _names[c.slug] = c.name;
+          }
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _sel.isEmpty
+                            ? 'Chọn thể loại'
+                            : 'Đã chọn ${_sel.length} thể loại (AND)',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    if (_sel.isNotEmpty)
+                      TextButton(
+                        onPressed: () => setState(_sel.clear),
+                        child: const Text('Bỏ hết'),
+                      ),
+                  ],
+                ),
               ),
-            for (final c in categories)
-              ListTile(
-                title: Text(c.name),
-                trailing: selectedSlug == c.slug
-                    ? const Icon(Icons.check, color: Color(0xFF2563EB))
-                    : null,
-                onTap: () => Navigator.of(context).pop((c.slug, c.name)),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final c in categories)
+                      CheckboxListTile(
+                        title: Text(c.name),
+                        value: _sel.contains(c.slug),
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _sel.add(c.slug);
+                          } else {
+                            _sel.remove(c.slug);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
               ),
-          ],
-        ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      final out = <String, String>{};
+                      for (final c in categories) {
+                        if (_sel.contains(c.slug)) out[c.slug] = c.name;
+                      }
+                      // Giữ cả slug lạ (đã lưu trước đó) để không mất chọn.
+                      for (final s in _sel) {
+                        out.putIfAbsent(s, () => _names[s] ?? s);
+                      }
+                      Navigator.of(context).pop(out);
+                    },
+                    child: Text(
+                      _sel.isEmpty ? 'Bỏ chọn' : 'Áp dụng (${_sel.length})',
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
-/// Nội dung sheet chọn tag — watch provider ngay trong sheet (lý do như
-/// thể loại ở trên).
-class _TagPickerSheet extends ConsumerWidget {
-  const _TagPickerSheet({required this.selectedSlug});
+/// Nội dung sheet chọn tag (multi) — watch provider ngay trong sheet
+/// (lý do như thể loại ở trên).
+class _TagPickerSheet extends ConsumerStatefulWidget {
+  const _TagPickerSheet({required this.selectedSlugs});
 
-  final String selectedSlug;
+  final Set<String> selectedSlugs;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_TagPickerSheet> createState() => _TagPickerSheetState();
+}
+
+class _TagPickerSheetState extends ConsumerState<_TagPickerSheet> {
+  late Set<String> _sel;
+  final Map<String, String> _names = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _sel = Set.of(widget.selectedSlugs);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(tagsProvider);
     return SafeArea(
       child: state.when(
@@ -719,25 +822,79 @@ class _TagPickerSheet extends ConsumerWidget {
             ),
           ),
         ),
-        data: (tags) => ListView(
-          shrinkWrap: true,
-          children: [
-            if (selectedSlug.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.close, color: Colors.red),
-                title: const Text('Bỏ chọn tag'),
-                onTap: () => Navigator.of(context).pop(('__clear__', '')),
+        data: (tags) {
+          for (final t in tags) {
+            _names[t.slug] = t.name;
+          }
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _sel.isEmpty
+                            ? 'Chọn tag'
+                            : 'Đã chọn ${_sel.length} tag (AND)',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    if (_sel.isNotEmpty)
+                      TextButton(
+                        onPressed: () => setState(_sel.clear),
+                        child: const Text('Bỏ hết'),
+                      ),
+                  ],
+                ),
               ),
-            for (final t in tags)
-              ListTile(
-                title: Text(t.name),
-                trailing: selectedSlug == t.slug
-                    ? const Icon(Icons.check, color: Color(0xFF2563EB))
-                    : null,
-                onTap: () => Navigator.of(context).pop((t.slug, t.name)),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final t in tags)
+                      CheckboxListTile(
+                        title: Text(t.name),
+                        subtitle: t.storyCount > 0
+                            ? Text('${t.storyCount} truyện')
+                            : null,
+                        value: _sel.contains(t.slug),
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _sel.add(t.slug);
+                          } else {
+                            _sel.remove(t.slug);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
               ),
-          ],
-        ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      final out = <String, String>{};
+                      for (final t in tags) {
+                        if (_sel.contains(t.slug)) out[t.slug] = t.name;
+                      }
+                      for (final s in _sel) {
+                        out.putIfAbsent(s, () => _names[s] ?? s);
+                      }
+                      Navigator.of(context).pop(out);
+                    },
+                    child: Text(
+                      _sel.isEmpty ? 'Bỏ chọn' : 'Áp dụng (${_sel.length})',
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -772,52 +929,71 @@ final searchProvider =
   return SearchNotifier(ref);
 });
 
-/// Bộ lọc tìm kiếm — mirror web /tim-kiem (sort/status/content_type/
-/// category/tag). Đổi filter là chạy lại ngay nếu đang trong chế độ
-/// kết quả (hoặc có filter nào active → duyệt theo filter).
+/// Bộ lọc tìm kiếm — mirror web /tim-kiem (sort/status/content_type +
+/// multi category/tag AND). Đổi filter là chạy lại ngay nếu đang trong chế
+/// độ kết quả (hoặc có filter nào active → duyệt theo filter).
 class SearchFilters {
   const SearchFilters({
     this.sort = '',
     this.status = '',
     this.contentType = '',
-    this.categorySlug = '',
-    this.categoryName = '',
-    this.tagSlug = '',
-    this.tagName = '',
+    this.categorySlugs = const [],
+    this.categoryNames = const [],
+    this.tagSlugs = const [],
+    this.tagNames = const [],
   });
 
   final String sort; // '' | views | rating | newest | chapters
   final String status; // '' | ongoing | completed
   final String contentType; // '' | text | visual | manga | video | chat
-  final String categorySlug;
-  final String categoryName;
-  final String tagSlug;
-  final String tagName;
+  /// Multi-filter AND: truyện phải thuộc TẤT CẢ slug đã chọn.
+  final List<String> categorySlugs;
+  final List<String> categoryNames;
+  final List<String> tagSlugs;
+  final List<String> tagNames;
 
   bool get isEmpty =>
       sort.isEmpty &&
       status.isEmpty &&
       contentType.isEmpty &&
-      categorySlug.isEmpty &&
-      tagSlug.isEmpty;
+      categorySlugs.isEmpty &&
+      tagSlugs.isEmpty;
+
+  /// Nhãn gọn cho chip Thể loại: "🏷 2 thể loại" hoặc tên đơn.
+  String get categoryLabel {
+    if (categorySlugs.isEmpty) return '🏷 Thể loại';
+    if (categorySlugs.length == 1 && categoryNames.isNotEmpty) {
+      return '🏷 ${categoryNames.first}';
+    }
+    return '🏷 ${categorySlugs.length} thể loại';
+  }
+
+  /// Nhãn gọn cho chip Tag.
+  String get tagLabel {
+    if (tagSlugs.isEmpty) return '# Tag';
+    if (tagSlugs.length == 1 && tagNames.isNotEmpty) {
+      return '# ${tagNames.first}';
+    }
+    return '# ${tagSlugs.length} tag';
+  }
 
   SearchFilters copyWith({
     String? sort,
     String? status,
     String? contentType,
-    String? categorySlug,
-    String? categoryName,
-    String? tagSlug,
-    String? tagName,
+    List<String>? categorySlugs,
+    List<String>? categoryNames,
+    List<String>? tagSlugs,
+    List<String>? tagNames,
   }) =>
       SearchFilters(
         sort: sort ?? this.sort,
         status: status ?? this.status,
         contentType: contentType ?? this.contentType,
-        categorySlug: categorySlug ?? this.categorySlug,
-        categoryName: categoryName ?? this.categoryName,
-        tagSlug: tagSlug ?? this.tagSlug,
-        tagName: tagName ?? this.tagName,
+        categorySlugs: categorySlugs ?? this.categorySlugs,
+        categoryNames: categoryNames ?? this.categoryNames,
+        tagSlugs: tagSlugs ?? this.tagSlugs,
+        tagNames: tagNames ?? this.tagNames,
       );
 }
 
@@ -851,8 +1027,8 @@ class SearchNotifier extends StateNotifier<SearchState> {
         sort: _filters.sort,
         status: _filters.status,
         contentType: _filters.contentType,
-        category: _filters.categorySlug,
-        tag: _filters.tagSlug,
+        categories: _filters.categorySlugs,
+        tags: _filters.tagSlugs,
       );
       if (requestId != _latestRequestId) return;
       _pages = [result];
@@ -891,8 +1067,8 @@ class SearchNotifier extends StateNotifier<SearchState> {
         sort: _filters.sort,
         status: _filters.status,
         contentType: _filters.contentType,
-        category: _filters.categorySlug,
-        tag: _filters.tagSlug,
+        categories: _filters.categorySlugs,
+        tags: _filters.tagSlugs,
       );
       if (requestId != _latestRequestId) return;
       _pages.add(next);

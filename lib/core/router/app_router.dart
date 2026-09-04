@@ -58,7 +58,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/search',
                 name: 'search',
-                builder: (context, state) => const SearchScreen(),
+                builder: (context, state) => SearchScreen(
+                  initialFilters: state.extra is SearchFilters
+                      ? state.extra as SearchFilters
+                      : null,
+                ),
               ),
             ],
           ),

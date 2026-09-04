@@ -43,20 +43,32 @@ class StoryRepository implements ChapterFetcher {
 
   /// List stories with filter / sort / pagination.
   /// Hits `GET /api/v1/mobile/stories`.
+  ///
+  /// Multi-filter AND: [categories]/[tags] gửi comma-joined
+  /// (`category=a,b&tag=x,y`) — backend parse thành giao nhau (truyện phải
+  /// thuộc TẤT CẢ). [category] đơn giữ lại để tương thích caller cũ.
   Future<PaginatedStories> listStories({
     String sort = 'fresh',
     String? category,
+    List<String>? categories,
+    List<String>? tags,
     String? contentType,
     String? status,
     int page = 1,
     int perPage = 20,
     String? seed,
   }) async {
+    final cats = <String>{
+      if (category != null && category.isNotEmpty) category,
+      ...?categories,
+    }.where((s) => s.isNotEmpty).toList();
+    final tagList = <String>{...?tags}.where((s) => s.isNotEmpty).toList();
     final r = await _dio.get(
       '/api/v1/mobile/stories',
       queryParameters: {
         'sort': sort,
-        if (category != null) 'category': category,
+        if (cats.isNotEmpty) 'category': cats.join(','),
+        if (tagList.isNotEmpty) 'tag': tagList.join(','),
         if (contentType != null) 'content_type': contentType,
         if (status != null) 'status': status,
         'page': page,
@@ -302,24 +314,36 @@ class StoryRepository implements ChapterFetcher {
   ///
   /// Hits `GET /api/v1/search` — endpoint web dùng chung (anonymous OK,
   /// không cần CSRF cho GET).
+  /// Multi-filter AND: [categories]/[tags] gửi comma-joined — backend lọc
+  /// giao nhau. [category]/[tag] đơn giữ lại để tương thích caller cũ.
   Future<SearchResult> search(
     String q, {
     int limit = 20,
     int page = 1,
     String? category,
+    List<String>? categories,
     String? tag,
+    List<String>? tags,
     String? sort,
     String? status,
     String? contentType,
   }) async {
+    final cats = <String>{
+      if (category != null && category.isNotEmpty) category,
+      ...?categories,
+    }.where((s) => s.isNotEmpty).toList();
+    final tagList = <String>{
+      if (tag != null && tag.isNotEmpty) tag,
+      ...?tags,
+    }.where((s) => s.isNotEmpty).toList();
     final r = await _dio.get(
       '/api/v1/search',
       queryParameters: {
         'q': q,
         'limit': limit,
         'page': page,
-        if (category != null && category.isNotEmpty) 'category': category,
-        if (tag != null && tag.isNotEmpty) 'tag': tag,
+        if (cats.isNotEmpty) 'category': cats.join(','),
+        if (tagList.isNotEmpty) 'tag': tagList.join(','),
         if (sort != null && sort.isNotEmpty) 'sort': sort,
         if (status != null && status.isNotEmpty) 'status': status,
         if (contentType != null && contentType.isNotEmpty)
