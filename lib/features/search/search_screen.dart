@@ -480,10 +480,21 @@ class _SearchFilterBar extends ConsumerWidget {
       required String label,
       required Future<void> Function() onTap,
       required bool active,
+      // Avatar "+" cố định trên chip ĐA CHỌN (thể loại/tag) để phân biệt
+      // với chip chọn 1 (sắp xếp/trạng thái/kiểu) ngay cả khi chưa chọn —
+      // user từng nhầm vì cả hai kiểu nhìn giống hệt nhau.
+      bool multi = false,
     }) {
       return Padding(
         padding: const EdgeInsets.only(right: 8),
         child: ActionChip(
+          avatar: multi
+              ? Icon(
+                  Icons.add,
+                  size: 16,
+                  color: active ? scheme.onPrimary : scheme.primary,
+                )
+              : null,
           label: Text(label),
           labelStyle: TextStyle(
             fontSize: 12.5,
@@ -546,11 +557,13 @@ class _SearchFilterBar extends ConsumerWidget {
           chip(
             label: filters.categoryLabel,
             active: filters.categorySlugs.isNotEmpty,
+            multi: true,
             onTap: () => _pickCategories(context, filters, onChanged),
           ),
           chip(
             label: filters.tagLabel,
             active: filters.tagSlugs.isNotEmpty,
+            multi: true,
             onTap: () => _pickTags(context, filters, onChanged),
           ),
           // Nút xoá toàn bộ filter khi có filter đang chọn.
@@ -715,7 +728,7 @@ class _CategoryPickerSheetState
                     Expanded(
                       child: Text(
                         _sel.isEmpty
-                            ? 'Chọn thể loại'
+                            ? 'Chọn thể loại (đa chọn)'
                             : 'Đã chọn ${_sel.length} thể loại (AND)',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
@@ -836,7 +849,7 @@ class _TagPickerSheetState extends ConsumerState<_TagPickerSheet> {
                     Expanded(
                       child: Text(
                         _sel.isEmpty
-                            ? 'Chọn tag'
+                            ? 'Chọn tag (đa chọn)'
                             : 'Đã chọn ${_sel.length} tag (AND)',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),

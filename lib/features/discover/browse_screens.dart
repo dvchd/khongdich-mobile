@@ -312,7 +312,7 @@ class _CategoryStoriesScreenState extends ConsumerState<CategoryStoriesScreen> {
     }
     final feed = _feed!;
     if (feed.stories.isEmpty) {
-      return const Center(child: Text('Chưa có truyện trong thể loại này.'));
+      return const Center(child: Text('Chưa có truyện nào.'));
     }
     final hasMore = feed.page < feed.totalPages;
     return GridView.builder(
@@ -927,7 +927,7 @@ class _TagStoriesScreenState extends ConsumerState<TagStoriesScreen> {
     }
     final feed = _feed!;
     if (feed.stories.isEmpty) {
-      return const Center(child: Text('Chưa có truyện với tag này.'));
+      return const Center(child: Text('Chưa có truyện nào.'));
     }
     final hasMore = feed.page < feed.totalPages;
     return GridView.builder(

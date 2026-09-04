@@ -310,18 +310,26 @@ class _MultiFilterRow<T> extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 6, 0, 0),
           child: Row(
             children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-              if (selected.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: Text(
-                    '(${selected.length})',
-                    style: Theme.of(context).textTheme.labelSmall,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.labelLarge,
                   ),
-                ),
+                  // Nhãn phân biệt hàng ĐA CHỌN với hàng chọn 1 (_FilterRow):
+                  // user từng nhầm checkmark giống nhau là cùng 1 kiểu chọn.
+                  Text(
+                    selected.isEmpty
+                        ? 'đa chọn'
+                        : 'đa chọn (${selected.length})',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                  ),
+                ],
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: SizedBox(
