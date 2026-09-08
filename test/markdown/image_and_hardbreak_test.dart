@@ -132,7 +132,35 @@ void main() {
           'Xem ![a](https://x/ảnh (1).png) ở đây.');
       final joined = chunks.join(' ');
       expect(joined, isNot(contains('ảnh (1).png')));
+      // Ngoặc lồng phải gỡ sạch, không sót đuôi `.png)` như trước.
+      expect(joined, isNot(contains('.png')));
       expect(joined, contains('ở đây'));
+    });
+
+    test('link giữ text, bỏ URL (kể cả cách `] (`)', () {
+      final chunks = TtsMarkdownPreprocessor.process(
+          'Xem thêm [tại đây](https://example.com/foo) nhé.\n\nXem [bên này] (https://example.com/bar) nữa.');
+      final joined = chunks.join(' ');
+      expect(joined, contains('tại đây'));
+      expect(joined, contains('bên này'));
+      expect(joined, isNot(contains('example.com')));
+      expect(joined, isNot(contains('https://')));
+    });
+
+    test('HTML link/img và URL trần không lọt vào lời đọc', () {
+      final chunks = TtsMarkdownPreprocessor.process(
+          'Bấm <a href="https://example.com/foo">vào đây</a> nhé.\n\nXem thêm tại https://example.com/bar.');
+      final joined = chunks.join(' ');
+      expect(joined, contains('vào đây'));
+      expect(joined, isNot(contains('example.com')));
+      expect(joined, isNot(contains('https://')));
+    });
+
+    test('link unsafe và ref-style giữ text, bỏ URL', () {
+      final chunks = TtsMarkdownPreprocessor.process(
+          'Bấm [click](javascript:alert(1)) nhé.');
+      expect(chunks.join(' '), contains('click'));
+      expect(chunks.join(' '), isNot(contains('javascript')));
     });
   });
 

@@ -523,7 +523,7 @@ class MarkdownParser {
 
   static final RegExp _codeSpanRegExp = RegExp(r'`+((?:[^`]|(?<=\\)`)*?)`+');
   static final RegExp _linkRegExp = RegExp(
-    r'\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)',
+    r'\[([^\]]*)\]\s*\(([^)\s]+)(?:\s+"[^"]*")?\)',
   );
   // `\s*` giữa `]` và `(`: chịu được cách viết `![alt] (url)` mà tác giả
   // hay dùng — trước đây không khớp → nguyên cú pháp kể cả link ảnh bị

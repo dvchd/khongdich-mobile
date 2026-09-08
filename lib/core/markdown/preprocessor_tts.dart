@@ -20,8 +20,33 @@ class TtsMarkdownPreprocessor {
 
   /// Cú pháp ảnh `![alt](url)` / `![alt] (url)` sót lại trong text (xem
   /// processWithBlocks) — bỏ cả alt lẫn link vì đọc ảnh thành lời là nhiễu.
+  /// `(?:[^()]*|\([^()]*\))*` chịu ngoặc lồng 1 cấp (`![a](https://x/ảnh
+  /// (1).png)` — trước đây `[^)]*` dừng ở `)` đầu, còn sót `.png)`).
   static final RegExp _ttsImageSyntaxRegExp =
-      RegExp(r'!\[[^\]]*\]\s*\([^)]*\)');
+      RegExp(r'!\[[^\]]*\]\s*\((?:[^()]*|\([^()]*\))*\)');
+
+  /// Link `[text](url)` / `[text] (url)` sót lại (URL lạ, scheme không an
+  /// toàn, parser bỏ qua...) — giữ text, bỏ URL (mirror web
+  /// `chapter_to_tts_text`: `[text](url) → text` mọi scheme).
+  static final RegExp _ttsLinkSyntaxRegExp =
+      RegExp(r'\[([^\]]*)\]\s*\((?:[^()]*|\([^()]*\))*\)');
+
+  /// Link tham chiếu `[text][ref]` → giữ text.
+  static final RegExp _ttsRefLinkRegExp = RegExp(r'\[([^\]]*)\]\[[^\]]*\]');
+
+  /// Thẻ HTML còn sót (`<a href>`, `<br>`, `<font>`... — nhánh markdown của
+  /// parser không strip tag chung như web cũ). Autolink `<https://...>`
+  /// cũng về rỗng (bỏ URL). Mirror web `TTS_RE_HTML_TAG`.
+  static final RegExp _ttsHtmlTagRegExp = RegExp(r'<[^>]+>');
+
+  /// URL trần dán trực tiếp — đọc `https://...` thành lời là báo lỗi
+  /// "nghe link" của user nên bỏ hẳn. Loại ký tự cuối `.,;:!?)` để giữ
+  /// dấu câu (`Xem https://x/foo.` → `Xem .`).
+  static final RegExp _ttsBareUrlRegExp =
+      RegExp(r'https?://[^\s<>]*[^\s<>.,;:!?\)\]]');
+
+  /// Khoảng trắng thừa sau khi gỡ cú pháp (`Giữa ảnh:  trong câu.`).
+  static final RegExp _ttsMultiSpaceRegExp = RegExp(r'[ \t]{2,}');
 
   /// Convert [markdown] into a list of plain-text chunks roughly <= 500
   /// characters each, broken on paragraph boundaries.
@@ -67,10 +92,17 @@ class TtsMarkdownPreprocessor {
       if (block is CodeBlock || block is ImageBlock) continue;
       var raw = block.plainText.trim();
       if (raw.isEmpty) continue;
-      // Lưới an toàn: cú pháp ảnh không được parser nhận diện (URL có ký
-      // tự lạ, ngoặc thiếu...) vẫn còn nằm trong text — bỏ nốt để TTS
-      // không bao giờ đọc link ảnh.
-      raw = raw.replaceAll(_ttsImageSyntaxRegExp, '').trim();
+      // Lưới an toàn: cú pháp không được parser nhận diện vẫn còn nằm trong
+      // text — gỡ nốt để TTS không bao giờ đọc link (mirror web
+      // `chapter_to_tts_text`): ảnh bỏ hẳn, link giữ text bỏ URL, HTML và
+      // URL trần bỏ hẳn.
+      raw = raw.replaceAll(_ttsImageSyntaxRegExp, '');
+      raw = raw.replaceAllMapped(
+          _ttsLinkSyntaxRegExp, (m) => m.group(1) ?? '');
+      raw = raw.replaceAllMapped(_ttsRefLinkRegExp, (m) => m.group(1) ?? '');
+      raw = raw.replaceAll(_ttsHtmlTagRegExp, '');
+      raw = raw.replaceAll(_ttsBareUrlRegExp, '');
+      raw = raw.replaceAll(_ttsMultiSpaceRegExp, ' ').trim();
       if (raw.isEmpty) continue;
       if (block is Heading) {
         // Heading markers are gone — add the trailing pause the regex
