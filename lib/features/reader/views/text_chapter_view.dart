@@ -37,6 +37,7 @@ class TextChapterView extends ConsumerStatefulWidget {
     this.nextChapter,
     this.onContinue,
     this.continueHint,
+    this.hasNextChapter = false,
   });
 
   final String markdown;
@@ -74,6 +75,11 @@ class TextChapterView extends ConsumerStatefulWidget {
   /// chương kế tiếp…" / "Chương kế tiếp không tải được") — không ngưỡng,
   /// không key, nút chương kế vẫn dùng được.
   final String? continueHint;
+
+  /// Có chương kế tiếp → chế độ lật trang hiện gợi ý "chạm phải để sang
+  /// chương sau" dưới số trang ở TRANG CUỐI (và trang duy nhất của
+  /// chương 1 trang). ReaderBody truyền `onNext != null`.
+  final bool hasNextChapter;
 
   @override
   ConsumerState<TextChapterView> createState() => _TextChapterViewState();
@@ -793,7 +799,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
             const SizedBox(height: 32),
             Center(
               child: Text(
-                '1/1 — vuốt trái để sang chương sau',
+                // Chương 1 trang không dùng PageView → vuốt không có
+                // overscroll; chuyển chương bằng chạm viền phải (xem
+                // ReaderBody._onTapZone) nên hint ghi đúng thao tác đó.
+                widget.hasNextChapter
+                    ? '1/1 — chạm phải để sang chương sau'
+                    : '1/1',
                 style: TextStyle(
                   fontSize: 12,
                   color: widget.theme.bodyStyle.color?.withValues(alpha: 0.4),
@@ -840,7 +851,12 @@ class _TextChapterViewState extends ConsumerState<TextChapterView> {
               const SizedBox(height: 32),
               Center(
                 child: Text(
-                  '${pageIndex + 1}/${_pageUnits.length}',
+                  // Trang cuối + có chương kế → nhắc thao tác chạm viền
+                  // phải (không còn phải mò); các trang khác chỉ đếm.
+                  pageIndex == _pageUnits.length - 1 &&
+                          widget.hasNextChapter
+                      ? '${pageIndex + 1}/${_pageUnits.length} — chạm phải để sang chương sau'
+                      : '${pageIndex + 1}/${_pageUnits.length}',
                   style: TextStyle(
                     fontSize: 12,
                     color: widget.theme.bodyStyle.color?.withValues(alpha: 0.4),

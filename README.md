@@ -4,7 +4,7 @@
 
 ## Trạng thái hiện tại (v0.13.1)
 
-**Build:** `flutter analyze` → 0 lỗi · 271 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases + tự upload AAB lên Play Console (track Closed Testing).
+**Build:** `flutter analyze` → 0 lỗi · 274 tests xanh · CI chạy analyze + test song song trên mọi push/PR; push tag `v*` → build APK + AAB prod (cache Gradle) → GitHub Releases + tự upload AAB lên Play Console (track Closed Testing).
 
 ### Kiến trúc
 

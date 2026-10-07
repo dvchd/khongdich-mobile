@@ -29,6 +29,7 @@ class VisualChapterView extends StatelessWidget {
     this.nextChapter,
     this.onContinue,
     this.continueHint,
+    this.hasNextChapter = false,
   });
 
   final String markdown;
@@ -52,6 +53,10 @@ class VisualChapterView extends StatelessWidget {
   final ChapterContent? nextChapter;
   final VoidCallback? onContinue;
   final String? continueHint;
+
+  /// Có chương kế → hint "chạm phải để sang chương sau" ở trang cuối
+  /// (lật trang) — truyền xuống TextChapterView.
+  final bool hasNextChapter;
 
   @override
   Widget build(BuildContext context) {
@@ -89,6 +94,7 @@ class VisualChapterView extends StatelessWidget {
             nextChapter: nextChapter,
             onContinue: onContinue,
             continueHint: continueHint,
+            hasNextChapter: hasNextChapter,
           ),
         ),
       ],

@@ -154,6 +154,7 @@ Widget buildChapterContent(
         nextChapter: nextChapter,
         onContinue: onContinue,
         continueHint: continueHint,
+        hasNextChapter: onNext != null,
       ),
     VisualChapterContent(
       :final id,
@@ -177,6 +178,7 @@ Widget buildChapterContent(
         nextChapter: nextChapter,
         onContinue: onContinue,
         continueHint: continueHint,
+        hasNextChapter: onNext != null,
       ),
     MangaChapterContent(:final images) => MangaChapterView(
       pages: images,
@@ -318,8 +320,11 @@ enum ReaderTapZone { left, center, right }
 /// Detects taps on left (30%), center (40%), and right (30%) zones.
 ///
 /// Used by both online and offline readers. The center zone opens
-/// the reader settings sheet; the left/right zones navigate to the
-/// previous/next chapter (or page, in page-flip mode).
+/// the reader settings sheet; in page-flip mode the left/right zones
+/// turn pages (and switch chapters on the first/last page). In
+/// vertical scroll mode [edgesEnabled] is false — the edges don't
+/// intercept taps at all (no accidental chapter jump while reading),
+/// and chapter navigation lives in the end-of-chapter footer instead.
 class ReaderTapZones extends StatelessWidget {
   const ReaderTapZones({
     super.key,
@@ -328,13 +333,14 @@ class ReaderTapZones extends StatelessWidget {
     this.centerFlex = 4,
     this.bottomInset = 0,
     this.topInset = 0,
+    this.edgesEnabled = true,
   });
   final void Function(ReaderTapZone) onTap;
 
   /// Độ rộng vùng trái/phải (so với vùng giữa [centerFlex]). Chế độ cuộn
-  /// dọc truyền edgeFlex 2 + centerFlex 6 → mỗi bên 20% (giữa 60%): bấm
-  /// gần giữa không còn nhảy chương nhầm. Chế độ ngang (lật trang) giữ
-  /// mặc định 3:4:3 — đổi trang cần vùng bấm rộng.
+  /// dọc chỉ còn vùng giữa hoạt động ([edgesEnabled] false) nên con số
+  /// này chỉ còn ý nghĩa giữ chỗ. Chế độ ngang (lật trang) giữ mặc định
+  /// 3:4:3 — đổi trang cần vùng bấm rộng.
   final int edgeFlex;
 
   /// Độ rộng vùng giữa (mở settings).
@@ -349,6 +355,12 @@ class ReaderTapZones extends StatelessWidget {
   /// header (Chia sẻ / Báo cáo) trong nội dung scroll.
   final double topInset;
 
+  /// Bật vùng chạm viền trái/phải. Chế độ cuộn dọc truyền false — viền
+  /// không bắt chạm (rơi xuống nội dung), tránh chạm nhầm nhảy chương
+  /// khi đang đọc/cuộn; chuyển chương bằng nút ở cuối chương hoặc
+  /// ghost auto-continue.
+  final bool edgesEnabled;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -358,10 +370,12 @@ class ReaderTapZones extends StatelessWidget {
         children: [
           Expanded(
             flex: edgeFlex,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () => onTap(ReaderTapZone.left),
-            ),
+            child: edgesEnabled
+                ? GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () => onTap(ReaderTapZone.left),
+                  )
+                : const SizedBox.shrink(),
           ),
           Expanded(
             flex: centerFlex,
@@ -372,10 +386,12 @@ class ReaderTapZones extends StatelessWidget {
           ),
           Expanded(
             flex: edgeFlex,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () => onTap(ReaderTapZone.right),
-            ),
+            child: edgesEnabled
+                ? GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () => onTap(ReaderTapZone.right),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),

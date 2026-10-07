@@ -165,16 +165,30 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
 
   /// Trang lật đổi (swipe / tap cạnh / TTS auto-flip) → setState cho
   /// tap-zones biết vùng nào cần chừa (trang-1: bỏ chạm vào header).
+  /// Đồng thời đánh dấu tiến trình khi tới TRANG CUỐI — page mode không
+  /// có scroll event dọc để tính % như cuộn dọc, trước đây bị đánh dấu
+  /// "đã đọc" ngay khi mở trang 1 (nhánh chương ngắn thấy extent 0).
   void _onPageController() {
     if (!_pageController.hasClients) return;
     final page = _pageController.page?.round() ?? 0;
     if (page != _pageModeIndex) {
       setState(() => _pageModeIndex = page);
     }
+    final pos = _pageController.position;
+    if (pos.hasContentDimensions &&
+        pos.pixels >= pos.maxScrollExtent - 1 &&
+        !_progressSaved) {
+      _progressSaved = true;
+      widget.onChapterNearEnd?.call();
+    }
   }
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
+    // Page mode: SingleChildScrollView trong từng trang inherit
+    // PrimaryScrollController → lúc lật trang có thể có 2 positions
+    // cùng lúc; bỏ qua event thay vì assert.
+    if (_scrollController.positions.length != 1) return;
     final pos = _scrollController.position;
 
     // maxScrollExtent == 0 → nội dung ngắn hơn viewport (không scroll
@@ -234,7 +248,18 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
         widget.settings.scrollMode == ReaderScrollMode.vertical;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // Page mode nhiều trang: _scrollController còn bị
+      // SingleChildScrollView trong từng trang inherit
+      // (PrimaryScrollController) → lật trang có 2 positions → .position
+      // assert; tiến trình cũng đã được đánh dấu khi tới trang cuối
+      // (_onPageController). Chỉ chương 1 trang (không PageView → không
+      // có clients) mới đi tiếp nhánh "chương ngắn" bên dưới.
+      if (widget.settings.scrollMode == ReaderScrollMode.horizontal &&
+          _pageController.hasClients) {
+        return;
+      }
       if (!_scrollController.hasClients) return;
+      if (_scrollController.positions.length != 1) return;
       final pos = _scrollController.position;
 
       if (pos.maxScrollExtent == 0) {
@@ -287,11 +312,10 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     widget.onNext?.call();
   }
 
-  /// Chống chuyển chương trùng: chạm cạnh 2 lần nhanh (hoặc chạm phải ở
-  /// trang cuối page-mode — onNext bị delay 250ms để xác nhận hết trang)
-  /// trước đây fire onNext/onPrev 2 lần → nhảy QUA 2 chương. Lock trong
-  /// 500ms — đủ lâu cho route replace hoàn tất, không nuốt chạm hợp lệ
-  /// kế tiếp (đọc xong 1 chương mất phút chứ không phải nửa giây).
+  /// Chống chuyển chương trùng: bấm nút/khu vực chuyển chương 2 lần nhanh
+  /// trước khi route replace hoàn tất sẽ nhảy QUA 2 chương. Lock 500ms —
+  /// đủ lâu cho route replace hoàn tất, không nuốt thao tác hợp lệ kế
+  /// tiếp (đọc xong 1 chương mất phút chứ không phải nửa giây).
   bool _chapterNavLocked = false;
 
   void _navigateToChapter(VoidCallback? nav) {
@@ -303,39 +327,57 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
     });
   }
 
+  /// Đang ở trang đầu / trang cuối (lật trang) — kiểm tra ĐỒNG BỘ theo vị
+  /// trí scroll của PageView (không chờ animation 200ms rồi mới đoán như
+  /// trước → bấm trang cuối chuyển chương không còn trễ 250ms).
+  bool get _atFirstPage =>
+      _pageController.position.pixels <=
+      _pageController.position.minScrollExtent + 1;
+
+  bool get _atLastPage =>
+      _pageController.position.pixels >=
+      _pageController.position.maxScrollExtent - 1;
+
   void _onTapZone(ReaderTapZone zone) {
     final isPageMode =
         widget.settings.scrollMode == ReaderScrollMode.horizontal;
     switch (zone) {
       case ReaderTapZone.left:
-        if (isPageMode && _pageController.hasClients) {
-          final page = _pageController.page?.round() ?? 0;
-          if (page > 0) {
-            _pageController.previousPage(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-            );
-            return;
-          }
-        }
-        _navigateToChapter(widget.onPrev);
-      case ReaderTapZone.right:
-        if (isPageMode && _pageController.hasClients) {
-          final before = _pageController.page?.round() ?? 0;
-          _pageController.nextPage(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-          );
-          Future.delayed(const Duration(milliseconds: 250), () {
-            if (!mounted) return;
-            final after = _pageController.page?.round() ?? 0;
-            if (after <= before) {
-              _navigateToChapter(widget.onNext);
-            }
-          });
+        // Cuộn dọc: viền không còn chuyển chương (overlay cũng đã tắt
+        // viền — edgesEnabled: false — nên case này không fire).
+        if (!isPageMode) return;
+        if (!_pageController.hasClients) {
+          // Chương 1 trang không dùng PageView → không có clients;
+          // chạm trái = về chương trước (hành vi cũ).
+          _navigateToChapter(widget.onPrev);
           return;
         }
-        _navigateToChapter(widget.onNext);
+        // Trang đầu → chương trước; ngược lại lùi một trang.
+        if (_atFirstPage) {
+          _navigateToChapter(widget.onPrev);
+          return;
+        }
+        _pageController.previousPage(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+        );
+      case ReaderTapZone.right:
+        if (!isPageMode) return;
+        if (!_pageController.hasClients) {
+          // Chương 1 trang không dùng PageView → không có clients;
+          // chạm phải = sang chương kế (hành vi cũ).
+          _navigateToChapter(widget.onNext);
+          return;
+        }
+        // Trang cuối → chuyển chương NGAY; ngược lại sang trang kế.
+        if (_atLastPage) {
+          _navigateToChapter(widget.onNext);
+          return;
+        }
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+        );
       case ReaderTapZone.center:
         // Tap center → open the reader settings sheet (matches the
         // behaviour of popular reader apps like NovelFever).
@@ -503,11 +545,14 @@ class _ReaderBodyState extends ConsumerState<ReaderBody> {
                       widget.chapter is! MangaChapterContent)
                     Positioned.fill(
                         child: ReaderTapZones(
-                      // Chế độ cuộn dọc: vùng viền thu hẹp 20% mỗi bên
-                      // (giữa 60%) — bấm gần giữa không nhảy chương nhầm.
-                      // Lật trang ngang giữ 30% như cũ.
+                      // Chế độ cuộn dọc: TẮT vùng viền (chạm viền rơi
+                      // xuống nội dung, không nhảy chương nhầm khi đang
+                      // đọc) — chuyển chương bằng nút cuối chương hoặc
+                      // ghost auto-continue. Chỉ còn chạm giữa mở
+                      // settings. Lật trang giữ 3:4:3 + viền bật.
                       edgeFlex: isPageMode ? 3 : 2,
                       centerFlex: isPageMode ? 4 : 6,
+                      edgesEnabled: isPageMode,
                       // Ở cuối chương: chừa vùng đáy cho nút "Chương kế
                       // tiếp" trong footer (overlay nằm trên nội dung nên
                       // không chừa thì bấm nút bị vùng tap giữa nuốt).
