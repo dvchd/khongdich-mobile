@@ -170,22 +170,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         },
       ),
       // Chapter comments screen — pushed with the chapter title as `extra`.
+      // `?comment={id}` (từ deep link thông báo) → cuộn tới + highlight
+      // đúng bình luận.
       GoRoute(
         path: '/chapter-comments/:chapterId',
         name: 'chapter_comments',
         builder: (context, state) => CommentsScreen(
           chapterId: state.pathParameters['chapterId']!,
           chapterTitle: state.extra as String? ?? '',
+          initialCommentId: state.uri.queryParameters['comment'],
         ),
       ),
       // Story comments screen (bình luận truyện) — pushed from story
-      // detail with the story title as `extra`.
+      // detail with the story title as `extra`; hỗ trợ `?comment={id}`
+      // như chapter comments.
       GoRoute(
         path: '/story-comments/:storyId',
         name: 'story_comments',
         builder: (context, state) => CommentsScreen(
           storyId: state.pathParameters['storyId']!,
           storyTitle: state.extra as String? ?? '',
+          initialCommentId: state.uri.queryParameters['comment'],
         ),
       ),
       // Story reviews screen (đánh giá truyện) — pushed from story detail

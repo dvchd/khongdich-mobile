@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -24,6 +26,7 @@ class CommentsScreen extends ConsumerStatefulWidget {
     this.chapterTitle = '',
     this.storyId,
     this.storyTitle = '',
+    this.initialCommentId,
   }) : assert(
          chapterId != null || storyId != null,
          'CommentsScreen needs a chapterId or storyId',
@@ -33,6 +36,11 @@ class CommentsScreen extends ConsumerStatefulWidget {
   final String chapterTitle;
   final String? storyId;
   final String storyTitle;
+
+  /// Deep link từ thông báo (`?comment={id}`): tự nạp thêm trang tới khi
+  /// thấy bình luận, cuộn tới và highlight — mirror cơ chế `#comment-{id}`
+  /// của web.
+  final String? initialCommentId;
 
   /// True when this screen is bound to a chapter (not a story).
   bool get isChapter => chapterId != null;
@@ -55,6 +63,10 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   final TextEditingController _composer = TextEditingController();
   final FocusNode _replyFocus = FocusNode(debugLabel: 'reply-composer');
   CommentItem? _replyingTo;
+  final ScrollController _scroll = ScrollController();
+  final GlobalKey _focusKey = GlobalKey();
+  String? _highlightId;
+  bool _focusHandled = false;
 
   @override
   void initState() {
@@ -66,6 +78,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
   void dispose() {
     _composer.dispose();
     _replyFocus.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -84,6 +97,9 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         _feed = feed;
         _loading = false;
       });
+      if (widget.initialCommentId != null) {
+        unawaited(_focusInitialComment());
+      }
     } catch (e) {
       if (!mounted || epoch != _feedEpoch) return;
       setState(() {
@@ -91,6 +107,105 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         _loading = false;
       });
     }
+  }
+
+  /// Deep link `?comment={id}`: sort mới nhất (mặc định) nên bình luận
+  /// thường ở gần đầu; nạp thêm trang nếu chưa thấy (tối đa 10 trang) rồi
+  /// highlight + cuộn tới — mirror cơ chế `#comment-{id}` của web.
+  Future<void> _focusInitialComment() async {
+    if (_focusHandled) return;
+    final id = widget.initialCommentId;
+    if (id == null || _feed == null) return;
+    _focusHandled = true;
+
+    var attempts = 0;
+    while (mounted &&
+        _feed != null &&
+        !_containsComment(_feed!, id) &&
+        _feed!.page < _feed!.totalPages &&
+        attempts < 10) {
+      final before = _feed!.page;
+      await _loadMore();
+      if (_feed == null || _feed!.page == before) break;
+      attempts++;
+    }
+    if (!mounted || _feed == null) return;
+    if (!_containsComment(_feed!, id)) {
+      // Bình luận có thể đã bị xoá/ẩn, hoặc link cũ thiếu số chương nên
+      // feed hiện tại không chứa nó.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không tìm thấy bình luận trong danh sách này.'),
+        ),
+      );
+      return;
+    }
+    setState(() => _highlightId = id);
+    await WidgetsBinding.instance.endOfFrame;
+    await _scrollToFocusedComment();
+  }
+
+  bool _containsComment(PaginatedComments feed, String id) {
+    for (final c in feed.comments) {
+      if (c.id == id) return true;
+      if (c.replies.any((r) => r.id == id)) return true;
+    }
+    return false;
+  }
+
+  /// Cuộn tới tile đang gắn `_focusKey`. ListView.builder chỉ build item
+  /// trong viewport → nhảy dần từng viewport cho tới khi tile được build
+  /// rồi `ensureVisible` (chiều cao item không đều nên không tính offset
+  /// trực tiếp được — mirror retry-loop của web).
+  Future<void> _scrollToFocusedComment() async {
+    for (var attempt = 0; attempt < 40 && mounted; attempt++) {
+      final ctx = _focusKey.currentContext;
+      if (ctx != null) {
+        if (!ctx.mounted) return;
+        await Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.15,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
+        );
+        return;
+      }
+      if (!_scroll.hasClients) return;
+      final position = _scroll.position;
+      final next = (position.pixels + position.viewportDimension * 0.9)
+          .clamp(0.0, position.maxScrollExtent)
+          .toDouble();
+      if ((next - position.pixels).abs() < 1) return;
+      _scroll.jumpTo(next);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+  }
+
+  /// Bọc tile đích deep link — nền + vạch trái giống `.comment-hl` của
+  /// web (giữ nguyên cho tới khi rời màn, không tự tắt).
+  Widget _highlightWrap({required Widget child, required bool highlighted}) {
+    final theme = Theme.of(context);
+    return AnimatedContainer(
+      key: highlighted ? _focusKey : null,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+      decoration: BoxDecoration(
+        color: highlighted
+            ? theme.colorScheme.primary.withValues(alpha: 0.10)
+            : Colors.transparent,
+        border: Border(
+          left: BorderSide(
+            color: highlighted
+                ? theme.colorScheme.primary
+                : Colors.transparent,
+            width: 3,
+          ),
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: child,
+    );
   }
 
   /// Scope-aware feed fetch: chapter vs story comments endpoint.
@@ -692,6 +807,7 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
     }
     final hasMore = feed.page < feed.totalPages;
     return ListView.builder(
+      controller: _scroll,
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: feed.comments.length + (hasMore ? 1 : 0),
       itemBuilder: (context, i) {
@@ -713,33 +829,39 @@ class _CommentsScreenState extends ConsumerState<CommentsScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _CommentTile(
-              item: c,
-              onLike: () => _toggleLike(c),
-              onReply: () => _startReply(c),
-              onEdit: c.isMine && !c.hidden ? () => _edit(c) : null,
-              onDelete: c.isMine ? () => _delete(c) : null,
-              onToggleHidden: feed.canModerate
-                  ? () => _toggleHidden(c)
-                  : null,
-              onTogglePin: feed.canModerate &&
-                      !c.isSegment &&
-                      (!c.hidden || c.pinned)
-                  ? () => _togglePin(c)
-                  : null,
+            _highlightWrap(
+              highlighted: c.id == _highlightId,
+              child: _CommentTile(
+                item: c,
+                onLike: () => _toggleLike(c),
+                onReply: () => _startReply(c),
+                onEdit: c.isMine && !c.hidden ? () => _edit(c) : null,
+                onDelete: c.isMine ? () => _delete(c) : null,
+                onToggleHidden: feed.canModerate
+                    ? () => _toggleHidden(c)
+                    : null,
+                onTogglePin: feed.canModerate &&
+                        !c.isSegment &&
+                        (!c.hidden || c.pinned)
+                    ? () => _togglePin(c)
+                    : null,
+              ),
             ),
             for (final r in c.replies)
               Padding(
                 padding: const EdgeInsets.only(left: 24),
-                child: _CommentTile(
-                  item: r,
-                  onLike: () => _toggleLike(r),
-                  onReply: () => _startReply(r),
-                  onEdit: r.isMine && !r.hidden ? () => _edit(r) : null,
-                  onDelete: r.isMine ? () => _delete(r) : null,
-                  onToggleHidden: feed.canModerate
-                      ? () => _toggleHidden(r)
-                      : null,
+                child: _highlightWrap(
+                  highlighted: r.id == _highlightId,
+                  child: _CommentTile(
+                    item: r,
+                    onLike: () => _toggleLike(r),
+                    onReply: () => _startReply(r),
+                    onEdit: r.isMine && !r.hidden ? () => _edit(r) : null,
+                    onDelete: r.isMine ? () => _delete(r) : null,
+                    onToggleHidden: feed.canModerate
+                        ? () => _toggleHidden(r)
+                        : null,
+                  ),
                 ),
               ),
           ],

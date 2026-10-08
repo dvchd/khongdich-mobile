@@ -15,6 +15,7 @@ import '../downloads/offline_library_screen.dart'
         offlineStoriesMapProvider,
         offlineStoryBackfillProvider;
 import '../home/widgets/story_card.dart';
+import '../notifications/notification_bell_button.dart';
 
 /// Index of the "Downloaded" tab. The home screen sets this as the
 /// bookshelf intent when the device is offline so the user lands on
@@ -191,7 +192,10 @@ class _BookshelfScreenState extends ConsumerState<BookshelfScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Tủ truyện')),
+      appBar: AppBar(
+        title: const Text('Tủ truyện'),
+        actions: const [NotificationBellButton()],
+      ),
       body: Column(
         children: [
           SizedBox(

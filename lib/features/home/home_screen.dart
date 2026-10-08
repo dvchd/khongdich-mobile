@@ -10,7 +10,7 @@ import '../../core/observability/app_logger.dart';
 import '../../repositories/story_repository.dart';
 import '../bookshelf/bookshelf_screen.dart'
     show bookshelfTabIntentProvider, kBookshelfDownloadedTabIndex;
-import '../notifications/unread_badge_provider.dart';
+import '../notifications/notification_bell_button.dart';
 import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import '../update/app_update_provider.dart';
 import '../update/update_banner.dart';
@@ -134,21 +134,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 10),
             ),
           ),
-          Consumer(
-            builder: (context, ref, _) {
-              final unread = ref.watch(unreadNotificationsProvider)
-                  .value;
-              return IconButton(
-                icon: Badge(
-                  isLabelVisible: (unread ?? 0) > 0,
-                  label: Text('${unread ?? 0}'),
-                  child: const Icon(Icons.notifications_outlined),
-                ),
-                tooltip: 'Thông báo',
-                onPressed: () => context.push('/notifications'),
-              );
-            },
-          ),
+          const NotificationBellButton(),
         ],
       ),
       body: RefreshIndicator(

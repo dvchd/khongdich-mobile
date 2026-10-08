@@ -7,7 +7,8 @@ import '../../core/observability/app_logger.dart';
 
 /// Số thông báo chưa đọc — poll mỗi 30s (giống web poll
 /// `/hx/notifications/unread-count`). Dùng cho badge trên icon chuông ở
-/// Home; chỉ active khi có ai watch (autoDispose).
+/// AppBar các tab chính (Home / Tìm kiếm / Tủ truyện / Cá nhân); chỉ
+/// active khi có ai watch (autoDispose).
 ///
 /// Dùng `Stream.periodic` (timer gắn với subscription) thay vì
 /// `Future.delayed` đệ quy — khi provider dispose, `sub.cancel()` huỷ

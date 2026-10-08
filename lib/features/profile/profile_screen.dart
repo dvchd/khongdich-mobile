@@ -12,6 +12,7 @@ import '../../repositories/story_repository.dart';
 import '../downloads/offline_library_screen.dart'
     show downloadedChaptersCountProvider;
 import '../home/widgets/home_hero.dart' show homeHeroHiddenProvider;
+import '../notifications/notification_bell_button.dart';
 
 /// Profile tab. Plan §5.7.
 ///
@@ -87,7 +88,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final downloadedChapters =
         heroHidden ? ref.watch(downloadedChaptersCountProvider).value : null;
     return Scaffold(
-      appBar: AppBar(title: const Text('Cá nhân')),
+      appBar: AppBar(
+        title: const Text('Cá nhân'),
+        actions: const [NotificationBellButton()],
+      ),
       body: ListView(
         children: [
           // ─── Profile header / login button ───

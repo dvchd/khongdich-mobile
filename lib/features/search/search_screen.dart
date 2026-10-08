@@ -18,6 +18,7 @@ import '../discover/browse_screens.dart'
     show categoriesProvider, tagsProvider;
 import '../downloads/offline_library_screen.dart' show offlineLibraryStreamProvider;
 import '../home/widgets/story_card.dart';
+import '../notifications/notification_bell_button.dart';
 
 /// Search screen. Plan §6.3.
 ///
@@ -145,7 +146,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       }
     });
     return Scaffold(
-      appBar: AppBar(title: const Text('Tìm kiếm')),
+      appBar: AppBar(
+        title: const Text('Tìm kiếm'),
+        actions: const [NotificationBellButton()],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

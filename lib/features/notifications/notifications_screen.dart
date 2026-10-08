@@ -7,9 +7,7 @@ import '../../core/network/api_client.dart';
 import '../../core/observability/app_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../repositories/story_repository.dart';
-
-final RegExp _chapterLinkRegExp = RegExp(r'/truyen/([^/?#]+)/chuong/(\d+)');
-final RegExp _storyLinkRegExp = RegExp(r'/truyen/([^/?#]+)');
+import 'notification_link.dart';
 
 /// Notifications screen. Plan §6.2.
 ///
@@ -25,10 +23,142 @@ class NotificationsScreen extends ConsumerStatefulWidget {
 }
 
 class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
+  /// Chặn bấm liên tiếp nhiều thông báo khi một link đang resolve.
+  bool _openingLink = false;
+
   @override
   void initState() {
     super.initState();
     Future.microtask(() => ref.read(notificationsProvider.notifier).refresh());
+  }
+
+  /// Mở deep link của thông báo. Link chỉ có slug + số chương, còn API
+  /// mobile cần UUID (story/chapter) → phải resolve qua API trước khi
+  /// điều hướng. Nhờ vậy mở được đúng màn bình luận và cuộn tới bình
+  /// luận (trước đây luôn thả về chi tiết truyện).
+  Future<void> _openLink(String link) async {
+    final target = NotificationLink.parse(link);
+    if (target == null) return;
+    // Link truyện thuần — điều hướng ngay, không cần gọi API.
+    if (target.chapterNumber == null &&
+        target.commentId == null &&
+        !target.isReviews) {
+      context.push('/story/${target.slug}');
+      return;
+    }
+    if (_openingLink) return;
+    _openingLink = true;
+    final router = GoRouter.of(context);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+    _showResolvingDialog();
+    var dialogOpen = true;
+    void closeDialog() {
+      if (dialogOpen) {
+        dialogOpen = false;
+        rootNavigator.pop();
+      }
+    }
+
+    try {
+      final repo = ref.read(storyRepositoryProvider);
+      final detail = await repo.fetchStoryDetail(target.slug);
+      final storyId = detail.story.id;
+      final title = detail.story.title;
+      if (target.commentId != null) {
+        final commentQuery =
+            'comment=${Uri.encodeQueryComponent(target.commentId!)}';
+        if (target.chapterNumber != null) {
+          final chapterId =
+              await _resolveChapterId(repo, storyId, target.chapterNumber!);
+          closeDialog();
+          if (chapterId != null) {
+            router.push(
+              '/chapter-comments/$chapterId?$commentQuery',
+              extra: title,
+            );
+          } else {
+            // Không tra được UUID chương (chương ẩn/xoá?) — mở reader
+            // tại chương đó để độc giả xem thay.
+            router.push('/chapter/$storyId:${target.chapterNumber}');
+          }
+        } else {
+          closeDialog();
+          router.push('/story-comments/$storyId?$commentQuery', extra: title);
+        }
+      } else if (target.isReviews) {
+        closeDialog();
+        router.push('/story-reviews/$storyId', extra: title);
+      } else {
+        closeDialog();
+        router.push('/chapter/$storyId:${target.chapterNumber}');
+      }
+    } catch (e) {
+      closeDialog();
+      AppLogger.warning('NotificationsScreen._openLink failed', e);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Không mở được liên kết thông báo — thử lại sau.'),
+          ),
+        );
+    } finally {
+      _openingLink = false;
+    }
+  }
+
+  /// Tra UUID chương từ số chương — danh sách trả mới nhất trước nên
+  /// thường chỉ cần 1 request. Trả null khi không tìm thấy.
+  Future<String?> _resolveChapterId(
+    StoryRepository repo,
+    String storyId,
+    int chapterNumber,
+  ) async {
+    var page = 1;
+    while (page <= 10) {
+      final list = await repo.fetchChapterList(
+        storyId,
+        page: page,
+        perPage: 200,
+        desc: true,
+      );
+      for (final c in list.chapters) {
+        if (c.chapterNumber == chapterNumber) return c.id;
+      }
+      if (page >= list.totalPages || list.chapters.isEmpty) return null;
+      page++;
+    }
+    return null;
+  }
+
+  void _showResolvingDialog() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Đang mở…'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -126,21 +256,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                 .markRead(item.id);
                           }
                           if (item.link != null) {
-                            // Crude deep-link: try to parse
-                            // `/truyen/{slug}/chuong/{num}` style URLs.
-                            // The chapter reader route needs `storyId:num`,
-                            // but the notification link only carries the
-                            // story slug (slug ≠ backend story id). Since
-                            // we can't resolve slug → id without an extra
-                            // API call, navigate to the story detail where
-                            // the user can open the chapter (or continue
-                            // reading if already in progress).
-                            final m = _chapterLinkRegExp.firstMatch(item.link!);
-                            final m2 = _storyLinkRegExp.firstMatch(item.link!);
-                            final slug = m?.group(1) ?? m2?.group(1);
-                            if (slug != null) {
-                              context.push('/story/$slug');
-                            }
+                            _openLink(item.link!);
                           }
                         },
                       ),
