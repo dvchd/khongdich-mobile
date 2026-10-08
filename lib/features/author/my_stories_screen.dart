@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/network/api_client.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/format.dart';
 import '../../models/my_story.dart';
 import '../../repositories/story_repository.dart';
 
@@ -101,6 +102,15 @@ class _MyStoryTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            if (story.viewCount > 0) ...[
+              const SizedBox(width: 8),
+              Text(
+                '${formatCount(story.viewCount)} lượt đọc',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
           ],
         ),
       ),

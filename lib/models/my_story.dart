@@ -19,6 +19,7 @@ class MyStory {
     required this.wordCount,
     required this.updatedAt,
     this.coverUrl,
+    this.viewCount = 0,
   });
 
   final String id;
@@ -33,6 +34,10 @@ class MyStory {
   final int chapterCount;
   final int publishedChapters;
   final int wordCount;
+
+  /// Tổng lượt đọc truyện (`stories.view_count`) — từ
+  /// `GET /api/v1/mobile/me/stories`.
+  final int viewCount;
   final DateTime updatedAt;
   final String? coverUrl;
 
@@ -55,6 +60,7 @@ class MyStory {
         chapterCount: (json['chapter_count'] as num?)?.toInt() ?? 0,
         publishedChapters: (json['published_chapters'] as num?)?.toInt() ?? 0,
         wordCount: (json['word_count'] as num?)?.toInt() ?? 0,
+        viewCount: (json['view_count'] as num?)?.toInt() ?? 0,
         updatedAt:
             DateTime.tryParse(json['updated_at'] as String? ?? '') ??
                 DateTime.now(),

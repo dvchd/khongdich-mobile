@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/app_image_cache.dart';
+import '../../../core/utils/format.dart';
 import '../../../models/story.dart';
 import '../../downloads/offline_library_screen.dart' show downloadedStoryIdsProvider;
 
@@ -237,9 +238,16 @@ class StoryCard extends ConsumerWidget {
                     fontSize: 13,
                   ),
             ),
-            if (story.author.isNotEmpty)
+            // Tác giả + lượt đọc trên MỘT dòng — thêm dòng riêng sẽ phá
+            // childAspectRatio của các grid (list truyện, BXH...). Mirror
+            // meta "tác giả · lượt đọc" của web.
+            if (story.author.isNotEmpty || (story.viewCount ?? 0) > 0)
               Text(
-                story.author,
+                [
+                  if (story.author.isNotEmpty) story.author,
+                  if ((story.viewCount ?? 0) > 0)
+                    '${formatCount(story.viewCount!)} đọc',
+                ].join(' · '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(

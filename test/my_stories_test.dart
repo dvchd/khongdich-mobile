@@ -20,11 +20,22 @@ void main() {
         'chapter_count': 10,
         'published_chapters': 3,
         'word_count': 12345,
+        'view_count': 4321,
         'updated_at': '2026-08-24T00:00:00Z',
       });
       expect(s.slug, 'truyen-a');
       expect(s.publishedChapters, 3);
       expect(s.visibilityLabel, 'Nháp');
+      expect(s.viewCount, 4321);
+    });
+
+    test('view_count thiếu (server cũ) → 0', () {
+      final s = MyStory.fromJson(const {
+        'id': '',
+        'slug': '',
+        'title': '',
+      });
+      expect(s.viewCount, 0);
     });
 
     test('nhãn khớp badge web dashboard', () {
@@ -64,6 +75,7 @@ void main() {
         chapterCount: 10,
         publishedChapters: 3,
         wordCount: 1000,
+        viewCount: 4321,
         updatedAt: DateTime(2026),
       ),
     ];
@@ -108,6 +120,7 @@ void main() {
       expect(find.text('Truyện A'), findsOneWidget);
       expect(find.text('Nháp'), findsOneWidget);
       expect(find.text('3/10 chương'), findsOneWidget);
+      expect(find.text('4.321 lượt đọc'), findsOneWidget);
     });
 
     testWidgets('tap truyện → mở story detail theo slug', (tester) async {
